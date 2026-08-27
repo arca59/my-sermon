@@ -4,5 +4,6 @@ edge-tts
 moviepy==1.0.3
 python-pptx
 python-docx
+reportlab
 pypdf
 pydantic
