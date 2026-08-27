@@ -6,4 +6,5 @@ python-pptx
 python-docx
 reportlab
 pypdf
+yt-dlp
 pydantic
