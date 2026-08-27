@@ -1,4 +1,6 @@
 import PIL.Image
+import PIL.ImageDraw
+import PIL.ImageFont
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = getattr(PIL.Image, 'Resampling', PIL.Image).LANCZOS
 
@@ -9,6 +11,7 @@ import os
 import io
 import re
 import asyncio
+import zipfile
 import edge_tts
 import urllib.parse
 import urllib.request
@@ -38,27 +41,33 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 툴바 버튼 및 본문 스타일링
+# 고급 가스모피즘(Glassmorphism) 모던 UI CSS
 st.markdown("""
 <style>
+    .main {
+        background-color: #0b1329;
+    }
     div[data-testid="column"] button {
         width: 100% !important;
-        padding: 4px 6px !important;
-        font-size: 11px !important;
+        padding: 5px 8px !important;
+        font-size: 12px !important;
+        border-radius: 8px !important;
     }
     .content-box {
-        background-color: #0f172a;
-        border: 1px solid #334155;
-        border-radius: 12px;
-        padding: 22px;
+        background: rgba(15, 23, 42, 0.85);
+        border: 1px solid rgba(51, 65, 85, 0.6);
+        border-radius: 16px;
+        padding: 24px;
         line-height: 1.85;
         color: #f1f5f9;
         font-size: 15px;
-        margin-top: 10px;
+        margin-top: 12px;
+        box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+        backdrop-filter: blur(10px);
     }
     .content-box h3 {
         color: #fde047;
-        font-size: 18px;
+        font-size: 19px;
         margin-top: 18px;
         margin-bottom: 8px;
         font-weight: bold;
@@ -80,7 +89,7 @@ st.markdown("""
         justify-content: center;
         align-items: center;
         text-align: center;
-        box-shadow: 0 12px 32px rgba(0,0,0,0.45);
+        box-shadow: 0 14px 36px rgba(0,0,0,0.55);
         background-size: cover;
         background-position: center;
         position: relative;
@@ -90,7 +99,7 @@ st.markdown("""
         content: '';
         position: absolute;
         top: 0; left: 0; right: 0; bottom: 0;
-        background: linear-gradient(180deg, rgba(15, 23, 42, 0.65) 0%, rgba(15, 23, 42, 0.85) 100%);
+        background: linear-gradient(180deg, rgba(10, 15, 30, 0.68) 0%, rgba(10, 15, 30, 0.88) 100%);
         z-index: 1;
     }
     .card-box-preview > * {
@@ -116,9 +125,13 @@ if not st.session_state.authenticated:
             st.error("PIN 코드가 올바르지 않습니다.")
     st.stop()
 
-# --- 2. 초고속 Gemini AI 엔진 & 텍스트 정제기 ---
+# --- 2. API 키 숨김 처리 & 초고속 Gemini AI 엔진 ---
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
-sidebar_key = st.sidebar.text_input("🔑 Gemini API Key", value=secret_key, type="password")
+
+# API 키 단추를 숨겨 깔끔한 비주얼 유지
+with st.sidebar.expander("⚙️ AI 연결 설정 (클릭하여 열기)", expanded=False):
+    sidebar_key = st.text_input("🔑 Gemini API Key", value=secret_key, type="password", key="sidebar_api_key_input")
+
 ACTIVE_KEY = sidebar_key.strip() if sidebar_key else secret_key.strip()
 
 def clean_korean_output(text: str) -> str:
@@ -169,7 +182,7 @@ def clean_korean_output(text: str) -> str:
 
 def get_ai_response(prompt: str, is_json: bool = True):
     if not ACTIVE_KEY:
-        st.error("🔑 사이드바에 Gemini API Key를 입력해주세요.")
+        st.error("🔑 사이드바의 [⚙️ AI 연결 설정] 메뉴에 Gemini API Key를 입력해주세요.")
         return None
     try:
         genai.configure(api_key=ACTIVE_KEY)
@@ -290,7 +303,65 @@ def fetch_image_bytes(url: str):
     except Exception:
         return None
 
-# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 (PIL 전용 자막) ---
+# --- 카드뉴스 PNG 이미지 고화질 합성 엔진 ---
+def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
+    bg_url = CARD_BACKGROUNDS[idx % len(CARD_BACKGROUNDS)]
+    img_b = fetch_image_bytes(bg_url)
+    
+    if img_b:
+        base_img = PIL.Image.open(io.BytesIO(img_b)).convert("RGBA").resize((1080, 1080))
+    else:
+        base_img = PIL.Image.new("RGBA", (1080, 1080), (15, 23, 42, 255))
+
+    # 어두운 그라데이션 반투명 오버레이
+    overlay = PIL.Image.new("RGBA", (1080, 1080), (10, 15, 30, 200))
+    combined = PIL.Image.alpha_composite(base_img, overlay)
+    draw = PIL.ImageDraw.Draw(combined)
+
+    font_b = None
+    for f_p in ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgun.ttf"]:
+        if os.path.exists(f_p):
+            try: font_b = PIL.ImageFont.truetype(f_p, 48); break
+            except Exception: pass
+    if not font_b: font_b = PIL.ImageFont.load_default()
+
+    font_t = None
+    for f_p in ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgun.ttf"]:
+        if os.path.exists(f_p):
+            try: font_t = PIL.ImageFont.truetype(f_p, 32); break
+            except Exception: pass
+    if not font_t: font_t = PIL.ImageFont.load_default()
+
+    # 배지
+    draw.text((100, 100), f"CARD {card_item.get('card_number', idx+1)}", fill=(99, 102, 241, 255), font=font_t)
+    
+    # 타이틀 (골드)
+    draw.text((100, 200), card_item.get("headline", ""), fill=(253, 224, 71, 255), font=font_b)
+
+    # 본문
+    draw.multiline_text((100, 420), card_item.get("body_text", ""), fill=(241, 245, 249, 255), font=font_t, spacing=16)
+
+    # 하단 성구 및 교회명
+    if scripture_str:
+        draw.text((100, 920), f"「 {scripture_str} 」", fill=(253, 224, 71, 255), font=font_t)
+    if church_name:
+        draw.text((100, 970), church_name, fill=(147, 197, 253, 255), font=font_t)
+
+    out_buf = io.BytesIO()
+    combined.convert("RGB").save(out_buf, format="PNG")
+    out_buf.seek(0)
+    return out_buf
+
+def generate_cardnews_zip(cards, scripture_str="", church_name=""):
+    zip_buf = io.BytesIO()
+    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for i, card in enumerate(cards):
+            png_buf = generate_single_card_png(card, i, scripture_str, church_name)
+            zf.writestr(f"cardnews_{i+1}.png", png_buf.getvalue())
+    zip_buf.seek(0)
+    return zip_buf
+
+# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 ---
 def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, title: str, subtitle_text: str, church_name: str = ""):
     out_dir = "./outputs"
     os.makedirs(out_dir, exist_ok=True)
@@ -390,7 +461,7 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
     comp.close()
     return out_file
 
-# --- 6. 문서 변환 엔진 (Word / PPT / PDF / TXT) ---
+# --- 6. 문서 변환 엔진 ---
 def create_docx(title: str, content: str) -> io.BytesIO:
     try:
         doc = Document()
@@ -538,7 +609,6 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
         return io.BytesIO(content.encode("utf-8"))
 
 def generate_sermon_structure_pptx(title: str, scripture: str, content: str) -> io.BytesIO:
-    """10 슬라이드 프레젠테이션 PPT 생성기"""
     try:
         prs = Presentation()
         prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
@@ -961,25 +1031,34 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
         elif active_view == "카드뉴스":
             card_all_text = "\n\n".join([f"CARD {c['card_number']}. {c['headline']}\n{c['body_text']}" for c in st.session_state.get("card_list", [])]) if "card_list" in st.session_state else ""
             
-            c_head1, c_head2 = st.columns([1.5, 1.5])
+            c_head1, c_head2 = st.columns([1.2, 1.8])
             with c_head1:
                 st.markdown("<h2 style='margin:0; font-size:24px; font-weight:bold;'>카드뉴스</h2>", unsafe_allow_html=True)
             with c_head2:
-                col_e, col_d = st.columns(2)
+                col_e, col_d_ppt, col_d_zip = st.columns([1, 1.3, 1.4])
                 with col_e:
                     if st.button("✏️ 편집", key="cn_edit_toggle_btn"):
                         st.session_state.cn_edit_mode = not st.session_state.get("cn_edit_mode", False)
-                with col_d:
+                with col_d_ppt:
                     if "card_list" in st.session_state:
                         st.download_button(
-                            "📥 전체 다운로드",
+                            "📥 PPT 전체",
                             data=generate_cardnews_pptx(st.session_state.card_list, st.session_state.get("cn_church_name", "")),
                             file_name=f"{st.session_state.sermon_title}_카드뉴스.pptx",
                             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                            key="cn_dl_all_btn"
+                            key="cn_dl_all_ppt_btn"
+                        )
+                with col_d_zip:
+                    if "card_list" in st.session_state:
+                        st.download_button(
+                            "📦 이미지 (ZIP)",
+                            data=generate_cardnews_zip(st.session_state.card_list, st.session_state.sermon_scripture, st.session_state.get("cn_church_name", "")),
+                            file_name=f"{st.session_state.sermon_title}_카드뉴스_이미지.zip",
+                            mime="application/zip",
+                            key="cn_dl_all_zip_btn"
                         )
 
-            st.info("💡 텍스트 수정은 물론, 카드 추가/삭제도 할 수 있어요! (위 편집 버튼 활용)")
+            st.info("💡 텍스트 수정은 물론, 카드 추가/삭제 및 이미지(PNG/ZIP) / PPT 내려받기가 가능합니다!")
 
             cn_opt1, cn_opt2, cn_opt3 = st.columns([1.5, 1.5, 2])
             with cn_opt1:
@@ -1048,6 +1127,16 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         </div>
                         """,
                         unsafe_allow_html=True
+                    )
+                    
+                    # 현재 개별 카드 PNG 이미지 다운로드 단추
+                    single_png_bytes = generate_single_card_png(curr_card, curr_idx, st.session_state.sermon_scripture, church_input)
+                    st.download_button(
+                        f"🖼️ CARD {curr_idx + 1} 개별 PNG 이미지 다운로드",
+                        data=single_png_bytes,
+                        file_name=f"{st.session_state.sermon_title}_card_{curr_idx + 1}.png",
+                        mime="image/png",
+                        key=f"dl_single_png_{curr_idx}"
                     )
 
                 st.write("---")
@@ -1396,7 +1485,7 @@ elif app_mode == "🎙️ AI 보이스오버 스튜디오":
             st.info("왼쪽에서 버튼을 누르면 이곳에 재생 플레이어가 나타납니다.")
 
 # ==============================================================================
-# 4. 🎬 쇼츠 만들기 (스튜디오)
+# 4. 🎬 쇼츠 만들기 (스튜디오) - [가변 폰트 크기 및 Y 위치 제어 탑재]
 # ==============================================================================
 elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
     st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>▶️ 쇼츠 만들기 스튜디오</h1>", unsafe_allow_html=True)
@@ -1492,6 +1581,16 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
             with c_v1: v_ratio = st.radio("비율", ["9:16 (세로 쇼츠)", "16:9 (가로 영상)"], key="rad_shorts_ratio")
             with c_v2: v_voice = st.selectbox("보이스", ["인준 (남성)", "선희 (여성)"], key="sel_shorts_voice")
 
+            # 폰트 크기 및 위치 정밀 편집 컨트롤 추가
+            with st.expander("🎨 폰트 크기 및 자막 위치 정밀 편집", expanded=True):
+                font_c1, font_c2 = st.columns(2)
+                with font_c1:
+                    t_fsize = st.slider("제목 폰트 크기 (pt)", min_value=32, max_value=72, value=48, step=2, key="sh_t_fsize")
+                    t_ypos = st.slider("제목 Y 위치 (높이)", min_value=80, max_value=500, value=180, step=10, key="sh_t_ypos")
+                with font_c2:
+                    s_fsize = st.slider("자막/본문 폰트 크기 (pt)", min_value=24, max_value=60, value=42, step=2, key="sh_s_fsize")
+                    s_ypos = st.slider("자막 Y 위치 (높이)", min_value=800, max_value=1700, value=1400, step=20, key="sh_s_ypos")
+
             bg_media = st.file_uploader("배경 동영상/사진 업로드 (최대 300MB)", type=["mp4", "mov", "jpg", "png"], key="up_shorts_bg")
             bgm_media = st.file_uploader("배경음악 MP3 업로드 (최대 300MB)", type=["mp3", "wav"], key="up_shorts_bgm")
 
@@ -1509,7 +1608,18 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                     voice_id = "ko-KR-InJoonNeural" if "인준" in v_voice else "ko-KR-SunHiNeural"
                     ratio_val = "9:16" if "9:16" in v_ratio else "16:9"
 
-                    rendered_out = create_animated_video(v_title, lines, bg_p, bgm_p, ratio_val, voice=voice_id)
+                    rendered_out = create_animated_video(
+                        title=v_title,
+                        script_paragraphs=lines,
+                        bg_media_path=bg_p,
+                        bgm_path=bgm_p,
+                        aspect_ratio=ratio_val,
+                        voice=voice_id,
+                        title_fontsize=t_fsize,
+                        sub_fontsize=s_fsize,
+                        title_y=t_ypos,
+                        sub_y=s_ypos
+                    )
                     st.session_state.rendered_shorts_out = rendered_out
                     st.success("영상 렌더링이 완료되었습니다!")
 
