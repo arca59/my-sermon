@@ -1,8 +1,8 @@
-streamlit>=1.35.0
-google-generativeai>=0.8.3
+streamlit
+google-generativeai
 edge-tts
 moviepy==1.0.3
-Pillow<10.0.0
+Pillow
 python-pptx
 python-docx
 reportlab
