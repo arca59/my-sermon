@@ -1,9 +1,15 @@
 import asyncio
 import os
+import PIL.Image
+
+# Pillow 10+ 호환성을 위한 패치 (MoviePy 1.0.3 AttributeError 방지)
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = getattr(PIL.Image, 'Resampling', PIL.Image).LANCZOS
+
 import edge_tts
 from moviepy.editor import (
     VideoFileClip, ImageClip, ColorClip, TextClip,
-    AudioFileClip, CompositeAudioClip, CompositeVideoClip, afx
+    AudioFileClip, CompositeAudioClip, CompositeVideoClip, afx, vfx
 )
 
 OUTPUT_DIR = "./outputs"
@@ -35,10 +41,31 @@ def create_animated_video(
         width, height = 1920, 1080
 
     if bg_media_path and os.path.exists(bg_media_path):
-        if bg_media_path.lower().endswith(('.mp4', '.mov', '.avi')):
-            bg = VideoFileClip(bg_media_path).resize((width, height)).loop(duration=total_duration)
+        is_video = bg_media_path.lower().endswith(('.mp4', '.mov', '.avi', '.mkv'))
+        if is_video:
+            clip_raw = VideoFileClip(bg_media_path)
+            if clip_raw.duration < total_duration:
+                clip_raw = clip_raw.fx(vfx.loop, duration=total_duration)
+            else:
+                clip_raw = clip_raw.subclip(0, total_duration)
+            
+            w_raw, h_raw = clip_raw.size
+            target_ratio = width / height
+            current_ratio = w_raw / h_raw
+            
+            if current_ratio > target_ratio:
+                new_w = int(h_raw * target_ratio)
+                crop_x1 = int((w_raw - new_w) / 2)
+                cropped = clip_raw.crop(x1=crop_x1, y1=0, x2=crop_x1 + new_w, y2=h_raw)
+            else:
+                new_h = int(w_raw / target_ratio)
+                crop_y1 = int((h_raw - new_h) / 2)
+                cropped = clip_raw.crop(x1=0, y1=crop_y1, x2=w_raw, y2=crop_y1 + new_h)
+                
+            bg = cropped.resize((width, height))
         else:
             bg = ImageClip(bg_media_path).set_duration(total_duration).resize((width, height))
+            
         dim_layer = ColorClip(size=(width, height), color=(0, 0, 0), duration=total_duration).set_opacity(0.4)
         base_clip = CompositeVideoClip([bg, dim_layer])
     else:
