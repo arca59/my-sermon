@@ -77,7 +77,7 @@ if not st.session_state.authenticated:
             st.error("PIN 코드가 올바르지 않습니다.")
     st.stop()
 
-# --- 2. 초고속 Gemini AI 엔진 ---
+# --- 2. 초고속 Gemini AI 엔진 & 텍스트 정제기 ---
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 sidebar_key = st.sidebar.text_input("🔑 Gemini API Key", value=secret_key, type="password")
 ACTIVE_KEY = sidebar_key.strip() if sidebar_key else secret_key.strip()
@@ -252,92 +252,240 @@ def fetch_image_bytes(url: str):
     except Exception:
         return None
 
-# --- 5. 업로드된 구조화 슬라이드 형태 PPTX 생성기 ---
-def generate_sermon_structure_pptx(title: str, scripture: str, content: str) -> io.BytesIO:
-    prs = Presentation()
-    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
-    blank_layout = prs.slide_layouts[6]
+# --- 5. 문서 변환 엔진 (Word / PPT / PDF / TXT) ---
+def create_docx(title: str, content: str) -> io.BytesIO:
+    try:
+        doc = Document()
+        tp = doc.add_paragraph()
+        run = tp.add_run(title)
+        run.font.size, run.font.bold = DocxPt(18), True
+        run.font.color.rgb = DocxRGB(30, 58, 138)
+        doc.add_paragraph(f"작성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오\n")
+        for line in content.split("\n"):
+            if line.strip(): doc.add_paragraph(line.strip())
+        bio = io.BytesIO()
+        doc.save(bio)
+        bio.seek(0)
+        return bio
+    except Exception:
+        return io.BytesIO(content.encode("utf-8"))
 
-    # [슬라이드 1: 표지]
-    slide1 = prs.slides.add_slide(blank_layout)
-    bg1_bytes = fetch_image_bytes(CARD_BACKGROUNDS[0])
-    if bg1_bytes:
-        slide1.shapes.add_picture(io.BytesIO(bg1_bytes), 0, 0, width=Inches(13.333), height=Inches(7.5))
-    else:
+def create_pdf(title: str, content: str) -> io.BytesIO:
+    try:
+        font_to_use = init_korean_font()
+        bio = io.BytesIO()
+        doc = SimpleDocTemplate(
+            bio,
+            pagesize=letter,
+            rightMargin=36,
+            leftMargin=36,
+            topMargin=36,
+            bottomMargin=36
+        )
+        
+        t_style = ParagraphStyle(
+            name="K_Title",
+            fontName=font_to_use,
+            fontSize=15,
+            leading=20,
+            textColor="#1e3a8a",
+            spaceAfter=8
+        )
+        m_style = ParagraphStyle(
+            name="K_Meta",
+            fontName=font_to_use,
+            fontSize=8,
+            leading=12,
+            textColor="#64748b",
+            spaceAfter=12
+        )
+        b_style = ParagraphStyle(
+            name="K_Body",
+            fontName=font_to_use,
+            fontSize=9.5,
+            leading=15,
+            textColor="#1e293b",
+            spaceAfter=5
+        )
+
+        story = [
+            Paragraph(f"<b>{title}</b>", t_style),
+            Paragraph(f"생성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오", m_style),
+            Spacer(1, 8),
+        ]
+
+        for line in content.split("\n"):
+            clean = line.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            if clean:
+                clean = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', clean)
+                story.append(Paragraph(clean, b_style))
+            else:
+                story.append(Spacer(1, 4))
+
+        doc.build(story)
+        bio.seek(0)
+        return bio
+    except Exception:
+        return io.BytesIO(content.encode("utf-8"))
+
+def create_txt(title: str, content: str) -> io.BytesIO:
+    text_data = f"[{title}]\n작성일: {datetime.now().strftime('%Y-%m-%d')}\n\n{content}"
+    return io.BytesIO(text_data.encode("utf-8"))
+
+def create_document_pptx(title: str, content: str) -> io.BytesIO:
+    try:
+        prs = Presentation()
+        prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+        blank_layout = prs.slide_layouts[6]
+        
+        slide1 = prs.slides.add_slide(blank_layout)
         fill1 = slide1.background.fill
         fill1.solid()
         fill1.fore_color.rgb = RGBColor(15, 23, 42)
+        tbox = slide1.shapes.add_textbox(Inches(1.5), Inches(2.5), Inches(10.33), Inches(2.5))
+        p = tbox.text_frame.paragraphs[0]
+        p.text = title
+        p.font.size, p.font.bold = Pt(38), True
+        p.font.color.rgb, p.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
+        
+        paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
+        chunk = ""
+        for para in paragraphs:
+            chunk += para + "\n\n"
+            if len(chunk) > 280:
+                slide = prs.slides.add_slide(blank_layout)
+                fill = slide.background.fill
+                fill.solid()
+                fill.fore_color.rgb = RGBColor(24, 32, 54)
+                
+                htx = slide.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.33), Inches(0.8))
+                hp = htx.text_frame.paragraphs[0]
+                hp.text = title
+                hp.font.size, hp.font.bold = Pt(22), True
+                hp.font.color.rgb = RGBColor(147, 197, 253)
+                
+                btx = slide.shapes.add_textbox(Inches(1.0), Inches(1.6), Inches(11.33), Inches(5.2))
+                tf = btx.text_frame
+                tf.word_wrap = True
+                bp = tf.paragraphs[0]
+                bp.text = chunk.strip()
+                bp.font.size = Pt(20)
+                bp.font.color.rgb = RGBColor(241, 245, 249)
+                chunk = ""
+                
+        if chunk:
+            slide = prs.slides.add_slide(blank_layout)
+            fill = slide.background.fill
+            fill.solid()
+            fill.fore_color.rgb = RGBColor(24, 32, 54)
+            htx = slide.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.33), Inches(0.8))
+            hp = htx.text_frame.paragraphs[0]
+            hp.text = title
+            hp.font.size, hp.font.bold = Pt(22), True
+            hp.font.color.rgb = RGBColor(147, 197, 253)
+            
+            btx = slide.shapes.add_textbox(Inches(1.0), Inches(1.6), Inches(11.33), Inches(5.2))
+            tf = btx.text_frame
+            tf.word_wrap = True
+            bp = tf.paragraphs[0]
+            bp.text = chunk.strip()
+            bp.font.size = Pt(20)
+            bp.font.color.rgb = RGBColor(241, 245, 249)
 
-    overlay1 = slide1.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
-    overlay1.fill.solid()
-    overlay1.fill.fore_color.rgb = RGBColor(10, 15, 30)
-    overlay1.line.fill.background()
+        bio = io.BytesIO()
+        prs.save(bio)
+        bio.seek(0)
+        return bio
+    except Exception:
+        return io.BytesIO(content.encode("utf-8"))
 
-    tb1 = slide1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.5))
-    p1 = tb1.text_frame.paragraphs[0]
-    p1.text = title
-    p1.font.size, p1.font.bold = Pt(44), True
-    p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
-    
-    p1_sub = tb1.text_frame.add_paragraph()
-    p1_sub.text = f"\n본문 · {scripture}"
-    p1_sub.font.size = Pt(22)
-    p1_sub.font.color.rgb, p1_sub.alignment = RGBColor(226, 232, 240), PP_ALIGN.CENTER
+def generate_sermon_structure_pptx(title: str, scripture: str, content: str) -> io.BytesIO:
+    try:
+        prs = Presentation()
+        prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+        blank_layout = prs.slide_layouts[6]
 
-    # [슬라이드 2: 본문 및 목차 개요]
-    slide2 = prs.slides.add_slide(blank_layout)
-    fill2 = slide2.background.fill
-    fill2.solid()
-    fill2.fore_color.rgb = RGBColor(248, 250, 252)
+        # [슬라이드 1: 표지]
+        slide1 = prs.slides.add_slide(blank_layout)
+        bg1_bytes = fetch_image_bytes(CARD_BACKGROUNDS[0])
+        if bg1_bytes:
+            slide1.shapes.add_picture(io.BytesIO(bg1_bytes), 0, 0, width=Inches(13.333), height=Inches(7.5))
+        else:
+            fill1 = slide1.background.fill
+            fill1.solid()
+            fill1.fore_color.rgb = RGBColor(15, 23, 42)
 
-    tb2_head = slide2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
-    hp2 = tb2_head.text_frame.paragraphs[0]
-    hp2.text = f"들어가며 & 설교의 흐름 ({scripture})"
-    hp2.font.size, hp2.font.bold = Pt(32), True
-    hp2.font.color.rgb = RGBColor(30, 58, 138)
+        overlay1 = slide1.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+        overlay1.fill.solid()
+        overlay1.fill.fore_color.rgb = RGBColor(10, 15, 30)
+        overlay1.line.fill.background()
 
-    tb2_body = slide2.shapes.add_textbox(Inches(1.0), Inches(2.0), Inches(11.33), Inches(4.8))
-    tf2 = tb2_body.text_frame
-    tf2.word_wrap = True
-    paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
-    for line in paragraphs[:8]:
-        p = tf2.add_paragraph()
-        p.text = line
-        p.font.size = Pt(18)
-        p.font.color.rgb = RGBColor(30, 41, 59)
+        tb1 = slide1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.5))
+        p1 = tb1.text_frame.paragraphs[0]
+        p1.text = title
+        p1.font.size, p1.font.bold = Pt(44), True
+        p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
+        
+        p1_sub = tb1.text_frame.add_paragraph()
+        p1_sub.text = f"\n본문 · {scripture}"
+        p1_sub.font.size = Pt(22)
+        p1_sub.font.color.rgb, p1_sub.alignment = RGBColor(226, 232, 240), PP_ALIGN.CENTER
 
-    # [슬라이드 3: 핵심 대지 분할]
-    slide3 = prs.slides.add_slide(blank_layout)
-    bg3_bytes = fetch_image_bytes(CARD_BACKGROUNDS[2])
-    if bg3_bytes:
-        slide3.shapes.add_picture(io.BytesIO(bg3_bytes), 0, 0, width=Inches(13.333), height=Inches(7.5))
-    overlay3 = slide3.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
-    overlay3.fill.solid()
-    overlay3.fill.fore_color.rgb = RGBColor(15, 23, 42)
-    overlay3.line.fill.background()
+        # [슬라이드 2: 개요]
+        slide2 = prs.slides.add_slide(blank_layout)
+        fill2 = slide2.background.fill
+        fill2.solid()
+        fill2.fore_color.rgb = RGBColor(248, 250, 252)
 
-    tb3_head = slide3.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
-    hp3 = tb3_head.text_frame.paragraphs[0]
-    hp3.text = f"핵심 메시지 및 적용"
-    hp3.font.size, hp3.font.bold = Pt(32), True
-    hp3.font.color.rgb = RGBColor(253, 224, 71)
+        tb2_head = slide2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
+        hp2 = tb2_head.text_frame.paragraphs[0]
+        hp2.text = f"설교 개요 및 나눔 ({scripture})"
+        hp2.font.size, hp2.font.bold = Pt(32), True
+        hp2.font.color.rgb = RGBColor(30, 58, 138)
 
-    tb3_body = slide3.shapes.add_textbox(Inches(1.0), Inches(2.0), Inches(11.33), Inches(4.8))
-    tf3 = tb3_body.text_frame
-    tf3.word_wrap = True
-    for line in paragraphs[8:]:
-        p = tf3.add_paragraph()
-        p.text = line
-        p.font.size = Pt(18)
-        p.font.color.rgb = RGBColor(241, 245, 249)
+        tb2_body = slide2.shapes.add_textbox(Inches(1.0), Inches(2.0), Inches(11.33), Inches(4.8))
+        tf2 = tb2_body.text_frame
+        tf2.word_wrap = True
+        paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
+        for line in paragraphs[:8]:
+            p = tf2.add_paragraph()
+            p.text = line
+            p.font.size = Pt(18)
+            p.font.color.rgb = RGBColor(30, 41, 59)
 
-    bio = io.BytesIO()
-    prs.save(bio)
-    bio.seek(0)
-    return bio
+        # [슬라이드 3: 적용]
+        slide3 = prs.slides.add_slide(blank_layout)
+        bg3_bytes = fetch_image_bytes(CARD_BACKGROUNDS[2])
+        if bg3_bytes:
+            slide3.shapes.add_picture(io.BytesIO(bg3_bytes), 0, 0, width=Inches(13.333), height=Inches(7.5))
+        overlay3 = slide3.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+        overlay3.fill.solid()
+        overlay3.fill.fore_color.rgb = RGBColor(15, 23, 42)
+        overlay3.line.fill.background()
+
+        tb3_head = slide3.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
+        hp3 = tb3_head.text_frame.paragraphs[0]
+        hp3.text = f"핵심 메시지 및 기도"
+        hp3.font.size, hp3.font.bold = Pt(32), True
+        hp3.font.color.rgb = RGBColor(253, 224, 71)
+
+        tb3_body = slide3.shapes.add_textbox(Inches(1.0), Inches(2.0), Inches(11.33), Inches(4.8))
+        tf3 = tb3_body.text_frame
+        tf3.word_wrap = True
+        for line in paragraphs[8:]:
+            p = tf3.add_paragraph()
+            p.text = line
+            p.font.size = Pt(18)
+            p.font.color.rgb = RGBColor(241, 245, 249)
+
+        bio = io.BytesIO()
+        prs.save(bio)
+        bio.seek(0)
+        return bio
+    except Exception:
+        return create_document_pptx(title, content)
 
 def generate_cardnews_pptx(slides_data):
-    """풍경 배경 이미지와 반투명 딤 필터가 적용된 1:1 고품질 카드뉴스 PPT"""
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(10), Inches(10)
     blank_layout = prs.slide_layouts[6]
@@ -386,7 +534,14 @@ def generate_cardnews_pptx(slides_data):
     bio.seek(0)
     return bio
 
-# --- 6. 문서 및 PPT 다운로드 툴바 ---
+async def generate_voiceover_audio(text: str, voice: str = "ko-KR-InJoonNeural") -> str:
+    out_path = "./outputs/voiceover_temp.mp3"
+    os.makedirs("./outputs", exist_ok=True)
+    communicate = edge_tts.Communicate(text, voice)
+    await communicate.save(out_path)
+    return out_path
+
+# --- 6. 모든 섹션 상단 통일 툴바 컴포넌트 [수정 / 복사 / 워드 / PDF / PPT / txt] ---
 def render_section_top_toolbar(title: str, content: str, state_key: str):
     col_t, col_btns = st.columns([1.2, 2.8])
     with col_t:
@@ -404,7 +559,7 @@ def render_section_top_toolbar(title: str, content: str, state_key: str):
         with c_pdf:
             st.download_button("📥 PDF", data=create_pdf(title, content if content else "내용 없음"), file_name=f"{title}.pdf", mime="application/pdf", key=f"dl_pdf_{state_key}")
         with c_ppt:
-            st.download_button("📥 PPT", data=generate_sermon_structure_pptx(title, st.session_state.sermon_scripture, content if content else "내용 없음"), file_name=f"{title}.pptx", mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", key=f"dl_ppt_struct_{state_key}")
+            st.download_button("📥 PPT", data=generate_sermon_structure_pptx(title, st.session_state.get("sermon_scripture", "본문"), content if content else "내용 없음"), file_name=f"{title}.pptx", mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", key=f"dl_ppt_struct_{state_key}")
         with c_txt:
             st.download_button("📥 txt", data=create_txt(title, content if content else "내용 없음"), file_name=f"{title}.txt", mime="text/plain", key=f"dl_txt_{state_key}")
 
@@ -563,6 +718,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
     with right_panel:
         active_view = st.session_state.dash_active_view
 
+        # 1. 설교 요약
         if active_view == "설교 요약":
             render_section_top_toolbar(f"{st.session_state.sermon_title}_설교요약", st.session_state.full_sermon, "sermon_sum")
             st.caption("설교문 본문/요약")
@@ -576,6 +732,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.markdown(f"<div class='content-box'>{st.session_state.full_sermon}</div>", unsafe_allow_html=True)
 
+        # 2. 소그룹 나눔
         elif active_view == "소그룹 나눔":
             grp_txt = st.session_state.get("small_group_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹나눔지", grp_txt, "sm_grp")
@@ -585,6 +742,8 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
                     설교 요약: {st.session_state.full_sermon[:3500]}
+                    
+                    아래 템플릿 형식으로 완성된 한국어 나눔지 본문만 즉시 출력하세요:
                     
                     [소그룹 나눔지: {st.session_state.sermon_title}]
                     
@@ -620,6 +779,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption("위 버튼을 눌러 소그룹 나눔지를 생성하세요.")
 
+        # 3. QT 5일치
         elif active_view == "QT 5일치":
             qt_txt = st.session_state.get("qt5_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_주간QT5일치", qt_txt, "qt5")
@@ -658,6 +818,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption("위 버튼을 눌러 5일치 QT를 생성하세요.")
 
+        # 4. 카드뉴스 (풍경 배경 뷰어 + 1:1 풍경 PPT 다운로드)
         elif active_view == "카드뉴스":
             card_all_text = "\n\n".join([f"CARD {c['card_number']}. {c['headline']}\n{c['body_text']}" for c in st.session_state.get("card_list", [])]) if "card_list" in st.session_state else ""
             render_section_top_toolbar(f"{st.session_state.sermon_title}_카드뉴스", card_all_text, "cd_news")
@@ -711,6 +872,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                             unsafe_allow_html=True
                         )
 
+        # 5. 쇼츠 대본
         elif active_view == "쇼츠 대본":
             sh_txt = st.session_state.get("shorts_script_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_쇼츠대본", sh_txt, "sh_script")
@@ -756,6 +918,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption("위 버튼을 눌러 쇼츠 대본을 생성하세요.")
 
+        # 6. 세대별 가정예배지
         elif active_view == "🏡 세대별 가정예배지":
             age_group = st.selectbox("예배 대상 선택", ["👶 영유아용", "🧒 어린이용", "🧑 청소년용", "👨‍👩‍👧 청장년용"], key="sel_age_group")
             fam_txt = st.session_state.get(f"family_worship_{age_group}", "")
@@ -794,6 +957,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption(f"위 버튼을 눌러 {age_group} 맞춤 가정예배지를 생성하세요.")
 
+        # 7. 설교 점검 및 제안
         elif active_view == "🔍 설교 점검 및 제안":
             audit_txt = st.session_state.get("sermon_audit_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_설교점검및제안", audit_txt, "sermon_audit")
@@ -831,6 +995,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption("위 버튼을 눌러 설교 점검 리포트를 생성하세요.")
 
+        # 8. 소그룹 리더가이드
         elif active_view == "📖 소그룹 리더가이드":
             ldr_txt = st.session_state.get("leader_guide_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹리더가이드", ldr_txt, "ldr_guide")
@@ -968,7 +1133,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
         full_scripture_str = f"{sel_book} {sel_chap_verse}"
 
         if st.button("🚀 정통 강해설교문 전문 자동 작성 시작 (25~30분 분량)", type="primary", key="btn_gen_ai_sermon"):
-            with st.spinner(f"[{theology_choice.split(' ')[0]}] 관점으로 강해설교문 작성 중... (초고속 생성)"):
+            with st.spinner(f"[{theology_choice.split(' ')[0]}] 관점으로 강해설교문 작성 중..."):
                 prompt = f"""
                 성경 본문: {full_scripture_str}
                 설교 주제: {ai_sermon_topic}
@@ -1159,12 +1324,12 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                     st.session_state.rendered_shorts_out = rendered_out
                     st.success("영상 렌더링이 완료되었습니다!")
 
-        with sh_col2:
-            st.markdown("### 🎬 완성된 영상")
-            if "rendered_shorts_out" in st.session_state and os.path.exists(st.session_state.rendered_shorts_out):
-                st.video(st.session_state.rendered_shorts_out)
-                with open(st.session_state.rendered_shorts_out, "rb") as vf:
-                    st.download_button("📥 MP4 비디오 파일 다운로드", data=vf, file_name="sermon_shorts.mp4", mime="video/mp4", key="dl_shorts_mp4")
+    with sh_col2:
+        st.markdown("### 🎬 완성된 영상")
+        if "rendered_shorts_out" in st.session_state and os.path.exists(st.session_state.rendered_shorts_out):
+            st.video(st.session_state.rendered_shorts_out)
+            with open(st.session_state.rendered_shorts_out, "rb") as vf:
+                st.download_button("📥 MP4 비디오 파일 다운로드", data=vf, file_name="sermon_shorts.mp4", mime="video/mp4", key="dl_shorts_mp4")
 
 # ==============================================================================
 # 5. 📚 설교 서재 (Sermon Library)
