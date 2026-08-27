@@ -216,7 +216,7 @@ def load_sermon_to_workspace(sermon_item, idx=0):
         "small_group_text", "qt5_text", "card_list", "shorts_script_text",
         "sermon_audit_text", "leader_guide_text", "rich_materials", 
         "praise_list", "shorts_rec", "yt_extracted_result", 
-        "rendered_shorts_out", "vo_audio_path"
+        "rendered_shorts_out", "vo_audio_path", "verse_card_img"
     ]
     for k in keys_to_clear:
         if k in st.session_state:
@@ -419,7 +419,32 @@ def fetch_image_bytes(url: str):
     except Exception:
         return None
 
-# --- 카드뉴스 PNG 이미지 합성 엔진 ---
+# --- PIL 텍스트 줄바꿈 헬퍼 함수 ---
+def wrap_korean_text(text: str, font, max_width: int, draw: PIL.ImageDraw.ImageDraw) -> str:
+    """한글 문장을 max_width 내에 맞춰 자동으로 줄바꿈 처리"""
+    if not text:
+        return ""
+    
+    wrapped_lines = []
+    paragraphs = str(text).split('\n')
+    for p in paragraphs:
+        words = p.split(' ')
+        curr_line = ""
+        for w in words:
+            test_line = f"{curr_line} {w}".strip()
+            bbox = draw.textbbox((0, 0), test_line, font=font)
+            line_w = bbox[2] - bbox[0]
+            if line_w > max_width and curr_line:
+                wrapped_lines.append(curr_line)
+                curr_line = w
+            else:
+                curr_line = test_line
+        if curr_line:
+            wrapped_lines.append(curr_line)
+            
+    return "\n".join(wrapped_lines)
+
+# --- 카드뉴스 PNG 이미지 고화질 합성 엔진 (자동 줄바꿈 버그 완벽 수정) ---
 def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
     bg_url = CARD_BACKGROUNDS[idx % len(CARD_BACKGROUNDS)]
     img_b = fetch_image_bytes(bg_url)
@@ -436,25 +461,35 @@ def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
     font_b = None
     for f_p in ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgun.ttf"]:
         if os.path.exists(f_p):
-            try: font_b = PIL.ImageFont.truetype(f_p, 48); break
+            try: font_b = PIL.ImageFont.truetype(f_p, 44); break
             except Exception: pass
     if not font_b: font_b = PIL.ImageFont.load_default()
 
     font_t = None
     for f_p in ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgun.ttf"]:
         if os.path.exists(f_p):
-            try: font_t = PIL.ImageFont.truetype(f_p, 32); break
+            try: font_t = PIL.ImageFont.truetype(f_p, 30); break
             except Exception: pass
     if not font_t: font_t = PIL.ImageFont.load_default()
 
-    draw.text((100, 100), f"CARD {card_item.get('card_number', idx+1)}", fill=(99, 102, 241, 255), font=font_t)
-    draw.text((100, 200), card_item.get("headline", ""), fill=(253, 224, 71, 255), font=font_b)
-    draw.multiline_text((100, 420), card_item.get("body_text", ""), fill=(241, 245, 249, 255), font=font_t, spacing=16)
+    # 1. 배지
+    draw.text((100, 90), f"CARD {card_item.get('card_number', idx+1)}", fill=(99, 102, 241, 255), font=font_t)
+    
+    # 2. 헤드라인 (880px 자동 줄바꿈)
+    headline_raw = card_item.get("headline", "")
+    headline_wrapped = wrap_korean_text(headline_raw, font_b, 880, draw)
+    draw.multiline_text((100, 170), headline_wrapped, fill=(253, 224, 71, 255), font=font_b, spacing=12)
 
+    # 3. 본문 (880px 자동 줄바꿈 및 화면 밖 이탈 차단)
+    body_raw = card_item.get("body_text", "")
+    body_wrapped = wrap_korean_text(body_raw, font_t, 880, draw)
+    draw.multiline_text((100, 380), body_wrapped, fill=(241, 245, 249, 255), font=font_t, spacing=16)
+
+    # 4. 하단 성구 및 교회명
     if scripture_str:
-        draw.text((100, 920), f"「 {scripture_str} 」", fill=(253, 224, 71, 255), font=font_t)
+        draw.text((100, 910), f"「 {scripture_str} 」", fill=(253, 224, 71, 255), font=font_t)
     if church_name:
-        draw.text((100, 970), church_name, fill=(147, 197, 253, 255), font=font_t)
+        draw.text((100, 965), church_name, fill=(147, 197, 253, 255), font=font_t)
 
     out_buf = io.BytesIO()
     combined.convert("RGB").save(out_buf, format="PNG")
@@ -813,11 +848,10 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
     except Exception:
         return io.BytesIO(content.encode("utf-8"))
 
-# --- 100% 동적 설교파싱 엔진 (하드코딩 샘플 텍스트 전면 제거) ---
+# --- 100% 동적 설교 파싱 엔진 ---
 def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
     text = summary_content if summary_content and len(summary_content) > 50 else full_sermon
     
-    # 1. 핵심 명제
     prop = ""
     prop_match = re.search(r'(?:🎯|핵심\s*명제|명제|개요)[:\s]*(.*?)(?=\n📌|\n💡|\n🙏|\n\d+\.|\n[1-9]대지|$)', text, re.DOTALL)
     if prop_match:
@@ -826,7 +860,6 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
         lines = [l.strip() for l in text.split('\n') if l.strip()]
         prop = "\n".join(lines[:2]) if lines else title
 
-    # 2. 대지/요점 추출 (Numbered / Bullet Points)
     points = []
     point_matches = re.findall(r'(?:^|\n)\s*(?:[1-4]\.|\d+[\.\)]|제\s*[1-4]\s*대지|•|-)\s*(.*?)(?=\n\s*(?:[1-4]\.|\d+[\.\)]|제\s*[1-4]\s*대지|•|-|💡|🙏|🎯|📌)|$)', text, re.DOTALL)
     
@@ -846,7 +879,6 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
     while len(points) < 4:
         points.append(f"{title} - 하나님의 은혜와 인도하심에 감사하며 말씀 중심의 삶을 살아가십시오.")
 
-    # 3. 실천 적용
     app_text = ""
     app_match = re.search(r'(?:💡|실천\s*적용|삶의\s*적용|적용)[:\s]*(.*?)(?=\n🙏|\n기도|$)', text, re.DOTALL)
     if app_match:
@@ -854,7 +886,6 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
     else:
         app_text = f"1. 매일 일상 속에서 {scripture} 말씀을 생각하며 마음에 새깁니다.\n2. 세상의 자랑이 아닌 오직 하나님의 신실하신 약속을 선포합니다.\n3. 주신 말씀에 순종하여 담대함과 기도로 승리하는 삶을 살아갑니다."
 
-    # 4. 마침 기도문
     prayer_text = ""
     prayer_match = re.search(r'(?:🙏|기도문|결단\s*및\s*축복|마침\s*기도|기도)[:\s]*(.*?)$', text, re.DOTALL)
     if prayer_match:
@@ -869,7 +900,7 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
         "prayer": prayer_text
     }
 
-# --- 동적 10-슬라이드 구조화 PPTX 생성기 (색상 대비 규칙 100% 적용) ---
+# --- 동적 10-슬라이드 구조화 PPTX 생성기 ---
 def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str, full_sermon: str = "") -> io.BytesIO:
     try:
         prs = Presentation()
@@ -896,14 +927,13 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             fill.solid()
             fill.fore_color.rgb = RGBColor(248, 250, 252)
 
-        # 100% 동적 파싱
         parsed = parse_sermon_content(title, scripture, summary_content, full_sermon)
         prop_text = parsed["prop"]
         points = parsed["points"]
         app_text = parsed["app"]
         prayer_text = parsed["prayer"]
 
-        # [Slide 1: 표지 - DARK BG -> LIGHT/YELLOW FONT]
+        # [Slide 1: 표지]
         s1 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s1, CARD_BACKGROUNDS[0])
         tb1 = s1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.8))
@@ -912,7 +942,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p1.font.size, p1.font.bold = Pt(38), True
         p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
 
-        # [Slide 2: 들어가며 & 핵심 명제 - LIGHT BG -> DARK NAVY FONT]
+        # [Slide 2: 들어가며]
         s2 = prs.slides.add_slide(blank_layout)
         set_light_slide(s2)
         tb2 = s2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -928,7 +958,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p2_body.font.size = Pt(20)
         p2_body.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 3: 설교의 전체 흐름 - DARK BG -> LIGHT FONT]
+        # [Slide 3: 설교의 전체 흐름]
         s3 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s3)
         tb3_h = s3.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
@@ -950,7 +980,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             p_c.font.size, p_c.font.bold = Pt(20), True
             p_c.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 4: 본문 핵심 성구 - DARK OVERLAY BG -> LIGHT FONT]
+        # [Slide 4: 본문 핵심 성구]
         s4 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s4, CARD_BACKGROUNDS[1])
         tb4 = s4.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.0))
@@ -966,7 +996,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p4_b.font.size = Pt(20)
         p4_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 5: 제1대지 - LIGHT BG -> DARK FONT]
+        # [Slide 5: 제1대지]
         s5 = prs.slides.add_slide(blank_layout)
         set_light_slide(s5)
         tb5 = s5.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -981,7 +1011,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p5_b.font.size = Pt(20)
         p5_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 6: 제2대지 - DARK BG -> LIGHT FONT]
+        # [Slide 6: 제2대지]
         s6 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s6)
         tb6 = s6.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -996,7 +1026,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p6_b.font.size = Pt(20)
         p6_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 7: 제3대지 - LIGHT BG -> DARK FONT]
+        # [Slide 7: 제3대지]
         s7 = prs.slides.add_slide(blank_layout)
         set_light_slide(s7)
         tb7 = s7.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1011,7 +1041,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p7_b.font.size = Pt(20)
         p7_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 8: 핵심 메시지 - DARK BG -> LIGHT FONT]
+        # [Slide 8: 핵심 메시지]
         s8 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s8, CARD_BACKGROUNDS[2])
         tb8 = s8.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(11.33), Inches(5.5))
@@ -1026,7 +1056,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p8_b.font.size = Pt(20)
         p8_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 9: 삶의 적용 - LIGHT BG -> DARK FONT]
+        # [Slide 9: 삶의 적용]
         s9 = prs.slides.add_slide(blank_layout)
         set_light_slide(s9)
         tb9 = s9.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1041,7 +1071,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p9_b.font.size = Pt(19)
         p9_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 10: 결단 및 기도 - DARK BG -> LIGHT FONT]
+        # [Slide 10: 결단 및 기도]
         s10 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s10, CARD_BACKGROUNDS[0])
         tb10 = s10.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.2))
@@ -1119,6 +1149,96 @@ def generate_cardnews_pptx(slides_data, church_name=""):
     bio.seek(0)
     return bio
 
+# --- 말씀카드 고화질 PNG 합성 엔진 ---
+def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_bg_file=None, font_size=42, line_spacing=18, font_color="#FDE047", stroke_color="#000000", overlay_opacity=0.6, church_name=""):
+    canvas_w, canvas_h = 1080, 1080
+    
+    if bg_option == "직접 업로드" and custom_bg_file:
+        try:
+            base_img = PIL.Image.open(custom_bg_file).convert("RGBA").resize((canvas_w, canvas_h))
+        except Exception:
+            base_img = PIL.Image.new("RGBA", (canvas_w, canvas_h), (15, 23, 42, 255))
+    elif bg_option == "기본":
+        base_img = PIL.Image.new("RGBA", (canvas_w, canvas_h), (15, 23, 42, 255))
+    else:
+        bg_url = CARD_BACKGROUNDS[0]
+        img_b = fetch_image_bytes(bg_url)
+        if img_b:
+            base_img = PIL.Image.open(io.BytesIO(img_b)).convert("RGBA").resize((canvas_w, canvas_h))
+        else:
+            base_img = PIL.Image.new("RGBA", (canvas_w, canvas_h), (15, 23, 42, 255))
+
+    # 반투명 어두운 오버레이 레이어
+    alpha_val = int(255 * overlay_opacity)
+    overlay = PIL.Image.new("RGBA", (canvas_w, canvas_h), (10, 15, 30, alpha_val))
+    combined = PIL.Image.alpha_composite(base_img, overlay)
+    draw = PIL.ImageDraw.Draw(combined)
+
+    font_main = None
+    for f_p in ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgun.ttf"]:
+        if os.path.exists(f_p):
+            try: font_main = PIL.ImageFont.truetype(f_p, font_size); break
+            except Exception: pass
+    if not font_main: font_main = PIL.ImageFont.load_default()
+
+    font_sub = None
+    for f_p in ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgun.ttf"]:
+        if os.path.exists(f_p):
+            try: font_sub = PIL.ImageFont.truetype(f_p, 30); break
+            except Exception: pass
+    if not font_sub: font_sub = PIL.ImageFont.load_default()
+
+    # 색상 파싱
+    def parse_hex(c):
+        if c.startswith('#'):
+            hex_c = c.lstrip('#')
+            return tuple(int(hex_c[i:i+2], 16) for i in (0, 2, 4)) + (255,)
+        return (255, 255, 255, 255)
+
+    f_color = parse_hex(font_color)
+    s_color = parse_hex(stroke_color) if stroke_color else None
+
+    # 본문 자동 줄바꿈
+    max_w = 880
+    wrapped_text = wrap_korean_text(text_str, font_main, max_w, draw)
+
+    # 중앙 위치 계산
+    bbox = draw.multiline_textbbox((0, 0), wrapped_text, font=font_main, spacing=line_spacing)
+    t_w = bbox[2] - bbox[0]
+    t_h = bbox[3] - bbox[1]
+    
+    x_pos = (canvas_w - t_w) // 2
+    y_pos = (canvas_h - t_h) // 2 - 40
+
+    # 테두리(Stroke)
+    if s_color:
+        for dx in range(-2, 3):
+            for dy in range(-2, 3):
+                if dx != 0 or dy != 0:
+                    draw.multiline_text((x_pos + dx, y_pos + dy), wrapped_text, font=font_main, fill=s_color, align="center", spacing=line_spacing)
+
+    draw.multiline_text((x_pos, y_pos), wrapped_text, font=font_main, fill=f_color, align="center", spacing=line_spacing)
+
+    # 성경 구절 라벨
+    if scripture_str:
+        scrip_text = f"「 {scripture_str} 」"
+        s_bbox = draw.textbbox((0, 0), scrip_text, font=font_sub)
+        sx = (canvas_w - (s_bbox[2] - s_bbox[0])) // 2
+        sy = y_pos + t_h + 50
+        draw.text((sx, sy), scrip_text, fill=(253, 224, 71, 255), font=font_sub)
+
+    # 하단 교회명
+    if church_name:
+        c_bbox = draw.textbbox((0, 0), church_name, font=font_sub)
+        cx = (canvas_w - (c_bbox[2] - c_bbox[0])) // 2
+        cy = canvas_h - 100
+        draw.text((cx, cy), church_name, fill=(147, 197, 253, 255), font=font_sub)
+
+    out_buf = io.BytesIO()
+    combined.convert("RGB").save(out_buf, format="PNG")
+    out_buf.seek(0)
+    return out_buf
+
 async def generate_voiceover_audio(text: str, voice: str = "ko-KR-InJoonNeural") -> str:
     out_path = "./outputs/voiceover_temp.mp3"
     os.makedirs("./outputs", exist_ok=True)
@@ -1180,7 +1300,7 @@ if "sermon_title" not in st.session_state:
 if "sermon_scripture" not in st.session_state:
     st.session_state.sermon_scripture = current_s["scripture"]
 if "preacher_name" not in st.session_state:
-    st.session_state.preacher_name = "담임목사"
+    st.session_state.preacher_name = "김세훈목사"
 if "dash_active_view" not in st.session_state:
     st.session_state.dash_active_view = "설교 요약"
 
@@ -1192,6 +1312,7 @@ app_mode = st.sidebar.radio(
         "📤 새 설교 등록/원고작성",
         "🎙️ AI 보이스오버 스튜디오",
         "🎬 쇼츠 만들기 (스튜디오)",
+        "📷 말씀카드 이미지",
         "📚 설교 서재 (Sermon Library)"
     ]
 )
@@ -1619,7 +1740,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.rerun()
 
             if fam_txt:
-                if st.session_state.get("edit_mode_fam_{age_group}", False):
+                if st.session_state.get(f"edit_mode_fam_{age_group}", False):
                     edited_fam = st.text_area("가정예배지 편집", value=fam_txt, height=320, key=f"edit_fam_{age_group}")
                     if st.button("💾 저장", key=f"save_fam_{age_group}"):
                         st.session_state[f"family_worship_{age_group}"] = edited_fam
@@ -2037,7 +2158,75 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                 st.download_button("📥 MP4 비디오 파일 다운로드", data=vf, file_name="sermon_shorts.mp4", mime="video/mp4", key="dl_shorts_mp4")
 
 # ==============================================================================
-# 5. 📚 설교 서재 (Sermon Library) - 영구 보관 및 다차원 정밀 필터링
+# 5. 📷 말씀카드 이미지 스튜디오
+# ==============================================================================
+elif app_mode == "📷 말씀카드 이미지":
+    st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📷 말씀카드 이미지 스튜디오</h1>", unsafe_allow_html=True)
+    st.caption("설교 핵심 구절과 메시지를 바탕으로 무한 고화질 말씀카드 이미지를 제작하고 내려받습니다.")
+
+    vc_c1, vc_c2 = st.columns([1.3, 1.2])
+
+    default_v_text = st.session_state.get("sermon_summary_text", "")
+    if default_v_text:
+        first_lines = [l.strip() for l in default_v_text.split('\n') if l.strip() and not l.startswith('🎯') and not l.startswith('📌')][:3]
+        v_init_str = " ".join(first_lines) if first_lines else st.session_state.sermon_title
+    else:
+        v_init_str = st.session_state.full_sermon[:120]
+
+    with vc_c1:
+        st.markdown("#### ✏️ 말씀 문구 & 디자인 커스텀")
+        v_text_input = st.text_area("말씀문구 / 메시지", value=v_init_str, height=120, key="vc_text_in")
+        v_scrip_input = st.text_input("성경 구절", value=st.session_state.sermon_scripture, key="vc_scrip_in")
+        v_church_input = st.text_input("교회명 배지", value=st.session_state.get("cn_church_name", "화광교회"), key="vc_church_in")
+
+        st.markdown("#### 🎨 배경 & 폰트 스타일링")
+        bg_col1, bg_col2 = st.columns(2)
+        with bg_col1:
+            vc_bg_opt = st.radio("배경 방식", ["사진", "기본", "직접 업로드"], key="vc_bg_radio")
+        with bg_col2:
+            vc_up_file = None
+            if vc_bg_opt == "직접 업로드":
+                vc_up_file = st.file_uploader("배경 이미지 업로드", type=["jpg", "png", "jpeg"], key="vc_up_file_widget")
+
+        st.markdown("#### 📐 세부 텍스트 & 오버레이 세팅")
+        s_col1, s_col2 = st.columns(2)
+        with s_col1:
+            vc_fsize = st.slider("폰트 크기 (pt)", min_value=28, max_value=68, value=42, step=2, key="vc_fsize_sl")
+            vc_lspace = st.slider("줄간격 (행간)", min_value=10, max_value=40, value=18, step=2, key="vc_lspace_sl")
+        with s_col2:
+            vc_fcolor = st.color_picker("글자 색상", value="#FDE047", key="vc_fcolor_pk")
+            vc_scolor = st.color_picker("테두리 색상", value="#000000", key="vc_scolor_pk")
+            vc_opacity = st.slider("배경 어둡기 (투명도)", min_value=0.2, max_value=0.9, value=0.6, step=0.05, key="vc_op_sl")
+
+    with vc_c2:
+        st.markdown("### 🖼️ 말씀카드 미리보기 & 다운로드")
+        
+        # 실시간 말씀카드 PNG 생성
+        card_png_bytes = generate_verse_card_png(
+            text_str=v_text_input,
+            scripture_str=v_scrip_input,
+            bg_option=vc_bg_opt,
+            custom_bg_file=vc_up_file,
+            font_size=vc_fsize,
+            line_spacing=vc_lspace,
+            font_color=vc_fcolor,
+            stroke_color=vc_scolor,
+            overlay_opacity=vc_opacity,
+            church_name=v_church_input
+        )
+        
+        st.image(card_png_bytes, caption="1:1 정사각형 고화질 말씀카드", use_column_width=True)
+        
+        st.download_button(
+            "📥 말씀카드 PNG 고화질 다운로드",
+            data=card_png_bytes,
+            file_name=f"{st.session_state.sermon_title}_말씀카드.png",
+            mime="image/png",
+            key="dl_verse_card_png_btn"
+        )
+
+# ==============================================================================
+# 6. 📚 설교 서재 (Sermon Library) - 영구 보관 및 다차원 정밀 필터링
 # ==============================================================================
 elif app_mode == "📚 설교 서재 (Sermon Library)":
     st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📚 설교 서재 (영구 기록보관소)</h1>", unsafe_allow_html=True)
