@@ -128,7 +128,6 @@ NEW_TESTAMENT_BOOKS = [
 BIBLE_BOOKS = OLD_TESTAMENT_BOOKS + NEW_TESTAMENT_BOOKS
 
 def classify_scripture(scripture_text: str):
-    """성경 구절 텍스트에서 구약/신약 및 성경 책 이름을 자동 추출"""
     if not scripture_text:
         return "기타", "성경전체"
     
@@ -792,61 +791,68 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
     except Exception:
         return io.BytesIO(content.encode("utf-8"))
 
-# --- 컨설팅 PT급 10-슬라이드 구조화 PPTX 생성기 ---
+# --- 컨설팅 PT급 10-슬라이드 구조화 PPTX 생성기 (색상 대비 대비 철저 구현) ---
 def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str) -> io.BytesIO:
     try:
         prs = Presentation()
         prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
         blank_layout = prs.slide_layouts[6]
 
-        def set_bg_with_overlay(slide, img_url=None, color=RGBColor(15, 23, 42)):
+        # 어두운 슬라이드 배경 오버레이 (Dark Bg -> Light Font)
+        def set_dark_slide(slide, img_url=None):
             if img_url:
                 img_b = fetch_image_bytes(img_url)
                 if img_b:
                     slide.shapes.add_picture(io.BytesIO(img_b), 0, 0, width=Inches(13.333), height=Inches(7.5))
-            fill = slide.background.fill
-            fill.solid()
-            fill.fore_color.rgb = color
+            else:
+                fill = slide.background.fill
+                fill.solid()
+                fill.fore_color.rgb = RGBColor(15, 23, 42)
 
             overlay = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
             overlay.fill.solid()
             overlay.fill.fore_color.rgb = RGBColor(10, 15, 30)
             overlay.line.fill.background()
 
+        # 밝은 슬라이드 배경 오버레이 (Light Bg -> Dark Font)
+        def set_light_slide(slide):
+            fill = slide.background.fill
+            fill.solid()
+            fill.fore_color.rgb = RGBColor(248, 250, 252)
+
+        # [슬라이드 1: 표지 - DARK BG -> LIGHT FONT]
         s1 = prs.slides.add_slide(blank_layout)
-        set_bg_with_overlay(s1, CARD_BACKGROUNDS[0])
+        set_dark_slide(s1, CARD_BACKGROUNDS[0])
         tb1 = s1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.8))
         p1 = tb1.text_frame.paragraphs[0]
         p1.text = f"주 일 설 교\n\n{title}\n\n보이지 않는 가장 고귀한 유산\n본문 · {scripture}"
         p1.font.size, p1.font.bold = Pt(38), True
-        p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
+        p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER  # Bright Yellow
 
+        # [슬라이드 2: 들어가며 & 핵심 명제 - LIGHT BG -> DARK FONT]
         s2 = prs.slides.add_slide(blank_layout)
-        s2.background.fill.solid()
-        s2.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
-        
+        set_light_slide(s2)
         tb2 = s2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
         tf2 = tb2.text_frame
         tf2.word_wrap = True
         p2_head = tf2.paragraphs[0]
         p2_head.text = f"들어가며 · 가장 귀한 빈티지 유산 ({scripture})"
         p2_head.font.size, p2_head.font.bold = Pt(32), True
-        p2_head.font.color.rgb = RGBColor(30, 58, 138)
+        p2_head.font.color.rgb = RGBColor(30, 58, 138)  # Deep Navy
         
         p2_body = tf2.add_paragraph()
         p2_body.text = f"\n사람들은 자녀에게 부동산이나 통장을 물려주려 애쓰지만, 정작 보이지 않는 가장 귀한 하나님을 놓칠 때가 많습니다.\n\n우리가 물려줄 수 있는 최고의 전통은 바로 내가 만난 하나님에 대한 생생한 간증입니다."
         p2_body.font.size = Pt(20)
-        p2_body.font.color.rgb = RGBColor(30, 41, 59)
+        p2_body.font.color.rgb = RGBColor(30, 41, 59)  # Dark Charcoal
 
+        # [슬라이드 3: 설교의 전체 흐름 - DARK BG -> LIGHT FONT]
         s3 = prs.slides.add_slide(blank_layout)
-        s3.background.fill.solid()
-        s3.background.fill.fore_color.rgb = RGBColor(15, 23, 42)
-        
+        set_dark_slide(s3)
         tb3_h = s3.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
         hp3 = tb3_h.text_frame.paragraphs[0]
         hp3.text = f"설교의 흐름 (Sermon Outline)"
         hp3.font.size, hp3.font.bold = Pt(32), True
-        hp3.font.color.rgb = RGBColor(253, 224, 71)
+        hp3.font.color.rgb = RGBColor(253, 224, 71)  # Bright Yellow
 
         for card_i, (num_str, title_str) in enumerate([
             ("01", "침묵은 곧 삭제입니다"),
@@ -857,116 +863,119 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             top_pos = Inches(2.2 + (card_i * 1.1))
             shape = s3.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.0), top_pos, Inches(11.33), Inches(0.9))
             shape.fill.solid()
-            shape.fill.fore_color.rgb = RGBColor(30, 41, 59)
+            shape.fill.fore_color.rgb = RGBColor(30, 41, 59)  # Dark Card BG
             shape.line.color.rgb = RGBColor(51, 65, 85)
             tf_card = shape.text_frame
             p_c = tf_card.paragraphs[0]
             p_c.text = f"  {num_str}   {title_str}"
             p_c.font.size, p_c.font.bold = Pt(20), True
-            p_c.font.color.rgb = RGBColor(241, 245, 249)
+            p_c.font.color.rgb = RGBColor(241, 245, 249)  # White
 
+        # [슬라이드 4: 본문 핵심 성구 - DARK OVERLAY BG -> LIGHT FONT]
         s4 = prs.slides.add_slide(blank_layout)
-        set_bg_with_overlay(s4, CARD_BACKGROUNDS[1])
+        set_dark_slide(s4, CARD_BACKGROUNDS[1])
         tb4 = s4.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.0))
         tf4 = tb4.text_frame
         tf4.word_wrap = True
         p4_h = tf4.paragraphs[0]
         p4_h.text = f"본문 말씀  ·  {scripture}\n"
         p4_h.font.size, p4_h.font.bold = Pt(28), True
-        p4_h.font.color.rgb = RGBColor(147, 197, 253)
+        p4_h.font.color.rgb = RGBColor(147, 197, 253)  # Light Blue
         
         p4_b = tf4.add_paragraph()
         p4_b.text = "4절  우리가 이를 그들의 자손에게 숨기지 아니하고 여호와의 영예와 그의 능력과 그가 행하신 기이한 사적을 후대에 전하리로다\n5절  그들의 자손에게 알리라 하셨으니 이는 그들로 후대 곧 태어날 자손에게 이를 알게 하고\n7절  그들로 그들의 소망을 하나님께 두며 하나님께서 행하신 일을 잊지 아니하고"
         p4_b.font.size = Pt(19)
-        p4_b.font.color.rgb = RGBColor(241, 245, 249)
+        p4_b.font.color.rgb = RGBColor(241, 245, 249)  # White
 
+        # [슬라이드 5: 제1대지 - LIGHT BG -> DARK FONT]
         s5 = prs.slides.add_slide(blank_layout)
-        s5.background.fill.solid()
-        s5.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
+        set_light_slide(s5)
         tb5 = s5.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
         tf5 = tb5.text_frame
         tf5.word_wrap = True
         p5_h = tf5.paragraphs[0]
         p5_h.text = f"01. 첫 번째 원리 · 침묵은 곧 삭제입니다"
         p5_h.font.size, p5_h.font.bold = Pt(30), True
-        p5_h.font.color.rgb = RGBColor(30, 58, 138)
+        p5_h.font.color.rgb = RGBColor(30, 58, 138)  # Deep Navy
         p5_b = tf5.add_paragraph()
         p5_b.text = "\n• 숨기지 않음의 의지: 하나님의 영예와 능력을 자손에게 전하겠다는 의도적인 결단과 작정이 필요합니다.\n\n• 삭제와 망각의 위험: 내가 침묵하는 순간, 다음 세대의 신앙은 중립 상태가 아니라 영적으로 완전히 삭제됩니다."
         p5_b.font.size = Pt(20)
-        p5_b.font.color.rgb = RGBColor(30, 41, 59)
+        p5_b.font.color.rgb = RGBColor(30, 41, 59)  # Dark Charcoal
 
+        # [슬라이드 6: 제2대지 - DARK BG -> LIGHT FONT]
         s6 = prs.slides.add_slide(blank_layout)
-        s6.background.fill.solid()
-        s6.background.fill.fore_color.rgb = RGBColor(15, 23, 42)
+        set_dark_slide(s6)
         tb6 = s6.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
         tf6 = tb6.text_frame
         tf6.word_wrap = True
         p6_h = tf6.paragraphs[0]
         p6_h.text = f"02. 두 번째 원리 · 하나씩 세어가며 전수하라"
         p6_h.font.size, p6_h.font.bold = Pt(30), True
-        p6_h.font.color.rgb = RGBColor(253, 224, 71)
+        p6_h.font.color.rgb = RGBColor(253, 224, 71)  # Yellow
         p6_b = tf6.add_paragraph()
         p6_b.text = "\n• 구체성: 하나님이 내 삶에 행하신 일들을 수를 세듯 구체적으로 알리라.\n• 지속성: 단회성 이벤트가 아닌 일상 속에서 계속 전달하기.\n• 경이로움: 입이 벌어질 만큼 놀라운 하나님의 사적을 간증하기.\n\n📊 한국 청년 중 가정 내 신앙 대화 비율: 오직 12%"
         p6_b.font.size = Pt(20)
-        p6_b.font.color.rgb = RGBColor(241, 245, 249)
+        p6_b.font.color.rgb = RGBColor(241, 245, 249)  # White
 
+        # [슬라이드 7: 제3대지 - LIGHT BG -> DARK FONT]
         s7 = prs.slides.add_slide(blank_layout)
-        s7.background.fill.solid()
-        s7.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
+        set_light_slide(s7)
         tb7 = s7.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
         tf7 = tb7.text_frame
         tf7.word_wrap = True
         p7_h = tf7.paragraphs[0]
         p7_h.text = f"03. 세 번째 원리 · 부지런히 새기고 가르치라"
         p7_h.font.size, p7_h.font.bold = Pt(30), True
-        p7_h.font.color.rgb = RGBColor(30, 58, 138)
+        p7_h.font.color.rgb = RGBColor(30, 58, 138)  # Deep Navy
         p7_b = tf7.add_paragraph()
         p7_b.text = "\n1. 새김: 숫돌에 칼을 갈듯 말씀을 자녀의 마음속에 날카롭고 선명하게 새깁니다.\n2. 일상: 길을 갈 때나 누워 있을 때나 언제 어디서든 끊임없이 가르칩니다.\n3. 소망: 자신의 능력이 아닌 오직 하나님 한 분에게만 소망을 두게 합니다."
         p7_b.font.size = Pt(20)
-        p7_b.font.color.rgb = RGBColor(30, 41, 59)
+        p7_b.font.color.rgb = RGBColor(30, 41, 59)  # Dark Charcoal
 
+        # [슬라이드 8: 신앙의 모델 - DARK BG -> LIGHT FONT]
         s8 = prs.slides.add_slide(blank_layout)
-        set_bg_with_overlay(s8, CARD_BACKGROUNDS[2])
+        set_dark_slide(s8, CARD_BACKGROUNDS[2])
         tb8 = s8.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(11.33), Inches(5.5))
         tf8 = tb8.text_frame
         tf8.word_wrap = True
         p8_h = tf8.paragraphs[0]
         p8_h.text = f"04. 신앙의 모델 · 가문을 바꾼 한 사람의 결단"
         p8_h.font.size, p8_h.font.bold = Pt(30), True
-        p8_h.font.color.rgb = RGBColor(253, 224, 71)
+        p8_h.font.color.rgb = RGBColor(253, 224, 71)  # Yellow
         p8_b = tf8.add_paragraph()
         p8_b.text = "\n1908년 유교 전통 집안에서 개종한 손종일 성도의 헌신은 매일 새벽기도와 가정예배로 아들에게 신앙을 전수했습니다.\n\n그 아들 손양원 목사는 원수를 사랑하는 십자가의 삶을 살았고, 그 위대한 신앙은 다시 그의 후손들에게 생생히 흘러갔습니다."
         p8_b.font.size = Pt(20)
-        p8_b.font.color.rgb = RGBColor(241, 245, 249)
+        p8_b.font.color.rgb = RGBColor(241, 245, 249)  # White
 
+        # [슬라이드 9: 삶의 적용 - LIGHT BG -> DARK FONT]
         s9 = prs.slides.add_slide(blank_layout)
-        s9.background.fill.solid()
-        s9.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
+        set_light_slide(s9)
         tb9 = s9.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
         tf9 = tb9.text_frame
         tf9.word_wrap = True
         p9_h = tf9.paragraphs[0]
         p9_h.text = f"삶의 적용 · 이렇게 살아갑시다"
         p9_h.font.size, p9_h.font.bold = Pt(30), True
-        p9_h.font.color.rgb = RGBColor(30, 58, 138)
+        p9_h.font.color.rgb = RGBColor(30, 58, 138)  # Deep Navy
         p9_b = tf9.add_paragraph()
         p9_b.text = "\n1. 바쁘다는 핑계나 성공주의 때문에 침묵하지 않고 의지적 결단으로 복음을 전한다.\n\n2. 내 삶에 역사하신 하나님의 실재적 은혜와 십자가 복음을 일상 속에서 하나하나 세어가며 들려준다.\n\n3. 자녀들이 세상 물질이 아닌 오직 살아계신 하나님 한 분에게만 소망을 두도록 기도한다."
         p9_b.font.size = Pt(19)
-        p9_b.font.color.rgb = RGBColor(30, 41, 59)
+        p9_b.font.color.rgb = RGBColor(30, 41, 59)  # Dark Charcoal
 
+        # [슬라이드 10: 결단 및 기도 - DARK BG -> LIGHT FONT]
         s10 = prs.slides.add_slide(blank_layout)
-        set_bg_with_overlay(s10, CARD_BACKGROUNDS[0])
+        set_dark_slide(s10, CARD_BACKGROUNDS[0])
         tb10 = s10.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.2))
         tf10 = tb10.text_frame
         tf10.word_wrap = True
         p10_h = tf10.paragraphs[0]
         p10_h.text = f"나가며 · 신앙 전수, 지금 시작하십시오\n"
         p10_h.font.size, p10_h.font.bold = Pt(28), True
-        p10_h.font.color.rgb = RGBColor(253, 224, 71)
+        p10_h.font.color.rgb = RGBColor(253, 224, 71)  # Yellow
         p10_b = tf10.add_paragraph()
         p10_b.text = "내가 침묵하면 하나님의 역사는 삭제되지만, 내가 말하면 태어나지도 않은 후대까지 생명이 전달됩니다.\n\n🙏 기도: 살아계신 하나님, 우리 삶에 행하신 놀라운 일들을 침묵함으로 삭제하지 않게 하소서. 자녀들에게 세상 유산보다 더 귀한 십자가 복음을 전수하게 하시고, 대대손손 믿음의 대를 이어가는 신앙의 명문가로 축복하여 주시옵소서. 예수님의 이름으로 기도드립니다. 아멘."
         p10_b.font.size = Pt(18)
-        p10_b.font.color.rgb = RGBColor(241, 245, 249)
+        p10_b.font.color.rgb = RGBColor(241, 245, 249)  # White
 
         bio = io.BytesIO()
         prs.save(bio)
@@ -1515,7 +1524,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.rerun()
 
             if fam_txt:
-                if st.session_state.get(f"edit_mode_fam_{age_group}", False):
+                if st.session_state.get("edit_mode_fam_{age_group}", False):
                     edited_fam = st.text_area("가정예배지 편집", value=fam_txt, height=320, key=f"edit_fam_{age_group}")
                     if st.button("💾 저장", key=f"save_fam_{age_group}"):
                         st.session_state[f"family_worship_{age_group}"] = edited_fam
@@ -1950,11 +1959,9 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
 elif app_mode == "📚 설교 서재 (Sermon Library)":
     st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📚 설교 서재 (영구 기록보관소)</h1>", unsafe_allow_html=True)
     
-    # DB 최신 동기화
     sermons_db = load_sermons_from_db()
     st.caption(f"총 {len(sermons_db)}편의 설교 원고가 영구 보관 중입니다.")
 
-    # 다차원 검색 및 정밀 필터바
     st.markdown("#### 🔍 다차원 정밀 검색 및 분류 필터")
     f_c1, f_c2, f_c3, f_c4 = st.columns([1.5, 1.2, 1.5, 1.2])
     
@@ -1969,16 +1976,13 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
 
     st.write("---")
 
-    # 필터링 적용 로직
     filtered_sermons = []
     for s_item in sermons_db:
-        # 성경 구절 분석 자동 보완
         if "testament" not in s_item or "book" not in s_item:
             testament, book = classify_scripture(s_item.get("scripture", ""))
             s_item["testament"] = testament
             s_item["book"] = book
 
-        # 1. 키워드 검색
         if search_kw:
             kw_match = (
                 search_kw.lower() in s_item.get("title", "").lower() or
@@ -1989,17 +1993,14 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
             if not kw_match:
                 continue
 
-        # 2. 구약/신약 필터
         if testament_filter != "전체" and s_item.get("testament") != testament_filter:
             continue
 
-        # 3. 성경 책별 필터
         if book_filter != "전체" and s_item.get("book") != book_filter:
             continue
 
         filtered_sermons.append(s_item)
 
-    # 정렬 적용
     if sort_order == "오래된순":
         filtered_sermons.sort(key=lambda x: x.get("id", 0))
     else:
