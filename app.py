@@ -13,6 +13,7 @@ import edge_tts
 import urllib.parse
 import urllib.request
 import yt_dlp
+import numpy as np
 from datetime import datetime
 from docx import Document
 from docx.shared import Pt as DocxPt, RGBColor as DocxRGB
@@ -27,8 +28,8 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from moviepy.editor import VideoFileClip, TextClip, ColorClip, CompositeVideoClip
-from video_engine import create_animated_video
+from moviepy.editor import VideoFileClip, ColorClip, CompositeVideoClip, ImageClip
+from video_engine import create_animated_video, create_pil_text_clip
 
 st.set_page_config(
     page_title="MY 설교 AI 스튜디오 Pro",
@@ -289,7 +290,7 @@ def fetch_image_bytes(url: str):
     except Exception:
         return None
 
-# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 ---
+# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 (PIL 전용 자막) ---
 def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, title: str, subtitle_text: str, church_name: str = ""):
     out_dir = "./outputs"
     os.makedirs(out_dir, exist_ok=True)
@@ -336,36 +337,48 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
     top_bar = ColorClip(size=(1080, 240), color=(0,0,0), duration=clip_dur).set_opacity(0.45).set_position(('center', 100))
     overlays.append(top_bar)
     
-    title_clip = TextClip(
-        title,
-        fontsize=48,
-        color="#FDE047",
-        font="NanumGothic-Bold",
-        method="caption",
-        size=(920, None)
-    ).set_position(("center", 140)).set_duration(clip_dur)
+    title_clip = (
+        create_pil_text_clip(
+            title,
+            fontsize=48,
+            color="#FDE047",
+            stroke_color="black",
+            stroke_width=2,
+            size=(920, None),
+            duration=clip_dur
+        )
+        .set_position(("center", 140))
+    )
     overlays.append(title_clip)
     
     if subtitle_text:
-        sub_clip_txt = TextClip(
-            subtitle_text,
-            fontsize=40,
-            color="white",
-            stroke_color="black",
-            stroke_width=1.5,
-            font="NanumGothic-Bold",
-            method="caption",
-            size=(900, None)
-        ).set_position(("center", 1400)).set_duration(clip_dur)
+        sub_clip_txt = (
+            create_pil_text_clip(
+                subtitle_text,
+                fontsize=40,
+                color="white",
+                stroke_color="black",
+                stroke_width=2,
+                size=(900, None),
+                duration=clip_dur
+            )
+            .set_position(("center", 1400))
+        )
         overlays.append(sub_clip_txt)
         
     if church_name:
-        church_clip = TextClip(
-            church_name,
-            fontsize=28,
-            color="#93C5FD",
-            font="NanumGothic-Bold"
-        ).set_position(("center", 1780)).set_duration(clip_dur)
+        church_clip = (
+            create_pil_text_clip(
+                church_name,
+                fontsize=28,
+                color="#93C5FD",
+                stroke_color="black",
+                stroke_width=1,
+                size=(800, None),
+                duration=clip_dur
+            )
+            .set_position(("center", 1780))
+        )
         overlays.append(church_clip)
         
     comp = CompositeVideoClip(overlays)
@@ -611,7 +624,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, content: str) -> 
         return create_document_pptx(title, content)
 
 def generate_cardnews_pptx(slides_data, church_name=""):
-    """풍경 배경 이미지와 반투명 딤 필터, 교회명 배지가 적용된 1:1 고품질 카드뉴스 PPT"""
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(10), Inches(10)
     blank_layout = prs.slide_layouts[6]
