@@ -7,7 +7,6 @@ import re
 import asyncio
 import edge_tts
 import urllib.parse
-import urllib.request
 from datetime import datetime
 from docx import Document
 from docx.shared import Pt as DocxPt, RGBColor as DocxRGB
@@ -30,7 +29,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 툴바 버튼 CSS 스타일링
+# 버튼 가로 밀착 CSS 스타일링
 st.markdown("""
 <style>
     div[data-testid="column"] button {
@@ -41,7 +40,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. 개인 보안 접속 인증 ---
+# --- 1. 보안 인증 ---
 USER_PIN = st.secrets.get("APP_PIN", "7777")
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -57,17 +56,17 @@ if not st.session_state.authenticated:
             st.error("PIN 코드가 올바르지 않습니다.")
     st.stop()
 
-# --- 2. 초고속 Gemini AI 엔진 (속도 극대화 & 영문 완전 차단) ---
+# --- 2. 초고속 Gemini AI 엔진 (영문 잡문 100% 차단) ---
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 sidebar_key = st.sidebar.text_input("🔑 Gemini API Key", value=secret_key, type="password")
 ACTIVE_KEY = sidebar_key.strip() if sidebar_key else secret_key.strip()
 
 def clean_korean_output(text: str) -> str:
-    """영문 기획 메모 및 잡문을 100% 제거하고 순수 한국어만 추출"""
+    """영문 기획 과정 및 메모를 완전 차단하고 순수 한국어만 추출"""
     if not text:
         return ""
     
-    # 한국어 시작 마커 탐색
+    # 한국어 시작 지점부터 자르기
     markers = [
         r"(\[.*?\])",
         r"(###\s*[0-9가-힣])",
@@ -88,13 +87,11 @@ def clean_korean_output(text: str) -> str:
             cleaned.append("")
             continue
             
-        # 영문 메타데이터 라인 스킵
         if re.match(r'^(Reliable|100%|Check|Ensure|Draft|Concept|Focus|Selection|Idea|Question|Application|Target|Passage|Summary)', stripped, re.IGNORECASE):
             continue
         if stripped.startswith("* Check") or stripped.startswith("* Ensure") or stripped.startswith("* Focus:"):
             continue
             
-        # 한글 없는 긴 영문 줄 제거
         k_count = len(re.findall(r'[가-힣]', stripped))
         e_count = len(re.findall(r'[a-zA-Z]', stripped))
         if e_count > 8 and k_count == 0:
@@ -119,10 +116,9 @@ def get_ai_response(prompt: str, is_json: bool = True):
     system_instruction = (
         "당신은 한국 교회의 사역을 돕는 목회 전문 AI 어시스턴트입니다. "
         "영문 생각 과정, 기획 메모(Drafting, Concept, Focus 등)나 영어 단어는 일절 작성하지 마십시오. "
-        "서론의 인사말이나 메타 안내 문구 없이, 요청한 한국어 사역 문서 본문만 바로 출력하십시오."
+        "서론 인사말 없이 오직 바로 사용할 수 있는 100% 완성된 한국어 사역 문서 본문만 출력하십시오."
     )
 
-    # 초고속 Flash 모델 고정 호출 (지연 시간 최소화)
     fast_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-pro"]
     last_error_msg = ""
     
@@ -133,16 +129,16 @@ def get_ai_response(prompt: str, is_json: bool = True):
                 try:
                     res = model.generate_content(
                         prompt,
-                        generation_config={"response_mime_type": "application/json", "temperature": 0.3}
+                        generation_config={"response_mime_type": "application/json", "temperature": 0.2}
                     )
                     return json.loads(res.text)
                 except Exception:
-                    res = model.generate_content(prompt, generation_config={"temperature": 0.3})
+                    res = model.generate_content(prompt, generation_config={"temperature": 0.2})
                     match = re.search(r"\{.*\}|\[.*\]", res.text, re.DOTALL)
                     if match:
                         return json.loads(match.group(0))
             else:
-                res = model.generate_content(prompt, generation_config={"temperature": 0.4})
+                res = model.generate_content(prompt, generation_config={"temperature": 0.3})
                 if res.text:
                     return clean_korean_output(res.text)
         except Exception as e:
@@ -152,145 +148,155 @@ def get_ai_response(prompt: str, is_json: bool = True):
     st.error(f"AI 호출 오류: {last_error_msg}")
     return None
 
-# --- 3. PDF 한글 폰트 캐싱 엔진 ---
+# --- 3. 안전한 폰트 등록 엔진 (오류 시에도 절대 중단되지 않음) ---
 PDF_FONT_NAME = "Helvetica"
 
 @st.cache_resource(show_spinner=False)
-def setup_korean_font():
-    global PDF_FONT_NAME
-    possible_paths = [
+def init_korean_font():
+    paths = [
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
         "/usr/share/fonts/nanum/NanumGothic.ttf",
         "C:/Windows/Fonts/malgun.ttf",
-        "/System/Library/Fonts/AppleSDGothicNeo.ttc"
+        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+        "./NanumGothic.ttf"
     ]
-    for path in possible_paths:
-        if os.path.exists(path):
+    for p in paths:
+        if os.path.exists(p):
             try:
-                pdfmetrics.registerFont(TTFont("NanumKorean", path))
-                return "NanumKorean"
+                pdfmetrics.registerFont(TTFont("NanumKoreanFont", p))
+                return "NanumKoreanFont"
             except Exception:
                 pass
-
-    local_font = "./NanumGothic.ttf"
-    if not os.path.exists(local_font):
-        try:
-            req = urllib.request.Request(
-                "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf",
-                headers={'User-Agent': 'Mozilla/5.0'}
-            )
-            with urllib.request.urlopen(req, timeout=3) as resp, open(local_font, 'wb') as out_f:
-                out_f.write(resp.read())
-        except Exception:
-            pass
-    if os.path.exists(local_font):
-        try:
-            pdfmetrics.registerFont(TTFont("NanumKorean", local_font))
-            return "NanumKorean"
-        except Exception:
-            pass
     return "Helvetica"
 
-PDF_FONT_NAME = setup_korean_font()
+PDF_FONT_NAME = init_korean_font()
 
-# --- 4. 문서 변환 엔진 (Word / PPT / PDF / TXT) ---
+# --- 4. 예외 안전 문서 변환 엔진 ---
 def create_docx(title: str, content: str) -> io.BytesIO:
-    doc = Document()
-    tp = doc.add_paragraph()
-    run = tp.add_run(title)
-    run.font.size, run.font.bold = DocxPt(18), True
-    run.font.color.rgb = DocxRGB(30, 58, 138)
-    doc.add_paragraph(f"작성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오\n")
-    for line in content.split("\n"):
-        if line.strip(): doc.add_paragraph(line.strip())
-    bio = io.BytesIO()
-    doc.save(bio)
-    bio.seek(0)
-    return bio
+    try:
+        doc = Document()
+        tp = doc.add_paragraph()
+        run = tp.add_run(title)
+        run.font.size, run.font.bold = DocxPt(18), True
+        run.font.color.rgb = DocxRGB(30, 58, 138)
+        doc.add_paragraph(f"작성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오\n")
+        for line in content.split("\n"):
+            if line.strip(): doc.add_paragraph(line.strip())
+        bio = io.BytesIO()
+        doc.save(bio)
+        bio.seek(0)
+        return bio
+    except Exception:
+        return io.BytesIO(content.encode("utf-8"))
 
 def create_pdf(title: str, content: str) -> io.BytesIO:
-    bio = io.BytesIO()
-    doc = SimpleDocTemplate(
-        bio,
-        pagesize=letter,
-        rightMargin=40,
-        leftMargin=40,
-        topMargin=40,
-        bottomMargin=40
-    )
-    
-    title_style = ParagraphStyle(
-        name="K_Title",
-        fontName=PDF_FONT_NAME,
-        fontSize=15,
-        leading=20,
-        textColor="#1e3a8a",
-        spaceAfter=8
-    )
-    meta_style = ParagraphStyle(
-        name="K_Meta",
-        fontName=PDF_FONT_NAME,
-        fontSize=8,
-        leading=12,
-        textColor="#64748b",
-        spaceAfter=12
-    )
-    body_style = ParagraphStyle(
-        name="K_Body",
-        fontName=PDF_FONT_NAME,
-        fontSize=9.5,
-        leading=15,
-        textColor="#1e293b",
-        spaceAfter=5
-    )
+    try:
+        bio = io.BytesIO()
+        doc = SimpleDocTemplate(
+            bio,
+            pagesize=letter,
+            rightMargin=40,
+            leftMargin=40,
+            topMargin=40,
+            bottomMargin=40
+        )
+        
+        t_style = ParagraphStyle(
+            name="K_Title",
+            fontName=PDF_FONT_NAME,
+            fontSize=15,
+            leading=20,
+            textColor="#1e3a8a",
+            spaceAfter=8
+        )
+        m_style = ParagraphStyle(
+            name="K_Meta",
+            fontName=PDF_FONT_NAME,
+            fontSize=8,
+            leading=12,
+            textColor="#64748b",
+            spaceAfter=12
+        )
+        b_style = ParagraphStyle(
+            name="K_Body",
+            fontName=PDF_FONT_NAME,
+            fontSize=9.5,
+            leading=15,
+            textColor="#1e293b",
+            spaceAfter=5
+        )
 
-    story = [
-        Paragraph(f"<b>{title}</b>", title_style),
-        Paragraph(f"생성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오", meta_style),
-        Spacer(1, 8),
-    ]
+        story = [
+            Paragraph(f"<b>{title}</b>", t_style),
+            Paragraph(f"생성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오", m_style),
+            Spacer(1, 8),
+        ]
 
-    for line in content.split("\n"):
-        clean = line.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        if clean:
-            clean = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', clean)
-            story.append(Paragraph(clean, body_style))
-        else:
-            story.append(Spacer(1, 4))
+        for line in content.split("\n"):
+            clean = line.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            if clean:
+                clean = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', clean)
+                story.append(Paragraph(clean, b_style))
+            else:
+                story.append(Spacer(1, 4))
 
-    doc.build(story)
-    bio.seek(0)
-    return bio
+        doc.build(story)
+        bio.seek(0)
+        return bio
+    except Exception:
+        # PDF 변환 에러 시 텍스트 바이트 스트림 반환 (다운로드 실패 방지)
+        return io.BytesIO(content.encode("utf-8"))
 
 def create_txt(title: str, content: str) -> io.BytesIO:
     text_data = f"[{title}]\n작성일: {datetime.now().strftime('%Y-%m-%d')}\n\n{content}"
     return io.BytesIO(text_data.encode("utf-8"))
 
 def create_document_pptx(title: str, content: str) -> io.BytesIO:
-    prs = Presentation()
-    prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
-    blank_layout = prs.slide_layouts[6]
-    
-    slide1 = prs.slides.add_slide(blank_layout)
-    fill1 = slide1.background.fill
-    fill1.solid()
-    fill1.fore_color.rgb = RGBColor(15, 23, 42)
-    tbox = slide1.shapes.add_textbox(Inches(1.5), Inches(2.5), Inches(10.33), Inches(2.5))
-    p = tbox.text_frame.paragraphs[0]
-    p.text = title
-    p.font.size, p.font.bold = Pt(38), True
-    p.font.color.rgb, p.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
-    
-    paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
-    chunk = ""
-    for para in paragraphs:
-        chunk += para + "\n\n"
-        if len(chunk) > 280:
+    try:
+        prs = Presentation()
+        prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
+        blank_layout = prs.slide_layouts[6]
+        
+        slide1 = prs.slides.add_slide(blank_layout)
+        fill1 = slide1.background.fill
+        fill1.solid()
+        fill1.fore_color.rgb = RGBColor(15, 23, 42)
+        tbox = slide1.shapes.add_textbox(Inches(1.5), Inches(2.5), Inches(10.33), Inches(2.5))
+        p = tbox.text_frame.paragraphs[0]
+        p.text = title
+        p.font.size, p.font.bold = Pt(38), True
+        p.font.color.rgb, p.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
+        
+        paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
+        chunk = ""
+        for para in paragraphs:
+            chunk += para + "\n\n"
+            if len(chunk) > 280:
+                slide = prs.slides.add_slide(blank_layout)
+                fill = slide.background.fill
+                fill.solid()
+                fill.fore_color.rgb = RGBColor(24, 32, 54)
+                
+                htx = slide.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.33), Inches(0.8))
+                hp = htx.text_frame.paragraphs[0]
+                hp.text = title
+                hp.font.size, hp.font.bold = Pt(22), True
+                hp.font.color.rgb = RGBColor(147, 197, 253)
+                
+                btx = slide.shapes.add_textbox(Inches(1.0), Inches(1.6), Inches(11.33), Inches(5.2))
+                tf = btx.text_frame
+                tf.word_wrap = True
+                bp = tf.paragraphs[0]
+                bp.text = chunk.strip()
+                bp.font.size = Pt(20)
+                bp.font.color.rgb = RGBColor(241, 245, 249)
+                chunk = ""
+                
+        if chunk:
             slide = prs.slides.add_slide(blank_layout)
             fill = slide.background.fill
             fill.solid()
             fill.fore_color.rgb = RGBColor(24, 32, 54)
-            
             htx = slide.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.33), Inches(0.8))
             hp = htx.text_frame.paragraphs[0]
             hp.text = title
@@ -304,31 +310,13 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
             bp.text = chunk.strip()
             bp.font.size = Pt(20)
             bp.font.color.rgb = RGBColor(241, 245, 249)
-            chunk = ""
-            
-    if chunk:
-        slide = prs.slides.add_slide(blank_layout)
-        fill = slide.background.fill
-        fill.solid()
-        fill.fore_color.rgb = RGBColor(24, 32, 54)
-        htx = slide.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.33), Inches(0.8))
-        hp = htx.text_frame.paragraphs[0]
-        hp.text = title
-        hp.font.size, hp.font.bold = Pt(22), True
-        hp.font.color.rgb = RGBColor(147, 197, 253)
-        
-        btx = slide.shapes.add_textbox(Inches(1.0), Inches(1.6), Inches(11.33), Inches(5.2))
-        tf = btx.text_frame
-        tf.word_wrap = True
-        bp = tf.paragraphs[0]
-        bp.text = chunk.strip()
-        bp.font.size = Pt(20)
-        bp.font.color.rgb = RGBColor(241, 245, 249)
 
-    bio = io.BytesIO()
-    prs.save(bio)
-    bio.seek(0)
-    return bio
+        bio = io.BytesIO()
+        prs.save(bio)
+        bio.seek(0)
+        return bio
+    except Exception:
+        return io.BytesIO(content.encode("utf-8"))
 
 def generate_cardnews_pptx(slides_data):
     prs = Presentation()
@@ -441,6 +429,8 @@ if "sermon_scripture" not in st.session_state:
     st.session_state.sermon_scripture = current_s["scripture"]
 if "preacher_name" not in st.session_state:
     st.session_state.preacher_name = "담임목사"
+if "dash_active_view" not in st.session_state:
+    st.session_state.dash_active_view = "설교 요약"
 
 # --- 8. 메인 내비게이션 바 ---
 app_mode = st.sidebar.radio(
@@ -470,7 +460,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
     # 상단 접이식 바 1: 참고 성구 & 예화
     with st.expander("💡 설교를 더 풍성하게 — 참고 구절 & 예화", expanded=False):
-        if st.button("✨ 참고 성구 및 신학적 예화 생성하기"):
+        if st.button("✨ 참고 성구 및 신학적 예화 생성하기", key="btn_gen_rich"):
             with st.spinner("본문과 연관된 성구와 예화를 분석 중입니다..."):
                 prompt = f"""
                 성경 본문: {st.session_state.sermon_scripture}
@@ -491,7 +481,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
     # 상단 접이식 바 2: 추천 찬양
     with st.expander("🎵 추천 찬양 — 새찬송가 · 복음성가 · CCM (각 5곡 검색 연결)", expanded=False):
-        if st.button("🎶 맞춤 찬양 15곡 추천받기"):
+        if st.button("🎶 맞춤 찬양 15곡 추천받기", key="btn_gen_praise"):
             with st.spinner("설교 메시지와 어울리는 찬양을 선곡 중입니다..."):
                 prompt = f"""
                 본문: {st.session_state.sermon_scripture}, 제목: {st.session_state.sermon_title}
@@ -517,25 +507,37 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
     st.write("---")
 
-    # 2단 분할 레이아웃
+    # 2단 분할 레이아웃 (충돌 없는 단일 통합 셀렉터)
     left_panel, right_panel = st.columns([1, 2.5])
+    
     with left_panel:
-        st.markdown("<p style='font-size:12px; font-weight:bold; color:#94a3b8; margin-bottom:4px;'>콘텐츠</p>", unsafe_allow_html=True)
-        content_sel = st.radio(
-            "콘텐츠 선택",
-            ["설교 요약", "소그룹 나눔", "QT 5일치", "카드뉴스", "쇼츠 대본"],
-            label_visibility="collapsed"
+        st.markdown("<p style='font-size:12px; font-weight:bold; color:#94a3b8; margin-bottom:4px;'>사역 메뉴 선택</p>", unsafe_allow_html=True)
+        selected_menu = st.radio(
+            "사역 메뉴",
+            [
+                "설교 요약",
+                "소그룹 나눔",
+                "QT 5일치",
+                "카드뉴스",
+                "쇼츠 대본",
+                "🏡 세대별 가정예배지",
+                "🔍 설교 점검 및 제안",
+                "📖 소그룹 리더가이드"
+            ],
+            index=[
+                "설교 요약", "소그룹 나눔", "QT 5일치", "카드뉴스", "쇼츠 대본",
+                "🏡 세대별 가정예배지", "🔍 설교 점검 및 제안", "📖 소그룹 리더가이드"
+            ].index(st.session_state.dash_active_view) if st.session_state.dash_active_view in [
+                "설교 요약", "소그룹 나눔", "QT 5일치", "카드뉴스", "쇼츠 대본",
+                "🏡 세대별 가정예배지", "🔍 설교 점검 및 제안", "📖 소그룹 리더가이드"
+            ] else 0,
+            key="dash_menu_selector"
         )
-        st.markdown("<p style='font-size:12px; font-weight:bold; color:#94a3b8; margin-top:20px; margin-bottom:4px;'>이 설교로 만들기</p>", unsafe_allow_html=True)
-        maker_sel = st.radio(
-            "이 설교로 만들기 선택",
-            ["선택 안 함", "🏡 세대별 가정예배지", "🔍 설교 점검 및 제안", "📖 소그룹 리더가이드"],
-            label_visibility="collapsed"
-        )
+        st.session_state.dash_active_view = selected_menu
 
     # 우측 뷰어 패널
     with right_panel:
-        active_view = maker_sel if maker_sel != "선택 안 함" else content_sel
+        active_view = st.session_state.dash_active_view
 
         # 1. 설교 요약
         if active_view == "설교 요약":
@@ -547,7 +549,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     st.session_state.full_sermon = s_edit
                     st.session_state.edit_mode_sermon_sum = False
                     st.success("저장되었습니다.")
-                    st.rerun()
             else:
                 st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{st.session_state.full_sermon}</div>", unsafe_allow_html=True)
 
@@ -556,7 +557,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             grp_txt = st.session_state.get("small_group_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹나눔지", grp_txt, "sm_grp")
             
-            if st.button("✨ 소그룹 나눔 질문 자동 생성", type="primary"):
+            if st.button("✨ 소그룹 나눔 질문 자동 생성", type="primary", key="btn_gen_sm_grp"):
                 with st.spinner("소그룹 나눔지 작성 중... (초고속 생성)"):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
@@ -580,8 +581,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     4. 마침 합심 기도문
                     - (은혜로운 마무리 기도문)
                     """
-                    st.session_state.small_group_text = get_ai_response(prompt, is_json=False)
-                    st.rerun()
+                    res = get_ai_response(prompt, is_json=False)
+                    if res:
+                        st.session_state.small_group_text = res
+                        grp_txt = res
 
             if grp_txt:
                 if st.session_state.get("edit_mode_sm_grp", False):
@@ -590,7 +593,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.session_state.small_group_text = edited_grp
                         st.session_state.edit_mode_sm_grp = False
                         st.success("저장되었습니다.")
-                        st.rerun()
                 else:
                     st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{grp_txt}</div>", unsafe_allow_html=True)
             else:
@@ -601,7 +603,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             qt_txt = st.session_state.get("qt5_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_주간QT5일치", qt_txt, "qt5")
 
-            if st.button("✨ 5일치 QT 묵상지 자동 생성", type="primary"):
+            if st.button("✨ 5일치 QT 묵상지 자동 생성", type="primary", key="btn_gen_qt5"):
                 with st.spinner("주간 5일치 QT 작성 중... (초고속 생성)"):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
@@ -617,8 +619,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     - 삶의 적용 질문:
                     - 오늘의 기도:
                     """
-                    st.session_state.qt5_text = get_ai_response(prompt, is_json=False)
-                    st.rerun()
+                    res = get_ai_response(prompt, is_json=False)
+                    if res:
+                        st.session_state.qt5_text = res
+                        qt_txt = res
 
             if qt_txt:
                 if st.session_state.get("edit_mode_qt5", False):
@@ -627,7 +631,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.session_state.qt5_text = edited_qt
                         st.session_state.edit_mode_qt5 = False
                         st.success("저장되었습니다.")
-                        st.rerun()
                 else:
                     st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{qt_txt}</div>", unsafe_allow_html=True)
             else:
@@ -638,17 +641,16 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             card_all_text = "\n\n".join([f"CARD {c['card_number']}. {c['headline']}\n{c['body_text']}" for c in st.session_state.get("card_list", [])]) if "card_list" in st.session_state else ""
             render_section_top_toolbar(f"{st.session_state.sermon_title}_카드뉴스", card_all_text, "cd_news")
             
-            c_cnt = st.slider("카드 장수", 7, 10, 8)
-            if st.button("🎨 카드뉴스 문구 생성", type="primary"):
+            c_cnt = st.slider("카드 장수", 7, 10, 8, key="slider_card_cnt")
+            if st.button("🎨 카드뉴스 문구 생성", type="primary", key="btn_gen_cardnews"):
                 with st.spinner("카드뉴스 구성 중..."):
                     prompt = f"설교 본문: {st.session_state.sermon_scripture}\n설교문: {st.session_state.full_sermon[:3500]}\n정확히 {c_cnt}장의 카드뉴스 JSON 출력 (100% 한국어): {{\"cards\": [{{\"card_number\": 1, \"headline\": \"제목\", \"body_text\": \"문구\"}}]}}"
                     res = get_ai_response(prompt, is_json=True)
                     if res and "cards" in res:
                         st.session_state.card_list = res["cards"]
-                        st.rerun()
 
             if "card_list" in st.session_state:
-                st.download_button("📥 1:1 정사각형 카드뉴스 PPT 내려받기", data=generate_cardnews_pptx(st.session_state.card_list), file_name="카드뉴스_1대1.pptx")
+                st.download_button("📥 1:1 정사각형 카드뉴스 PPT 내려받기", data=generate_cardnews_pptx(st.session_state.card_list), file_name="카드뉴스_1대1.pptx", key="dl_card_pptx")
                 for c in st.session_state.card_list:
                     st.info(f"**CARD {c['card_number']}. {c['headline']}**\n\n{c['body_text']}")
 
@@ -657,7 +659,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             sh_txt = st.session_state.get("shorts_script_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_쇼츠대본", sh_txt, "sh_script")
 
-            if st.button("🎬 바이럴 쇼츠 대본 3종 생성", type="primary"):
+            if st.button("🎬 바이럴 쇼츠 대본 3종 생성", type="primary", key="btn_gen_shorts_script"):
                 with st.spinner("쇼츠 대본 작성 중..."):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
@@ -680,8 +682,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     - [5~45초 본론 메시지]:
                     - [45~60초 결단 및 축복]:
                     """
-                    st.session_state.shorts_script_text = get_ai_response(prompt, is_json=False)
-                    st.rerun()
+                    res = get_ai_response(prompt, is_json=False)
+                    if res:
+                        st.session_state.shorts_script_text = res
+                        sh_txt = res
 
             if sh_txt:
                 if st.session_state.get("edit_mode_sh_script", False):
@@ -690,7 +694,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.session_state.shorts_script_text = edited_sh
                         st.session_state.edit_mode_sh_script = False
                         st.success("저장되었습니다.")
-                        st.rerun()
                 else:
                     st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{sh_txt}</div>", unsafe_allow_html=True)
             else:
@@ -698,11 +701,11 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
         # 6. 세대별 가정예배지
         elif active_view == "🏡 세대별 가정예배지":
-            age_group = st.selectbox("예배 대상 선택", ["👶 영유아용", "🧒 어린이용", "🧑 청소년용", "👨‍👩‍👧 청장년용"])
+            age_group = st.selectbox("예배 대상 선택", ["👶 영유아용", "🧒 어린이용", "🧑 청소년용", "👨‍👩‍👧 청장년용"], key="sel_age_group")
             fam_txt = st.session_state.get(f"family_worship_{age_group}", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_가정예배지_{age_group}", fam_txt, f"fam_{age_group}")
 
-            if st.button(f"✨ {age_group} 맞춤 가정예배지 생성", type="primary"):
+            if st.button(f"✨ {age_group} 맞춤 가정예배지 생성", type="primary", key="btn_gen_fam"):
                 with st.spinner(f"{age_group} 가정예배지 작성 중..."):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
@@ -717,8 +720,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     4. 온 가족 나눔 질문 2가지
                     5. 가정을 축복하는 마무리 기도문
                     """
-                    st.session_state[f"family_worship_{age_group}"] = get_ai_response(prompt, is_json=False)
-                    st.rerun()
+                    res = get_ai_response(prompt, is_json=False)
+                    if res:
+                        st.session_state[f"family_worship_{age_group}"] = res
+                        fam_txt = res
 
             if fam_txt:
                 if st.session_state.get(f"edit_mode_fam_{age_group}", False):
@@ -727,7 +732,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.session_state[f"family_worship_{age_group}"] = edited_fam
                         st.session_state[f"edit_mode_fam_{age_group}"] = False
                         st.success("저장되었습니다.")
-                        st.rerun()
                 else:
                     st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{fam_txt}</div>", unsafe_allow_html=True)
             else:
@@ -738,7 +742,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             audit_txt = st.session_state.get("sermon_audit_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_설교점검및제안", audit_txt, "sermon_audit")
 
-            if st.button("🔍 설교 전달력 및 신학적 완성도 정밀 점검", type="primary"):
+            if st.button("🔍 설교 전달력 및 신학적 완성도 정밀 점검", type="primary", key="btn_gen_audit"):
                 with st.spinner("설교 분석 리포트 작성 중..."):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
@@ -753,8 +757,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     4. 스피치 전달력 및 표현 개선 제안
                     5. 총평 및 3가지 핵심 권고사항
                     """
-                    st.session_state.sermon_audit_text = get_ai_response(prompt, is_json=False)
-                    st.rerun()
+                    res = get_ai_response(prompt, is_json=False)
+                    if res:
+                        st.session_state.sermon_audit_text = res
+                        audit_txt = res
 
             if audit_txt:
                 if st.session_state.get("edit_mode_sermon_audit", False):
@@ -763,7 +769,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.session_state.sermon_audit_text = edited_audit
                         st.session_state.edit_mode_sermon_audit = False
                         st.success("저장되었습니다.")
-                        st.rerun()
                 else:
                     st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{audit_txt}</div>", unsafe_allow_html=True)
             else:
@@ -774,7 +779,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             ldr_txt = st.session_state.get("leader_guide_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹리더가이드", ldr_txt, "ldr_guide")
 
-            if st.button("📖 구역장/순장용 소그룹 리더가이드 생성", type="primary"):
+            if st.button("📖 구역장/순장용 소그룹 리더가이드 생성", type="primary", key="btn_gen_ldr_guide"):
                 with st.spinner("소그룹 인도자 가이드 작성 중..."):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
@@ -788,8 +793,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     4. 모임 중 침묵 또는 돌발 상황 대처 요령
                     5. 소그룹을 위한 맞춤 중보기도 제목 3가지
                     """
-                    st.session_state.leader_guide_text = get_ai_response(prompt, is_json=False)
-                    st.rerun()
+                    res = get_ai_response(prompt, is_json=False)
+                    if res:
+                        st.session_state.leader_guide_text = res
+                        ldr_txt = res
 
             if ldr_txt:
                 if st.session_state.get("edit_mode_ldr_guide", False):
@@ -798,7 +805,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.session_state.leader_guide_text = edited_ldr
                         st.session_state.edit_mode_ldr_guide = False
                         st.success("저장되었습니다.")
-                        st.rerun()
                 else:
                     st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{ldr_txt}</div>", unsafe_allow_html=True)
             else:
@@ -883,8 +889,8 @@ elif app_mode == "📤 새 설교 등록/원고작성":
     with tab_ai:
         st.markdown("#### 📖 성경 본문 선택 기반 정통 강해설교문 자동 생성")
         ai_c1, ai_c2, ai_c3 = st.columns([1.2, 1.5, 1.3])
-        with ai_c1: sel_book = st.selectbox("성경 66권 선택", BIBLE_BOOKS, index=44)
-        with ai_c2: sel_chap_verse = st.text_input("장 및 절 입력", value="8장 28절~39절")
+        with ai_c1: sel_book = st.selectbox("성경 66권 선택", BIBLE_BOOKS, index=44, key="sel_ai_book")
+        with ai_c2: sel_chap_verse = st.text_input("장 및 절 입력", value="8장 28절~39절", key="sel_ai_cv")
         with ai_c3:
             theology_choice = st.selectbox(
                 "신학적 관점 선택",
@@ -892,16 +898,17 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                     "개혁주의 (Reformed - 칼빈주의/하나님 주권)",
                     "장로교 정통 (Presbyterian - 웨스트민스터/구속사)",
                     "복음주의 (Evangelical - 십자가/은혜/복음선포)"
-                ]
+                ],
+                key="sel_ai_theology"
             )
 
         ai_t1, ai_t2 = st.columns([2, 1])
-        with ai_t1: ai_sermon_topic = st.text_input("설교 주제 / 강조 포인트 (선택)", value="고난 속에서도 흔들리지 않는 하나님의 영원한 사랑과 구원의 확신")
-        with ai_t2: sermon_style = st.selectbox("설교 형태", ["3대지 본문중심 강해설교", "구속사적 복음설교", "원어 주해 중심 강해설교"])
+        with ai_t1: ai_sermon_topic = st.text_input("설교 주제 / 강조 포인트 (선택)", value="고난 속에서도 흔들리지 않는 하나님의 영원한 사랑과 구원의 확신", key="sel_ai_topic")
+        with ai_t2: sermon_style = st.selectbox("설교 형태", ["3대지 본문중심 강해설교", "구속사적 복음설교", "원어 주해 중심 강해설교"], key="sel_ai_style")
 
         full_scripture_str = f"{sel_book} {sel_chap_verse}"
 
-        if st.button("🚀 정통 강해설교문 전문 자동 작성 시작 (25~30분 분량)", type="primary"):
+        if st.button("🚀 정통 강해설교문 전문 자동 작성 시작 (25~30분 분량)", type="primary", key="btn_gen_ai_sermon"):
             with st.spinner(f"[{theology_choice.split(' ')[0]}] 관점으로 강해설교문 작성 중... (초고속 생성)"):
                 prompt = f"""
                 성경 본문: {full_scripture_str}
@@ -921,12 +928,12 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                     st.session_state.temp_ai_scrip = full_scripture_str
                     st.success("강해설교문 전문이 완성되었습니다!")
 
-        if "temp_generated_sermon" in st.session_state:
+        if "temp_generated_sermon" in st.session_state and st.session_state.temp_generated_sermon:
             st.write("---")
             render_section_top_toolbar(st.session_state.temp_ai_title, st.session_state.temp_generated_sermon, "ai_gen_sermon")
-            st.session_state.temp_generated_sermon = st.text_area("작성된 강해설교문 검토 및 수정", value=st.session_state.temp_generated_sermon, height=450)
+            st.session_state.temp_generated_sermon = st.text_area("작성된 강해설교문 검토 및 수정", value=st.session_state.temp_generated_sermon, height=450, key="edit_ai_sermon_area")
             
-            if st.button("✅ 이 설교문을 내 서재와 대시보드에 최종 등록하기", type="primary"):
+            if st.button("✅ 이 설교문을 내 서재와 대시보드에 최종 등록하기", type="primary", key="btn_save_ai_sermon"):
                 new_entry = {
                     "id": len(st.session_state.sermon_library) + 1,
                     "title": st.session_state.temp_ai_title,
@@ -952,11 +959,11 @@ elif app_mode == "🎙️ AI 보이스오버 스튜디오":
 
     vo_col1, vo_col2 = st.columns([1.5, 1])
     with vo_col1:
-        vo_text = st.text_area("음성 변환 텍스트", value=st.session_state.full_sermon, height=350)
-        vo_voice = st.selectbox("성우 보이스 선택", ["인준 (남성 - 차분하고 신뢰감 있는 톤)", "선희 (여성 - 맑고 또렷한 톤)"])
+        vo_text = st.text_area("음성 변환 텍스트", value=st.session_state.full_sermon, height=350, key="vo_text_area")
+        vo_voice = st.selectbox("성우 보이스 선택", ["인준 (남성 - 차분하고 신뢰감 있는 톤)", "선희 (여성 - 맑고 또렷한 톤)"], key="vo_voice_sel")
         voice_id = "ko-KR-InJoonNeural" if "인준" in vo_voice else "ko-KR-SunHiNeural"
         
-        if st.button("🎙️ 고음질 음성(TTS) 즉시 생성하기", type="primary"):
+        if st.button("🎙️ 고음질 음성(TTS) 즉시 생성하기", type="primary", key="btn_gen_tts"):
             if not vo_text.strip():
                 st.warning("텍스트를 입력해주세요.")
             else:
@@ -970,7 +977,7 @@ elif app_mode == "🎙️ AI 보이스오버 스튜디오":
         if "vo_audio_path" in st.session_state and os.path.exists(st.session_state.vo_audio_path):
             st.audio(st.session_state.vo_audio_path)
             with open(st.session_state.vo_audio_path, "rb") as af:
-                st.download_button("📥 MP3 오디오 파일 다운로드", data=af, file_name=f"{st.session_state.sermon_title}_voice.mp3", mime="audio/mp3")
+                st.download_button("📥 MP3 오디오 파일 다운로드", data=af, file_name=f"{st.session_state.sermon_title}_voice.mp3", mime="audio/mp3", key="dl_vo_mp3")
         else:
             st.info("왼쪽에서 버튼을 누르면 이곳에 재생 플레이어가 나타납니다.")
 
@@ -988,7 +995,7 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
 
     st.write("---")
     st.markdown("#### 💡 확 끌리는 5가지 쇼츠 제목 & #해시태그 추천")
-    if st.button("✨ 조회수 폭발 5가지 쇼츠 제목 & 해시태그 뽑기"):
+    if st.button("✨ 조회수 폭발 5가지 쇼츠 제목 & 해시태그 뽑기", key="btn_gen_shorts_meta"):
         with st.spinner("제목 및 태그 분석 중..."):
             prompt = f"설교제목: {st.session_state.sermon_title}, 요약: {st.session_state.full_sermon[:1500]}\n100% 한국어로 쇼츠 클릭률을 높이는 제목 5개와 해시태그 8개를 JSON으로 작성: {{\"titles\": [\"1.제목\", \"2.제목\", \"3.제목\", \"4.제목\", \"5.제목\"], \"hashtags\": [\"#쇼츠\", \"#은혜\"]}}"
             st.session_state.shorts_rec = get_ai_response(prompt, is_json=True)
@@ -996,24 +1003,24 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
     selected_title = st.session_state.sermon_title
     if "shorts_rec" in st.session_state and st.session_state.shorts_rec:
         rec = st.session_state.shorts_rec
-        t_choice = st.radio("추천 제목 선택", rec.get("titles", []), horizontal=False)
+        t_choice = st.radio("추천 제목 선택", rec.get("titles", []), horizontal=False, key="rad_shorts_title")
         if t_choice: selected_title = re.sub(r"^\d+\.\s*", "", t_choice)
         st.markdown("**추천 태그:** " + " ".join(rec.get("hashtags", [])))
 
     st.write("---")
     sh_col1, sh_col2 = st.columns([1.2, 1])
     with sh_col1:
-        v_title = st.text_input("쇼츠 제목", value=selected_title)
-        v_script = st.text_area("자막 대본 (줄바꿈 구분)", value="내 열심보다 중요한 것은 하나님의 이끄심입니다.\n우리가 멈출 때 비로소 하나님의 역사가 시작됩니다.\n오늘 그분의 인도하심 앞에 온전히 맡기십시오.", height=120)
+        v_title = st.text_input("쇼츠 제목", value=selected_title, key="in_shorts_title")
+        v_script = st.text_area("자막 대본 (줄바꿈 구분)", value="내 열심보다 중요한 것은 하나님의 이끄심입니다.\n우리가 멈출 때 비로소 하나님의 역사가 시작됩니다.\n오늘 그분의 인도하심 앞에 온전히 맡기십시오.", height=120, key="in_shorts_script")
         
         c_v1, c_v2 = st.columns(2)
-        with c_v1: v_ratio = st.radio("비율", ["9:16 (세로 쇼츠)", "16:9 (가로 영상)"])
-        with c_v2: v_voice = st.selectbox("보이스", ["인준 (남성)", "선희 (여성)"])
+        with c_v1: v_ratio = st.radio("비율", ["9:16 (세로 쇼츠)", "16:9 (가로 영상)"], key="rad_shorts_ratio")
+        with c_v2: v_voice = st.selectbox("보이스", ["인준 (남성)", "선희 (여성)"], key="sel_shorts_voice")
 
-        bg_media = st.file_uploader("배경 동영상/사진 업로드 (최대 300MB)", type=["mp4", "mov", "jpg", "png"])
-        bgm_media = st.file_uploader("배경음악 MP3 업로드 (최대 300MB)", type=["mp3", "wav"])
+        bg_media = st.file_uploader("배경 동영상/사진 업로드 (최대 300MB)", type=["mp4", "mov", "jpg", "png"], key="up_shorts_bg")
+        bgm_media = st.file_uploader("배경음악 MP3 업로드 (최대 300MB)", type=["mp3", "wav"], key="up_shorts_bgm")
 
-        if st.button("🚀 비디오 렌더링 시작", type="primary"):
+        if st.button("🚀 비디오 렌더링 시작", type="primary", key="btn_render_video"):
             with st.spinner("자막 애니메이션 및 BGM 믹싱 렌더링 중..."):
                 bg_p, bgm_p = None, None
                 if bg_media:
@@ -1021,7 +1028,7 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                     with open(bg_p, "wb") as f: f.write(bg_media.getbuffer())
                 if bgm_media:
                     bgm_p = f"./uploads_{bgm_media.name}"
-                    with open(bg_p, "wb") as f: f.write(bgm_media.getbuffer())
+                    with open(bgm_p, "wb") as f: f.write(bgm_media.getbuffer())
 
                 lines = [l.strip() for l in v_script.split("\n") if l.strip()]
                 voice_id = "ko-KR-InJoonNeural" if "인준" in v_voice else "ko-KR-SunHiNeural"
@@ -1036,7 +1043,7 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
         if "rendered_shorts_out" in st.session_state and os.path.exists(st.session_state.rendered_shorts_out):
             st.video(st.session_state.rendered_shorts_out)
             with open(st.session_state.rendered_shorts_out, "rb") as vf:
-                st.download_button("📥 MP4 비디오 파일 다운로드", data=vf, file_name="sermon_shorts.mp4", mime="video/mp4")
+                st.download_button("📥 MP4 비디오 파일 다운로드", data=vf, file_name="sermon_shorts.mp4", mime="video/mp4", key="dl_shorts_mp4")
 
 # ==============================================================================
 # 5. 📚 설교 서재 (Sermon Library)
@@ -1045,7 +1052,7 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
     st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>설교 서재</h1>", unsafe_allow_html=True)
     st.caption(f"설교문 {len(st.session_state.sermon_library)}편 보관 중")
 
-    search_kw = st.text_input("🔍 제목 또는 성경 구절로 검색", placeholder="예: 시편, 로마서, 신앙...")
+    search_kw = st.text_input("🔍 제목 또는 성경 구절로 검색", placeholder="예: 시편, 로마서, 신앙...", key="in_lib_search")
     for idx, s_item in enumerate(st.session_state.sermon_library):
         if search_kw and (search_kw not in s_item["title"] and search_kw not in s_item["scripture"]):
             continue
@@ -1065,4 +1072,5 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
                 st.session_state.sermon_title = s_item["title"]
                 st.session_state.sermon_scripture = s_item["scripture"]
                 st.session_state.full_sermon = s_item["text"]
+                st.session_state.dash_active_view = "설교 요약"
                 st.success(f"'{s_item['title']}' 설교를 불러왔습니다! [📊 설교 대시보드]로 이동하세요.")
