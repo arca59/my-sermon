@@ -7,6 +7,7 @@ import re
 import asyncio
 import edge_tts
 import urllib.parse
+import urllib.request
 from datetime import datetime
 from docx import Document
 from docx.shared import Pt as DocxPt, RGBColor as DocxRGB
@@ -29,7 +30,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 버튼 가로 밀착 CSS 스타일링
+# 툴바 버튼 CSS 스타일링 (가로 밀착 정렬)
 st.markdown("""
 <style>
     div[data-testid="column"] button {
@@ -40,7 +41,7 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# --- 1. 보안 인증 ---
+# --- 1. 개인 보안 접속 인증 ---
 USER_PIN = st.secrets.get("APP_PIN", "7777")
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -56,22 +57,22 @@ if not st.session_state.authenticated:
             st.error("PIN 코드가 올바르지 않습니다.")
     st.stop()
 
-# --- 2. 초고속 Gemini AI 엔진 (영문 잡문 100% 차단) ---
+# --- 2. 초고속 Gemini AI 엔진 (404 완벽 방지 & 영문 차단) ---
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 sidebar_key = st.sidebar.text_input("🔑 Gemini API Key", value=secret_key, type="password")
 ACTIVE_KEY = sidebar_key.strip() if sidebar_key else secret_key.strip()
 
 def clean_korean_output(text: str) -> str:
-    """영문 기획 과정 및 메모를 완전 차단하고 순수 한국어만 추출"""
+    """영문 기획 메모/생각 과정을 원천 삭제하고 순수 한국어 사역 문서만 추출"""
     if not text:
         return ""
     
-    # 한국어 시작 지점부터 자르기
+    # 한국어 시작 헤더 탐색 및 앞단 영문 일괄 삭제
     markers = [
-        r"(\[.*?\])",
-        r"(###\s*[0-9가-힣])",
-        r"(1\.\s*[가-힣])",
-        r"([가-힣]{2,}\s*:\s*[가-힣])"
+        r"(\[(?:소그룹|주간|가정예배|60초|참고|설교|세대별|리더|신앙).*?\])",
+        r"(###?\s*[0-9가-힣])",
+        r"(1\.\s*마음\s*열기)",
+        r"(1\.\s*[가-힣]{2,})"
     ]
     for marker in markers:
         match = re.search(marker, text)
@@ -80,32 +81,36 @@ def clean_korean_output(text: str) -> str:
             break
 
     lines = text.split("\n")
-    cleaned = []
+    cleaned_lines = []
     for line in lines:
         stripped = line.strip()
         if not stripped:
-            cleaned.append("")
+            cleaned_lines.append("")
             continue
             
-        if re.match(r'^(Reliable|100%|Check|Ensure|Draft|Concept|Focus|Selection|Idea|Question|Application|Target|Passage|Summary)', stripped, re.IGNORECASE):
+        # 영문 메타데이터 줄 스킵
+        if re.match(r'^(Reliable|100%|Check|Ensure|Draft|Concept|Focus|Selection|Idea|Question|Application|Target|Passage|Summary|Matches|Follows)', stripped, re.IGNORECASE):
             continue
-        if stripped.startswith("* Check") or stripped.startswith("* Ensure") or stripped.startswith("* Focus:"):
+        if stripped.startswith("* Check") or stripped.startswith("* Ensure") or stripped.startswith("* Focus:") or stripped.startswith("* Target"):
             continue
-            
-        k_count = len(re.findall(r'[가-힣]', stripped))
-        e_count = len(re.findall(r'[a-zA-Z]', stripped))
-        if e_count > 8 and k_count == 0:
+        if re.search(r'^\*\s*\*(Concept|Drafting|Selection|Draft|Idea \d+|Content|Focus):\*', stripped):
             continue
             
-        line = re.sub(r'\*?\*?Draft(ing)?:\*?\s*', '', line)
-        line = re.sub(r'\([A-Za-z\s,\.\?\!\'\":;\-]{6,}\)', '', line)
-        cleaned.append(line)
+        # 한글 없는 영문 줄 삭제
+        k_chars = len(re.findall(r'[가-힣]', stripped))
+        e_chars = len(re.findall(r'[a-zA-Z]', stripped))
+        if e_chars > 6 and k_chars == 0:
+            continue
+            
+        # 괄호 안 영문 문구 삭제
+        line = re.sub(r'\([A-Za-z0-9\s,\.\?\!\'\":;\-\/]{4,}\)', '', line)
+        cleaned_lines.append(line)
         
-    return "\n".join(cleaned).strip()
+    return "\n".join(cleaned_lines).strip()
 
 def get_ai_response(prompt: str, is_json: bool = True):
     if not ACTIVE_KEY:
-        st.error("Gemini API Key가 필요합니다. 사이드바에 키를 입력해주세요.")
+        st.error("🔑 사이드바에 Gemini API Key를 입력해주세요.")
         return None
     try:
         genai.configure(api_key=ACTIVE_KEY)
@@ -113,48 +118,69 @@ def get_ai_response(prompt: str, is_json: bool = True):
         st.error(f"API 키 설정 오류: {str(e)}")
         return None
 
+    # 유효한 모델 리스트 자동 감지 (404 방지)
+    valid_models = []
+    try:
+        for m in genai.list_models():
+            if "generateContent" in m.supported_generation_methods:
+                if "gemini-1.0" not in m.name and m.name != "models/gemini-pro":
+                    valid_models.append(m.name)
+    except Exception:
+        pass
+
+    def model_priority(m_name):
+        m = m_name.lower()
+        if "1.5-flash" in m: return 1
+        elif "2.0-flash" in m: return 2
+        elif "flash" in m: return 3
+        elif "1.5-pro" in m: return 4
+        return 10
+
+    if valid_models:
+        valid_models.sort(key=model_priority)
+    else:
+        valid_models = ["models/gemini-1.5-flash", "gemini-1.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-pro"]
+
     system_instruction = (
-        "당신은 한국 교회의 사역을 돕는 목회 전문 AI 어시스턴트입니다. "
-        "영문 생각 과정, 기획 메모(Drafting, Concept, Focus 등)나 영어 단어는 일절 작성하지 마십시오. "
-        "서론 인사말 없이 오직 바로 사용할 수 있는 100% 완성된 한국어 사역 문서 본문만 출력하십시오."
+        "당신은 한국 교회의 사역을 돕는 목회 전문 어시스턴트입니다. "
+        "영문 생각 과정, 기획 메모(Drafting, Concept, Focus, Checklist 등)나 영어 단어는 일절 작성하지 마십시오. "
+        "서론이나 안내 문구 없이, 요청한 100% 순수 한국어 사역 문서 본문만 바로 출력하십시오."
     )
 
-    fast_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-pro"]
-    last_error_msg = ""
-    
-    for model_name in fast_models:
+    errors = []
+    for model_name in valid_models:
         try:
-            model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
+            try:
+                model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
+            except Exception:
+                model = genai.GenerativeModel(model_name)
+            
             if is_json:
-                try:
-                    res = model.generate_content(
-                        prompt,
-                        generation_config={"response_mime_type": "application/json", "temperature": 0.2}
-                    )
-                    return json.loads(res.text)
-                except Exception:
-                    res = model.generate_content(prompt, generation_config={"temperature": 0.2})
-                    match = re.search(r"\{.*\}|\[.*\]", res.text, re.DOTALL)
-                    if match:
-                        return json.loads(match.group(0))
+                res = model.generate_content(
+                    prompt,
+                    generation_config={"response_mime_type": "application/json", "temperature": 0.2}
+                )
+                return json.loads(res.text)
             else:
                 res = model.generate_content(prompt, generation_config={"temperature": 0.3})
-                if res.text:
+                if res and res.text:
                     return clean_korean_output(res.text)
         except Exception as e:
-            last_error_msg = str(e)
+            errors.append(f"[{model_name}] {str(e)}")
             continue
 
-    st.error(f"AI 호출 오류: {last_error_msg}")
+    st.error(f"AI 호출 실패: {errors[-1] if errors else '모델 응답 오류'}")
     return None
 
-# --- 3. 안전한 폰트 등록 엔진 (오류 시에도 절대 중단되지 않음) ---
+# --- 3. 안전한 폰트 캐싱 엔진 (오류 시에도 앱 중단 없음) ---
 PDF_FONT_NAME = "Helvetica"
 
 @st.cache_resource(show_spinner=False)
 def init_korean_font():
     paths = [
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
+        "/usr/share/fonts/opentype/nanum/NanumGothic.ttf",
         "/usr/share/fonts/nanum/NanumGothic.ttf",
         "C:/Windows/Fonts/malgun.ttf",
         "/System/Library/Fonts/AppleSDGothicNeo.ttc",
@@ -163,15 +189,29 @@ def init_korean_font():
     for p in paths:
         if os.path.exists(p):
             try:
-                pdfmetrics.registerFont(TTFont("NanumKoreanFont", p))
-                return "NanumKoreanFont"
+                pdfmetrics.registerFont(TTFont("NanumKorean", p))
+                return "NanumKorean"
             except Exception:
                 pass
+
+    local_f = "./NanumGothic.ttf"
+    if not os.path.exists(local_f):
+        try:
+            url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
+            urllib.request.urlretrieve(url, local_f)
+        except Exception:
+            pass
+    if os.path.exists(local_f):
+        try:
+            pdfmetrics.registerFont(TTFont("NanumKorean", local_f))
+            return "NanumKorean"
+        except Exception:
+            pass
     return "Helvetica"
 
 PDF_FONT_NAME = init_korean_font()
 
-# --- 4. 예외 안전 문서 변환 엔진 ---
+# --- 4. 예외 안전 문서 변환 엔진 (Word / PPT / PDF / TXT) ---
 def create_docx(title: str, content: str) -> io.BytesIO:
     try:
         doc = Document()
@@ -191,19 +231,20 @@ def create_docx(title: str, content: str) -> io.BytesIO:
 
 def create_pdf(title: str, content: str) -> io.BytesIO:
     try:
+        font_to_use = init_korean_font()
         bio = io.BytesIO()
         doc = SimpleDocTemplate(
             bio,
             pagesize=letter,
-            rightMargin=40,
-            leftMargin=40,
-            topMargin=40,
-            bottomMargin=40
+            rightMargin=36,
+            leftMargin=36,
+            topMargin=36,
+            bottomMargin=36
         )
         
         t_style = ParagraphStyle(
             name="K_Title",
-            fontName=PDF_FONT_NAME,
+            fontName=font_to_use,
             fontSize=15,
             leading=20,
             textColor="#1e3a8a",
@@ -211,7 +252,7 @@ def create_pdf(title: str, content: str) -> io.BytesIO:
         )
         m_style = ParagraphStyle(
             name="K_Meta",
-            fontName=PDF_FONT_NAME,
+            fontName=font_to_use,
             fontSize=8,
             leading=12,
             textColor="#64748b",
@@ -219,7 +260,7 @@ def create_pdf(title: str, content: str) -> io.BytesIO:
         )
         b_style = ParagraphStyle(
             name="K_Body",
-            fontName=PDF_FONT_NAME,
+            fontName=font_to_use,
             fontSize=9.5,
             leading=15,
             textColor="#1e293b",
@@ -244,7 +285,6 @@ def create_pdf(title: str, content: str) -> io.BytesIO:
         bio.seek(0)
         return bio
     except Exception:
-        # PDF 변환 에러 시 텍스트 바이트 스트림 반환 (다운로드 실패 방지)
         return io.BytesIO(content.encode("utf-8"))
 
 def create_txt(title: str, content: str) -> io.BytesIO:
@@ -507,7 +547,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
     st.write("---")
 
-    # 2단 분할 레이아웃 (충돌 없는 단일 통합 셀렉터)
+    # 2단 분할 레이아웃
     left_panel, right_panel = st.columns([1, 2.5])
     
     with left_panel:
@@ -853,6 +893,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 st.session_state.sermon_scripture = t_scripture.strip()
                 st.session_state.preacher_name = t_preacher.strip()
                 st.session_state.full_sermon = t_content.strip()
+                st.session_state.dash_active_view = "설교 요약"
                 st.success(f"'{t_title}' 설교가 등록되었습니다! [📊 설교 대시보드]로 이동하여 확인하세요.")
 
     with tab_file:
@@ -884,6 +925,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 "tags": ["파일등록"],
                 "text": text
             })
+            st.session_state.dash_active_view = "설교 요약"
             st.success("파일 등록이 완료되었습니다! [📊 설교 대시보드]로 이동하세요.")
 
     with tab_ai:
@@ -948,6 +990,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 st.session_state.sermon_title = st.session_state.temp_ai_title
                 st.session_state.sermon_scripture = st.session_state.temp_ai_scrip
                 st.session_state.full_sermon = st.session_state.temp_generated_sermon
+                st.session_state.dash_active_view = "설교 요약"
                 st.success("설교문이 등록되었습니다! [📊 설교 대시보드] 메뉴에서 확인하세요.")
 
 # ==============================================================================
