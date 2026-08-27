@@ -1,3 +1,7 @@
+import PIL.Image
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = getattr(PIL.Image, 'Resampling', PIL.Image).LANCZOS
+
 import streamlit as st
 import google.generativeai as genai
 import json
@@ -50,6 +54,13 @@ st.markdown("""
         color: #f1f5f9;
         font-size: 15px;
         margin-top: 10px;
+    }
+    .content-box h3 {
+        color: #fde047;
+        font-size: 18px;
+        margin-top: 18px;
+        margin-bottom: 8px;
+        font-weight: bold;
     }
     .card-preview-container {
         display: flex;
@@ -110,7 +121,6 @@ sidebar_key = st.sidebar.text_input("🔑 Gemini API Key", value=secret_key, typ
 ACTIVE_KEY = sidebar_key.strip() if sidebar_key else secret_key.strip()
 
 def clean_korean_output(text: str) -> str:
-    """영문 기획 메모 차단 및 기호 줄바꿈 서식 자동 정제"""
     if not text:
         return ""
     
@@ -515,7 +525,7 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
         return io.BytesIO(content.encode("utf-8"))
 
 def generate_sermon_structure_pptx(title: str, scripture: str, content: str) -> io.BytesIO:
-    """업로드된 발표 슬라이드 스타일 (10 슬라이드 구조) PPT 생성기"""
+    """10 슬라이드 프레젠테이션 PPT 생성기"""
     try:
         prs = Presentation()
         prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
@@ -936,11 +946,9 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption("위 버튼을 눌러 5일치 QT를 생성하세요.")
 
-        # 4. 이미지(K-20260827-150718140.jpg) 100% 동일 구현 카드뉴스 스튜디오
         elif active_view == "카드뉴스":
             card_all_text = "\n\n".join([f"CARD {c['card_number']}. {c['headline']}\n{c['body_text']}" for c in st.session_state.get("card_list", [])]) if "card_list" in st.session_state else ""
             
-            # 상단 헤더 & 편집/전체다운로드 액션 바 (이미지 그대로 연동)
             c_head1, c_head2 = st.columns([1.5, 1.5])
             with c_head1:
                 st.markdown("<h2 style='margin:0; font-size:24px; font-weight:bold;'>카드뉴스</h2>", unsafe_allow_html=True)
@@ -961,7 +969,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
             st.info("💡 텍스트 수정은 물론, 카드 추가/삭제도 할 수 있어요! (위 편집 버튼 활용)")
 
-            # 배경 / 글씨체 / 교회명 옵션바 (이미지 옵션바)
             cn_opt1, cn_opt2, cn_opt3 = st.columns([1.5, 1.5, 2])
             with cn_opt1:
                 bg_opt = st.radio("배경", ["사진", "기본", "갤러리", "직접 업로드"], horizontal=True, key="cn_bg_opt")
@@ -974,7 +981,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
             st.write("---")
 
-            # 카드뉴스 미생성 시 자동 생성
             if "card_list" not in st.session_state or not st.session_state.card_list:
                 if st.button("🎨 카드뉴스 자동 생성하기", type="primary", key="btn_gen_cardnews_init"):
                     with st.spinner("설교 메시지로 카드뉴스 구성 중..."):
@@ -984,7 +990,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                             st.session_state.card_list = res["cards"]
                             st.rerun()
 
-            # 편집 모드 활성화 시 텍스트 직접 수정 / 카드 추가/삭제
             if st.session_state.get("cn_edit_mode", False) and "card_list" in st.session_state:
                 st.markdown("#### ✏️ 카드뉴스 텍스트 편집기")
                 for c_i, card_item in enumerate(st.session_state.card_list):
@@ -992,7 +997,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         card_item["headline"] = st.text_input(f"카드 {c_i+1} 헤드라인", value=card_item.get("headline", ""), key=f"cn_h_{c_i}")
                         card_item["body_text"] = st.text_area(f"카드 {c_i+1} 본문", value=card_item.get("body_text", ""), key=f"cn_b_{c_i}")
 
-            # 슬라이드 캐러셀 뷰어 (이미지 그대로 구현: Left / Right 화살표, 슬라이드 번호, 풍경 배경)
             if "card_list" in st.session_state and st.session_state.card_list:
                 cards = st.session_state.card_list
                 if "cn_card_idx" not in st.session_state:
@@ -1002,7 +1006,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 curr_idx = st.session_state.cn_card_idx % total_cards
                 curr_card = cards[curr_idx]
 
-                # 캐러셀 화살표 컨트롤
                 car_c1, car_c2, car_c3 = st.columns([1, 4, 1])
                 with car_c1:
                     st.markdown("<div style='height: 220px;'></div>", unsafe_allow_html=True)
@@ -1037,7 +1040,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
                 st.write("---")
 
-                # 인스타그램 캡션 섹션 (이미지 하단 그대로 구현)
                 st.markdown("#### 인스타그램 캡션")
                 insta_c1, insta_c2 = st.columns([4, 1])
                 
