@@ -158,39 +158,39 @@ def load_sermons_from_db():
     default_data = [
         {
             "id": 1,
-            "title": "신앙을 다음 세대에 전수하라",
-            "scripture": "시편 78:4-7",
+            "title": "눈동자처럼 은혜 가운데",
+            "scripture": "시편 17:8",
             "testament": "구약",
             "book": "시편",
-            "topic": "신앙전수/다음세대",
+            "topic": "보호와 은혜",
             "theology": "개혁주의/장로교",
             "date": "2026-08-27",
-            "tags": ["신앙 전수", "다음 세대", "가정 예배", "시편"],
+            "tags": ["보호", "은혜", "기도", "시편"],
             "summary": """🎯 설교 핵심 명제:
-자녀에게 물려줄 수 있는 최고의 유산은 부동산이나 통장이 아니라 내가 만난 하나님에 대한 생생한 복음 간증입니다.
+나를 눈동자 같이 지키시고 주의 날개 그늘 아래에 감추시는 하나님의 신실한 은혜를 온전히 신뢰하며 나아갑니다.
 
 📌 설교 3대지 핵심 요약:
-1. 침묵은 곧 삭제입니다 (시편 78:4)
-- 하나님의 영예와 능력을 숨기지 않겠다는 의도적인 결단이 필요합니다. 내가 침묵하는 순간 다음 세대의 신앙은 중립이 아닌 영적 삭제 상태가 됩니다.
+1. 눈동자처럼 우리를 보호하시는 하나님 (시편 17:8)
+- 하나님께서는 우리의 모든 순간을 눈동자처럼 아끼며 지켜주십니다.
 
-2. 하나씩 세어가며 전수하라 (시편 78:5)
-- 막연한 훈계가 아닌 삶의 고난 속에서 응답받은 구체적인 은혜의 사건들을 수를 세듯 하나하나 가르쳐야 합니다.
+2. 주의 날개 그늘 아래 참된 안식과 평안
+- 거친 풍랑 속에서도 주의 날개 아래 피할 때 참된 평안과 안식을 누립니다.
 
-3. 부지런히 새기고 가르치라 (시편 78:6-7)
-- 숫돌에 칼을 갈듯 말씀을 자녀의 심비에 새겨 오직 하나님 한 분에게만 소망을 두는 신앙의 명문가를 세워야 합니다.
+3. 고난 속에서도 흔들리지 않는 기도와 선포
+- 기도로 나아가면 주님께서 우리의 부르짖음에 응답하시며 담대함을 주십니다.
 
 💡 성도를 위한 구체적 실천 적용:
-- 바쁘다는 핑계로 식탁 대화에서 하나님 이야기를 침묵하지 않기
-- 하나님이 내 삶에 행하신 생생한 기도 응답을 자녀에게 나누기
-- 오직 하나님께만 소망을 두도록 기도 가이드 설정하기""",
-            "text": """1. 신앙의 유산을 숨기지 말고 적극적으로 전수하십시오.
-오늘 본문 4절은 우리가 여호와의 영예와 능력을 자손에게 숨기지 않겠다고 고백합니다. 내가 말하지 않으면 그 신앙의 역사가 삭제됩니다. 의도적인 결단과 작정을 통해 자녀들에게 복음을 전하는 일에 힘쓰십시오.
+- 매일의 삶 속에서 나를 지키시는 하나님의 은혜를 묵상하고 감사하기
+- 두려움과 두 갈래 길에 설 때 세상이 아닌 주의 날개 아래로 먼저 피하기
+- 만나는 사람들에게 주의 신실하신 사랑과 간증을 기쁨으로 나누기""",
+            "text": """1. 눈동자처럼 지키시는 사랑입니다.
+하나님께서는 우리의 모든 순간을 시선을 떼지 않으시고 눈동자처럼 아끼며 지켜주십니다. 세상의 고난과 위협 속에서도 우리를 결코 혼자 두지 않으시는 은혜를 믿으십시오.
 
-2. 하나님이 행하신 구체적인 은혜와 복음을 세어가며 가르치십시오.
-성경에서 전한다는 표현은 마치 수를 세는 것처럼 구체적으로 말하는 것을 뜻합니다. 삶의 위기 때 하나님이 어떻게 응답하셨는지 생생한 간증을 자녀들의 마음에 날카롭게 새겨주십시오.
+2. 날개 그늘 아래의 참된 피난처입니다.
+거친 풍랑 속에서도 주의 날개 아래 피할 때 참된 평안과 안식을 누립니다. 세상의 안전지대가 아닌 오직 하나님의 품만이 우리의 영원한 피난처가 됩니다.
 
-3. 다음 세대가 오직 하나님께만 인생의 소망을 두게 하십시오.
-우리가 신앙을 전수하는 궁극적 목적은 자녀들이 세상의 헛된 확신이 아닌 오직 하나님께 소망을 두게 하려는 것입니다."""
+3. 고난 속에서도 흔들리지 않는 기도입니다.
+우리가 절망 가운데 있을 때 기도로 나아가면 주님께서 우리의 부르짖음에 응답하십니다. 어떠한 상황에서도 소망을 주님께 두고 온전히 선포하십시오."""
         }
     ]
     save_sermons_to_db(default_data)
@@ -212,7 +212,6 @@ def load_sermon_to_workspace(sermon_item, idx=0):
     st.session_state.full_sermon = sermon_item.get("text", "")
     st.session_state.sermon_summary_text = sermon_item.get("summary", "")
     
-    # 이전 설교의 파생 생성물 캐시 전면 초기화 (서로 다른 설교 메시지 섞임 완벽 차단)
     keys_to_clear = [
         "small_group_text", "qt5_text", "card_list", "shorts_script_text",
         "sermon_audit_text", "leader_guide_text", "rich_materials", 
@@ -814,8 +813,64 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
     except Exception:
         return io.BytesIO(content.encode("utf-8"))
 
-# --- 컨설팅 PT급 10-슬라이드 구조화 PPTX 생성기 (대비 규칙 100% 반영) ---
-def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str) -> io.BytesIO:
+# --- 100% 동적 설교파싱 엔진 (하드코딩 샘플 텍스트 전면 제거) ---
+def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
+    text = summary_content if summary_content and len(summary_content) > 50 else full_sermon
+    
+    # 1. 핵심 명제
+    prop = ""
+    prop_match = re.search(r'(?:🎯|핵심\s*명제|명제|개요)[:\s]*(.*?)(?=\n📌|\n💡|\n🙏|\n\d+\.|\n[1-9]대지|$)', text, re.DOTALL)
+    if prop_match:
+        prop = prop_match.group(1).strip()
+    else:
+        lines = [l.strip() for l in text.split('\n') if l.strip()]
+        prop = "\n".join(lines[:2]) if lines else title
+
+    # 2. 대지/요점 추출 (Numbered / Bullet Points)
+    points = []
+    point_matches = re.findall(r'(?:^|\n)\s*(?:[1-4]\.|\d+[\.\)]|제\s*[1-4]\s*대지|•|-)\s*(.*?)(?=\n\s*(?:[1-4]\.|\d+[\.\)]|제\s*[1-4]\s*대지|•|-|💡|🙏|🎯|📌)|$)', text, re.DOTALL)
+    
+    for pm in point_matches:
+        pm_clean = pm.strip()
+        if pm_clean and len(pm_clean) > 3:
+            points.append(pm_clean)
+            
+    if not points:
+        paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
+        chunk_size = max(1, len(paragraphs) // 4)
+        for i in range(4):
+            sub_p = paragraphs[i*chunk_size:(i+1)*chunk_size]
+            if sub_p:
+                points.append("\n".join(sub_p))
+
+    while len(points) < 4:
+        points.append(f"{title} - 하나님의 은혜와 인도하심에 감사하며 말씀 중심의 삶을 살아가십시오.")
+
+    # 3. 실천 적용
+    app_text = ""
+    app_match = re.search(r'(?:💡|실천\s*적용|삶의\s*적용|적용)[:\s]*(.*?)(?=\n🙏|\n기도|$)', text, re.DOTALL)
+    if app_match:
+        app_text = app_match.group(1).strip()
+    else:
+        app_text = f"1. 매일 일상 속에서 {scripture} 말씀을 생각하며 마음에 새깁니다.\n2. 세상의 자랑이 아닌 오직 하나님의 신실하신 약속을 선포합니다.\n3. 주신 말씀에 순종하여 담대함과 기도로 승리하는 삶을 살아갑니다."
+
+    # 4. 마침 기도문
+    prayer_text = ""
+    prayer_match = re.search(r'(?:🙏|기도문|결단\s*및\s*축복|마침\s*기도|기도)[:\s]*(.*?)$', text, re.DOTALL)
+    if prayer_match:
+        prayer_text = prayer_match.group(1).strip()
+    else:
+        prayer_text = f"살아계신 하나님, 오늘 선포된 [{title}] 말씀을 통해 주님의 거룩하신 뜻을 깨닫게 하시니 감사합니다. 주신 은혜의 구절({scripture})을 심비에 새기고, 날마다 믿음으로 승리하는 복된 성도가 되게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."
+
+    return {
+        "prop": prop,
+        "points": points,
+        "app": app_text,
+        "prayer": prayer_text
+    }
+
+# --- 동적 10-슬라이드 구조화 PPTX 생성기 (색상 대비 규칙 100% 적용) ---
+def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str, full_sermon: str = "") -> io.BytesIO:
     try:
         prs = Presentation()
         prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
@@ -841,32 +896,39 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             fill.solid()
             fill.fore_color.rgb = RGBColor(248, 250, 252)
 
-        # [Slide 1: 표지 - Dark Bg -> Bright Yellow Font]
+        # 100% 동적 파싱
+        parsed = parse_sermon_content(title, scripture, summary_content, full_sermon)
+        prop_text = parsed["prop"]
+        points = parsed["points"]
+        app_text = parsed["app"]
+        prayer_text = parsed["prayer"]
+
+        # [Slide 1: 표지 - DARK BG -> LIGHT/YELLOW FONT]
         s1 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s1, CARD_BACKGROUNDS[0])
         tb1 = s1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.8))
         p1 = tb1.text_frame.paragraphs[0]
-        p1.text = f"주 일 설 교\n\n{title}\n\n보이지 않는 가장 고귀한 유산\n본문 · {scripture}"
+        p1.text = f"주 일 설 교\n\n{title}\n\n본문 · {scripture}"
         p1.font.size, p1.font.bold = Pt(38), True
         p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
 
-        # [Slide 2: 들어가며 - Light Bg -> Deep Navy Font]
+        # [Slide 2: 들어가며 & 핵심 명제 - LIGHT BG -> DARK NAVY FONT]
         s2 = prs.slides.add_slide(blank_layout)
         set_light_slide(s2)
         tb2 = s2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
         tf2 = tb2.text_frame
         tf2.word_wrap = True
         p2_head = tf2.paragraphs[0]
-        p2_head.text = f"들어가며 · 가장 귀한 빈티지 유산 ({scripture})"
+        p2_head.text = f"들어가며 · 핵심 메시지 ({scripture})"
         p2_head.font.size, p2_head.font.bold = Pt(32), True
         p2_head.font.color.rgb = RGBColor(30, 58, 138)
         
         p2_body = tf2.add_paragraph()
-        p2_body.text = f"\n사람들은 자녀에게 부동산이나 통장을 물려주려 애쓰지만, 정작 보이지 않는 가장 귀한 하나님을 놓칠 때가 많습니다.\n\n우리가 물려줄 수 있는 최고의 전통은 바로 내가 만난 하나님에 대한 생생한 간증입니다."
+        p2_body.text = f"\n{prop_text}"
         p2_body.font.size = Pt(20)
         p2_body.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 3: 설교의 흐름 - Dark Bg -> Light Font]
+        # [Slide 3: 설교의 전체 흐름 - DARK BG -> LIGHT FONT]
         s3 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s3)
         tb3_h = s3.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
@@ -875,12 +937,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         hp3.font.size, hp3.font.bold = Pt(32), True
         hp3.font.color.rgb = RGBColor(253, 224, 71)
 
-        for card_i, (num_str, title_str) in enumerate([
-            ("01", "침묵은 곧 삭제입니다"),
-            ("02", "하나씩 세어가며 전수하라"),
-            ("03", "부지런히 새기고 가르치라"),
-            ("04", "가문을 바꾼 한 사람의 결단")
-        ]):
+        for card_i in range(min(4, len(points))):
             top_pos = Inches(2.2 + (card_i * 1.1))
             shape = s3.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.0), top_pos, Inches(11.33), Inches(0.9))
             shape.fill.solid()
@@ -888,11 +945,12 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             shape.line.color.rgb = RGBColor(51, 65, 85)
             tf_card = shape.text_frame
             p_c = tf_card.paragraphs[0]
-            p_c.text = f"  {num_str}   {title_str}"
+            first_line = points[card_i].split('\n')[0][:50]
+            p_c.text = f"  0{card_i+1}   {first_line}"
             p_c.font.size, p_c.font.bold = Pt(20), True
             p_c.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 4: 본문 말씀 - Dark Overlay Bg -> Light Font]
+        # [Slide 4: 본문 핵심 성구 - DARK OVERLAY BG -> LIGHT FONT]
         s4 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s4, CARD_BACKGROUNDS[1])
         tb4 = s4.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.0))
@@ -904,71 +962,71 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p4_h.font.color.rgb = RGBColor(147, 197, 253)
         
         p4_b = tf4.add_paragraph()
-        p4_b.text = "4절  우리가 이를 그들의 자손에게 숨기지 아니하고 여호와의 영예와 그의 능력과 그가 행하신 기이한 사적을 후대에 전하리로다\n5절  그들의 자손에게 알리라 하셨으니 이는 그들로 후대 곧 태어날 자손에게 이를 알게 하고\n7절  그들로 그들의 소망을 하나님께 두며 하나님께서 행하신 일을 잊지 아니하고"
-        p4_b.font.size = Pt(19)
+        p4_b.text = f"[{title}]\n\n{scripture} 본문 말씀 중심 선포"
+        p4_b.font.size = Pt(20)
         p4_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 5: 제1대지 - Light Bg -> Dark Font]
+        # [Slide 5: 제1대지 - LIGHT BG -> DARK FONT]
         s5 = prs.slides.add_slide(blank_layout)
         set_light_slide(s5)
         tb5 = s5.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
         tf5 = tb5.text_frame
         tf5.word_wrap = True
         p5_h = tf5.paragraphs[0]
-        p5_h.text = f"01. 첫 번째 원리 · 침묵은 곧 삭제입니다"
+        p5_h.text = f"01. 첫 번째 메시지"
         p5_h.font.size, p5_h.font.bold = Pt(30), True
         p5_h.font.color.rgb = RGBColor(30, 58, 138)
         p5_b = tf5.add_paragraph()
-        p5_b.text = "\n• 숨기지 않음의 의지: 하나님의 영예와 능력을 자손에게 전하겠다는 의도적인 결단과 작정이 필요합니다.\n\n• 삭제와 망각의 위험: 내가 침묵하는 순간, 다음 세대의 신앙은 중립 상태가 아니라 영적으로 완전히 삭제됩니다."
+        p5_b.text = f"\n{points[0] if len(points) > 0 else title}"
         p5_b.font.size = Pt(20)
         p5_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 6: 제2대지 - Dark Bg -> Light Font]
+        # [Slide 6: 제2대지 - DARK BG -> LIGHT FONT]
         s6 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s6)
         tb6 = s6.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
         tf6 = tb6.text_frame
         tf6.word_wrap = True
         p6_h = tf6.paragraphs[0]
-        p6_h.text = f"02. 두 번째 원리 · 하나씩 세어가며 전수하라"
+        p6_h.text = f"02. 두 번째 메시지"
         p6_h.font.size, p6_h.font.bold = Pt(30), True
         p6_h.font.color.rgb = RGBColor(253, 224, 71)
         p6_b = tf6.add_paragraph()
-        p6_b.text = "\n• 구체성: 하나님이 내 삶에 행하신 일들을 수를 세듯 구체적으로 알리라.\n• 지속성: 단회성 이벤트가 아닌 일상 속에서 계속 전달하기.\n• 경이로움: 입이 벌어질 만큼 놀라운 하나님의 사적을 간증하기.\n\n📊 한국 청년 중 가정 내 신앙 대화 비율: 오직 12%"
+        p6_b.text = f"\n{points[1] if len(points) > 1 else title}"
         p6_b.font.size = Pt(20)
         p6_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 7: 제3대지 - Light Bg -> Dark Font]
+        # [Slide 7: 제3대지 - LIGHT BG -> DARK FONT]
         s7 = prs.slides.add_slide(blank_layout)
         set_light_slide(s7)
         tb7 = s7.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
         tf7 = tb7.text_frame
         tf7.word_wrap = True
         p7_h = tf7.paragraphs[0]
-        p7_h.text = f"03. 세 번째 원리 · 부지런히 새기고 가르치라"
+        p7_h.text = f"03. 세 번째 메시지"
         p7_h.font.size, p7_h.font.bold = Pt(30), True
         p7_h.font.color.rgb = RGBColor(30, 58, 138)
         p7_b = tf7.add_paragraph()
-        p7_b.text = "\n1. 새김: 숫돌에 칼을 갈듯 말씀을 자녀의 마음속에 날카롭고 선명하게 새깁니다.\n2. 일상: 길을 갈 때나 누워 있을 때나 언제 어디서든 끊임없이 가르칩니다.\n3. 소망: 자신의 능력이 아닌 오직 하나님 한 분에게만 소망을 두게 합니다."
+        p7_b.text = f"\n{points[2] if len(points) > 2 else title}"
         p7_b.font.size = Pt(20)
         p7_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 8: 신앙의 모델 - Dark Bg -> Light Font]
+        # [Slide 8: 핵심 메시지 - DARK BG -> LIGHT FONT]
         s8 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s8, CARD_BACKGROUNDS[2])
         tb8 = s8.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(11.33), Inches(5.5))
         tf8 = tb8.text_frame
         tf8.word_wrap = True
         p8_h = tf8.paragraphs[0]
-        p8_h.text = f"04. 신앙의 모델 · 가문을 바꾼 한 사람의 결단"
+        p8_h.text = f"04. 깊은 묵상과 선포"
         p8_h.font.size, p8_h.font.bold = Pt(30), True
         p8_h.font.color.rgb = RGBColor(253, 224, 71)
         p8_b = tf8.add_paragraph()
-        p8_b.text = "\n1908년 유교 전통 집안에서 개종한 손종일 성도의 헌신은 매일 새벽기도와 가정예배로 아들에게 신앙을 전수했습니다.\n\n그 아들 손양원 목사는 원수를 사랑하는 십자가의 삶을 살았고, 그 위대한 신앙은 다시 그의 후손들에게 생생히 흘러갔습니다."
+        p8_b.text = f"\n{points[3] if len(points) > 3 else title}"
         p8_b.font.size = Pt(20)
         p8_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 9: 삶의 적용 - Light Bg -> Dark Font]
+        # [Slide 9: 삶의 적용 - LIGHT BG -> DARK FONT]
         s9 = prs.slides.add_slide(blank_layout)
         set_light_slide(s9)
         tb9 = s9.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -979,22 +1037,22 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p9_h.font.size, p9_h.font.bold = Pt(30), True
         p9_h.font.color.rgb = RGBColor(30, 58, 138)
         p9_b = tf9.add_paragraph()
-        p9_b.text = "\n1. 바쁘다는 핑계나 성공주의 때문에 침묵하지 않고 의지적 결단으로 복음을 전한다.\n\n2. 내 삶에 역사하신 하나님의 실재적 은혜와 십자가 복음을 일상 속에서 하나하나 세어가며 들려준다.\n\n3. 자녀들이 세상 물질이 아닌 오직 살아계신 하나님 한 분에게만 소망을 두도록 기도한다."
+        p9_b.text = f"\n{app_text}"
         p9_b.font.size = Pt(19)
         p9_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 10: 결단 및 기도 - Dark Bg -> Light Font]
+        # [Slide 10: 결단 및 기도 - DARK BG -> LIGHT FONT]
         s10 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s10, CARD_BACKGROUNDS[0])
         tb10 = s10.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.2))
         tf10 = tb10.text_frame
         tf10.word_wrap = True
         p10_h = tf10.paragraphs[0]
-        p10_h.text = f"나가며 · 신앙 전수, 지금 시작하십시오\n"
+        p10_h.text = f"결단과 마침 기도문\n"
         p10_h.font.size, p10_h.font.bold = Pt(28), True
         p10_h.font.color.rgb = RGBColor(253, 224, 71)
         p10_b = tf10.add_paragraph()
-        p10_b.text = "내가 침묵하면 하나님의 역사는 삭제되지만, 내가 말하면 태어나지도 않은 후대까지 생명이 전달됩니다.\n\n🙏 기도: 살아계신 하나님, 우리 삶에 행하신 놀라운 일들을 침묵함으로 삭제하지 않게 하소서. 자녀들에게 세상 유산보다 더 귀한 십자가 복음을 전수하게 하시고, 대대손손 믿음의 대를 이어가는 신앙의 명문가로 축복하여 주시옵소서. 예수님의 이름으로 기도드립니다. 아멘."
+        p10_b.text = f"\n{prayer_text}"
         p10_b.font.size = Pt(18)
         p10_b.font.color.rgb = RGBColor(241, 245, 249)
 
@@ -1086,7 +1144,18 @@ def render_section_top_toolbar(title: str, content: str, state_key: str):
         with c_pdf:
             st.download_button("📥 PDF", data=create_pdf(title, content if content else "내용 없음"), file_name=f"{title}.pdf", mime="application/pdf", key=f"dl_pdf_{state_key}")
         with c_ppt:
-            st.download_button("📥 PPT", data=generate_sermon_structure_pptx(title, st.session_state.get("sermon_scripture", "본문"), content if content else "내용 없음"), file_name=f"{title}.pptx", mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", key=f"dl_ppt_struct_{state_key}")
+            st.download_button(
+                "📥 PPT", 
+                data=generate_sermon_structure_pptx(
+                    title, 
+                    st.session_state.get("sermon_scripture", "본문"), 
+                    content if content else "내용 없음",
+                    st.session_state.get("full_sermon", "")
+                ), 
+                file_name=f"{title}.pptx", 
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", 
+                key=f"dl_ppt_struct_{state_key}"
+            )
         with c_txt:
             st.download_button("📥 txt", data=create_txt(title, content if content else "내용 없음"), file_name=f"{title}.txt", mime="text/plain", key=f"dl_txt_{state_key}")
 
@@ -1250,7 +1319,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     st.session_state.sermon_summary_text = s_edit
                     st.session_state.edit_mode_sermon_sum = False
                     
-                    # DB 동기화
                     if "sermon_library" in st.session_state and len(st.session_state.sermon_library) > st.session_state.current_sermon_idx:
                         st.session_state.sermon_library[st.session_state.current_sermon_idx]["summary"] = s_edit
                         save_sermons_to_db(st.session_state.sermon_library)
@@ -1470,8 +1538,8 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 st.markdown("#### 인스타그램 캡션")
                 insta_c1, insta_c2 = st.columns([4, 1])
                 
-                insta_text = f"집은 물려주려고 평생을 아끼고 통장은 자녀 이름으로 만들어 두면서, 정작 가장 귀한 하나님 이야기는 언제 마지막으로 들려주셨나요?\n\n오늘 선포된 [{st.session_state.sermon_title}] 말씀을 통해 믿음의 유산을 전하는 가정이 되기를 축복합니다."
-                insta_tags = "#주일설교 #신앙전수 #말씀묵상 #가정예배 #시편78편 #크리스천"
+                insta_text = f"오늘 선포된 [{st.session_state.sermon_title}] ({st.session_state.sermon_scripture}) 말씀을 나눕니다.\n\n주신 은혜를 기억하고 마음에 깊이 새기며 삶 속에서 선한 능력으로 승리하시기를 축복합니다."
+                insta_tags = f"#주일설교 #{st.session_state.sermon_title.replace(' ', '')} #말씀묵상 #가정예배 #크리스천"
 
                 with insta_c1:
                     st.info(insta_text)
@@ -1551,7 +1619,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.rerun()
 
             if fam_txt:
-                if st.session_state.get(f"edit_mode_fam_{age_group}", False):
+                if st.session_state.get("edit_mode_fam_{age_group}", False):
                     edited_fam = st.text_area("가정예배지 편집", value=fam_txt, height=320, key=f"edit_fam_{age_group}")
                     if st.button("💾 저장", key=f"save_fam_{age_group}"):
                         st.session_state[f"family_worship_{age_group}"] = edited_fam
