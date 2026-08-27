@@ -5,26 +5,27 @@ import PIL.Image
 import PIL.ImageDraw
 import PIL.ImageFont
 
-# Pillow 호환성 패치
+# Pillow 10+ 호환성 패치
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = getattr(PIL.Image, 'Resampling', PIL.Image).LANCZOS
 
 import edge_tts
 from moviepy.editor import (
-    VideoFileClip, ImageClip, ColorClip, AudioFileClip,
-    CompositeAudioClip, CompositeVideoClip, afx, vfx
+    VideoFileClip, ImageClip, ColorClip,
+    AudioFileClip, CompositeAudioClip, CompositeVideoClip, afx, vfx
 )
 
 OUTPUT_DIR = "./outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# --- PIL 기반 안전 텍스트 클립 생성기 (ImageMagick OSError 완벽 방지) ---
+# --- PIL 기반 가변 폰트/위치 자막 클립 생성기 ---
 def create_pil_text_clip(text, fontsize=40, color="white", stroke_color="black", stroke_width=2, size=(900, None), duration=None):
     font = None
     font_candidates = [
         "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
         "/usr/share/fonts/opentype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/nanum/NanumGothic.ttf",
         "C:/Windows/Fonts/malgun.ttf",
         "./NanumGothic.ttf"
     ]
@@ -113,7 +114,11 @@ def create_animated_video(
     bgm_path: str = None,
     aspect_ratio: str = "9:16",
     font_name: str = "NanumGothic-Bold",
-    voice: str = "ko-KR-InJoonNeural"
+    voice: str = "ko-KR-InJoonNeural",
+    title_fontsize: int = 48,
+    sub_fontsize: int = 42,
+    title_y: int = 180,
+    sub_y: int = 1400
 ):
     full_script = " ".join(script_paragraphs)
     voice_path = asyncio.run(generate_tts(full_script, voice))
@@ -156,17 +161,18 @@ def create_animated_video(
     else:
         base_clip = ColorClip(size=(width, height), color=(15, 23, 42), duration=total_duration)
 
+    # 위치 파라미터 적용
     title_clip = (
         create_pil_text_clip(
             title,
-            fontsize=48 if aspect_ratio == "9:16" else 40,
+            fontsize=title_fontsize,
             color="#FDE047",
             stroke_color="black",
             stroke_width=2,
             size=(width - 160, None),
             duration=total_duration
         )
-        .set_position(("center", 180 if aspect_ratio == "9:16" else 90))
+        .set_position(("center", title_y))
         .fadein(0.5)
     )
 
@@ -178,7 +184,7 @@ def create_animated_video(
         sub_text = (
             create_pil_text_clip(
                 sentence.strip(),
-                fontsize=42 if aspect_ratio == "9:16" else 36,
+                fontsize=sub_fontsize,
                 color="white",
                 stroke_color="black",
                 stroke_width=2,
@@ -186,7 +192,7 @@ def create_animated_video(
                 duration=segment_duration
             )
             .set_start(start_time)
-            .set_position(("center", height // 2 if aspect_ratio == "9:16" else height * 0.65))
+            .set_position(("center", sub_y))
             .fadein(0.2)
             .fadeout(0.2)
         )
