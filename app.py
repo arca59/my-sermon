@@ -18,7 +18,7 @@ from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from video_engine import create_animated_video
@@ -30,7 +30,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 툴바 버튼 CSS 스타일링 (3번째 이미지처럼 가로 밀착 정렬)
+# 툴바 버튼 CSS 스타일링
 st.markdown("""
 <style>
     div[data-testid="column"] button {
@@ -57,10 +57,54 @@ if not st.session_state.authenticated:
             st.error("PIN 코드가 올바르지 않습니다.")
     st.stop()
 
-# --- 2. Gemini AI 연동 엔진 (오류 해결 & 순수 한국어 강제) ---
+# --- 2. 초고속 Gemini AI 엔진 (속도 극대화 & 영문 완전 차단) ---
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 sidebar_key = st.sidebar.text_input("🔑 Gemini API Key", value=secret_key, type="password")
 ACTIVE_KEY = sidebar_key.strip() if sidebar_key else secret_key.strip()
+
+def clean_korean_output(text: str) -> str:
+    """영문 기획 메모 및 잡문을 100% 제거하고 순수 한국어만 추출"""
+    if not text:
+        return ""
+    
+    # 한국어 시작 마커 탐색
+    markers = [
+        r"(\[.*?\])",
+        r"(###\s*[0-9가-힣])",
+        r"(1\.\s*[가-힣])",
+        r"([가-힣]{2,}\s*:\s*[가-힣])"
+    ]
+    for marker in markers:
+        match = re.search(marker, text)
+        if match:
+            text = text[match.start():]
+            break
+
+    lines = text.split("\n")
+    cleaned = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            cleaned.append("")
+            continue
+            
+        # 영문 메타데이터 라인 스킵
+        if re.match(r'^(Reliable|100%|Check|Ensure|Draft|Concept|Focus|Selection|Idea|Question|Application|Target|Passage|Summary)', stripped, re.IGNORECASE):
+            continue
+        if stripped.startswith("* Check") or stripped.startswith("* Ensure") or stripped.startswith("* Focus:"):
+            continue
+            
+        # 한글 없는 긴 영문 줄 제거
+        k_count = len(re.findall(r'[가-힣]', stripped))
+        e_count = len(re.findall(r'[a-zA-Z]', stripped))
+        if e_count > 8 and k_count == 0:
+            continue
+            
+        line = re.sub(r'\*?\*?Draft(ing)?:\*?\s*', '', line)
+        line = re.sub(r'\([A-Za-z\s,\.\?\!\'\":;\-]{6,}\)', '', line)
+        cleaned.append(line)
+        
+    return "\n".join(cleaned).strip()
 
 def get_ai_response(prompt: str, is_json: bool = True):
     if not ACTIVE_KEY:
@@ -72,86 +116,82 @@ def get_ai_response(prompt: str, is_json: bool = True):
         st.error(f"API 키 설정 오류: {str(e)}")
         return None
 
-    # 한국어 전용 시스템 지침 추가
-    korean_system_prompt = (
-        "당신은 신뢰할 수 있는 한국 교회의 목회 동역자 AI입니다. "
-        "모든 응답은 반드시 100% 순수 한국어로만 작성하세요. "
-        "영문 생각 과정(Drafting, Concept, Focus, Idea 등)이나 번역 초안, 영어 메모는 절대 출력하지 마세요."
+    system_instruction = (
+        "당신은 한국 교회의 사역을 돕는 목회 전문 AI 어시스턴트입니다. "
+        "영문 생각 과정, 기획 메모(Drafting, Concept, Focus 등)나 영어 단어는 일절 작성하지 마십시오. "
+        "서론의 인사말이나 메타 안내 문구 없이, 요청한 한국어 사역 문서 본문만 바로 출력하십시오."
     )
-    full_prompt = f"{korean_system_prompt}\n\n[요청 작업]\n{prompt}"
 
-    candidate_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"]
-    try:
-        live_models = [m.name.replace("models/", "") for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
-        for lm in live_models:
-            if lm not in candidate_models:
-                candidate_models.append(lm)
-    except Exception:
-        pass
-
+    # 초고속 Flash 모델 고정 호출 (지연 시간 최소화)
+    fast_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-pro"]
     last_error_msg = ""
-    for model_name in candidate_models:
+    
+    for model_name in fast_models:
         try:
-            model = genai.GenerativeModel(model_name)
+            model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
             if is_json:
                 try:
-                    res = model.generate_content(full_prompt, generation_config={"response_mime_type": "application/json"})
+                    res = model.generate_content(
+                        prompt,
+                        generation_config={"response_mime_type": "application/json", "temperature": 0.3}
+                    )
                     return json.loads(res.text)
                 except Exception:
-                    res = model.generate_content(full_prompt)
+                    res = model.generate_content(prompt, generation_config={"temperature": 0.3})
                     match = re.search(r"\{.*\}|\[.*\]", res.text, re.DOTALL)
                     if match:
                         return json.loads(match.group(0))
             else:
-                res = model.generate_content(full_prompt)
+                res = model.generate_content(prompt, generation_config={"temperature": 0.4})
                 if res.text:
-                    # 영문 메타데이터 블록 제거 정제
-                    cleaned_text = re.sub(r"\*?\*?(Drafting|Concept|Focus|Selection|Idea \d+):\*?\*?.*?\n", "", res.text)
-                    return cleaned_text.strip()
+                    return clean_korean_output(res.text)
         except Exception as e:
             last_error_msg = str(e)
             continue
 
-    st.error(f"AI 호출 오류 상세: {last_error_msg}")
+    st.error(f"AI 호출 오류: {last_error_msg}")
     return None
 
-# --- 3. PDF 한글 폰트 자동 등록 엔진 (깨짐 현상 완벽 해결) ---
+# --- 3. PDF 한글 폰트 캐싱 엔진 ---
 PDF_FONT_NAME = "Helvetica"
 
+@st.cache_resource(show_spinner=False)
 def setup_korean_font():
     global PDF_FONT_NAME
     possible_paths = [
         "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
         "/usr/share/fonts/nanum/NanumGothic.ttf",
-        "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
         "C:/Windows/Fonts/malgun.ttf",
-        "C:/Windows/Fonts/gulim.ttc",
         "/System/Library/Fonts/AppleSDGothicNeo.ttc"
     ]
     for path in possible_paths:
         if os.path.exists(path):
             try:
                 pdfmetrics.registerFont(TTFont("NanumKorean", path))
-                PDF_FONT_NAME = "NanumKorean"
-                return
+                return "NanumKorean"
             except Exception:
                 pass
 
     local_font = "./NanumGothic.ttf"
     if not os.path.exists(local_font):
         try:
-            url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
-            urllib.request.urlretrieve(url, local_font)
+            req = urllib.request.Request(
+                "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf",
+                headers={'User-Agent': 'Mozilla/5.0'}
+            )
+            with urllib.request.urlopen(req, timeout=3) as resp, open(local_font, 'wb') as out_f:
+                out_f.write(resp.read())
         except Exception:
             pass
     if os.path.exists(local_font):
         try:
             pdfmetrics.registerFont(TTFont("NanumKorean", local_font))
-            PDF_FONT_NAME = "NanumKorean"
+            return "NanumKorean"
         except Exception:
             pass
+    return "Helvetica"
 
-setup_korean_font()
+PDF_FONT_NAME = setup_korean_font()
 
 # --- 4. 문서 변환 엔진 (Word / PPT / PDF / TXT) ---
 def create_docx(title: str, content: str) -> io.BytesIO:
@@ -231,7 +271,6 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
     prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
     blank_layout = prs.slide_layouts[6]
     
-    # 표지
     slide1 = prs.slides.add_slide(blank_layout)
     fill1 = slide1.background.fill
     fill1.solid()
@@ -242,7 +281,6 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
     p.font.size, p.font.bold = Pt(38), True
     p.font.color.rgb, p.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
     
-    # 본문 슬라이드
     paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
     chunk = ""
     for para in paragraphs:
@@ -356,10 +394,10 @@ def render_section_top_toolbar(title: str, content: str, state_key: str):
                 st.download_button("📥 txt", data=create_txt(title, content), file_name=f"{title}.txt", mime="text/plain", key=f"dl_txt_{state_key}")
 
     if st.session_state.get(f"show_copy_{state_key}", False):
-        st.info("💡 아래 상자의 텍스트를 드래그하거나 우측 상단 복사 아이콘을 클릭하세요:")
+        st.info("💡 아래 상자의 텍스트를 복사하여 사용하세요:")
         st.code(content, language="text")
 
-# --- 6. 성경 66권 목록 정의 ---
+# --- 6. 성경 66권 목록 ---
 BIBLE_BOOKS = [
     "창세기", "출애굽기", "레위기", "민수기", "신명기", "여호수아", "사사기", "룻기", "사무엘상", "사무엘하",
     "열왕기상", "열왕기하", "역대상", "역대하", "에스라", "느헤미야", "에스더", "욥기", "시편", "잠언",
@@ -417,7 +455,7 @@ app_mode = st.sidebar.radio(
 )
 
 # ==============================================================================
-# 1. 📊 설교 대시보드 (메인 작업실) - 모든 섹션 상단 6종 툴바 탑재
+# 1. 📊 설교 대시보드 (메인 작업실)
 # ==============================================================================
 if app_mode == "📊 설교 대시보드 (메인 작업실)":
     st.markdown(
@@ -435,13 +473,15 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
         if st.button("✨ 참고 성구 및 신학적 예화 생성하기"):
             with st.spinner("본문과 연관된 성구와 예화를 분석 중입니다..."):
                 prompt = f"""
-                본문: {st.session_state.sermon_scripture}, 제목: {st.session_state.sermon_title}
-                설교문: {st.session_state.full_sermon[:1500]}
+                성경 본문: {st.session_state.sermon_scripture}
+                설교 제목: {st.session_state.sermon_title}
+                설교 요약: {st.session_state.full_sermon[:1500]}
                 
-                오직 100% 한국어로만 작성하세요:
-                1. 연관 핵심 참고 성구 3개 및 설교적 연결점
-                2. 일상/현대적 공감 예화 2가지
-                3. 교회사/고전 문학 및 기독교 사상가 명언 2가지
+                [참고 성구 및 예화 자료집: {st.session_state.sermon_title}]
+                
+                1. 본문 연관 핵심 참고 성구 3가지 및 설교적 연결점
+                2. 일상 및 현대적 공감 예화 2가지
+                3. 교회사 및 기독교 사상가 명언 2가지
                 """
                 st.session_state.rich_materials = get_ai_response(prompt, is_json=False)
         
@@ -477,7 +517,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
     st.write("---")
 
-    # 2단 레이아웃 (좌측 메뉴 / 우측 뷰어)
+    # 2단 분할 레이아웃
     left_panel, right_panel = st.columns([1, 2.5])
     with left_panel:
         st.markdown("<p style='font-size:12px; font-weight:bold; color:#94a3b8; margin-bottom:4px;'>콘텐츠</p>", unsafe_allow_html=True)
@@ -493,7 +533,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             label_visibility="collapsed"
         )
 
-    # 우측 뷰어 패널 (제목 + 상단 툴바 + 수정/저장 기능)
+    # 우측 뷰어 패널
     with right_panel:
         active_view = maker_sel if maker_sel != "선택 안 함" else content_sel
 
@@ -517,18 +557,28 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹나눔지", grp_txt, "sm_grp")
             
             if st.button("✨ 소그룹 나눔 질문 자동 생성", type="primary"):
-                with st.spinner("소그룹 나눔지 작성 중..."):
+                with st.spinner("소그룹 나눔지 작성 중... (초고속 생성)"):
                     prompt = f"""
-                    설교 본문: {st.session_state.sermon_scripture}
+                    성경 본문: {st.session_state.sermon_scripture}
                     설교 요약: {st.session_state.full_sermon[:3500]}
                     
-                    [필수 작성 지침]
-                    - 영문 생각 과정(Drafting, Concept, Focus 등)은 절대 출력하지 말고, 오직 100% 한국어로 완성된 나눔지만 작성하세요.
-                    - 구성 형식:
-                      1. 마음 열기 (아이스브레이크 일상 나눔 질문)
-                      2. 말씀 속으로 (본문 및 설교 핵심 이해 질문 2개)
-                      3. 삶 속으로 (구체적 실천 및 삶의 적용 질문 2개)
-                      4. 마침 합심 기도문
+                    아래 템플릿 형식으로 완성된 한국어 나눔지 본문만 즉시 출력하세요:
+                    
+                    [소그룹 나눔지: {st.session_state.sermon_title}]
+                    
+                    1. 마음 열기 (아이스브레이크)
+                    - (일상의 따뜻한 나눔 질문 1가지)
+                    
+                    2. 말씀 속으로
+                    - 1. (본문 말씀 이해 질문)
+                    - 2. (설교 핵심 메시지 나눔 질문)
+                    
+                    3. 삶 속으로
+                    - 1. (구체적 실천 방안 질문)
+                    - 2. (한 주간의 결단 질문)
+                    
+                    4. 마침 합심 기도문
+                    - (은혜로운 마무리 기도문)
                     """
                     st.session_state.small_group_text = get_ai_response(prompt, is_json=False)
                     st.rerun()
@@ -552,11 +602,20 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             render_section_top_toolbar(f"{st.session_state.sermon_title}_주간QT5일치", qt_txt, "qt5")
 
             if st.button("✨ 5일치 QT 묵상지 자동 생성", type="primary"):
-                with st.spinner("주간 5일치 QT 작성 중..."):
+                with st.spinner("주간 5일치 QT 작성 중... (초고속 생성)"):
                     prompt = f"""
-                    본문: {st.session_state.sermon_scripture}, 설교문: {st.session_state.full_sermon[:3000]}
-                    오직 100% 한국어로 월~금 5일치 QT 묵상지를 작성하세요.
-                    각 일자별 형식: [월요일~금요일] / [제목] / [성구] / [말씀 묵상 해설] / [적용 질문] / [오늘의 기도]
+                    성경 본문: {st.session_state.sermon_scripture}
+                    설교 요약: {st.session_state.full_sermon[:3000]}
+                    
+                    [주간 QT 5일치: {st.session_state.sermon_title}]
+                    
+                    월요일부터 금요일까지 5일치 말씀 묵상지를 작성하세요:
+                    각 날짜마다:
+                    - 제목:
+                    - 본문 구절:
+                    - 말씀 묵상 해설:
+                    - 삶의 적용 질문:
+                    - 오늘의 기도:
                     """
                     st.session_state.qt5_text = get_ai_response(prompt, is_json=False)
                     st.rerun()
@@ -582,7 +641,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             c_cnt = st.slider("카드 장수", 7, 10, 8)
             if st.button("🎨 카드뉴스 문구 생성", type="primary"):
                 with st.spinner("카드뉴스 구성 중..."):
-                    prompt = f"설교문: {st.session_state.full_sermon[:3500]}\n정확히 {c_cnt}장의 카드뉴스 JSON 출력 (100% 한국어): {{\"cards\": [{{\"card_number\": 1, \"headline\": \"제목\", \"body_text\": \"문구\"}}]}}"
+                    prompt = f"설교 본문: {st.session_state.sermon_scripture}\n설교문: {st.session_state.full_sermon[:3500]}\n정확히 {c_cnt}장의 카드뉴스 JSON 출력 (100% 한국어): {{\"cards\": [{{\"card_number\": 1, \"headline\": \"제목\", \"body_text\": \"문구\"}}]}}"
                     res = get_ai_response(prompt, is_json=True)
                     if res and "cards" in res:
                         st.session_state.card_list = res["cards"]
@@ -600,7 +659,27 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
             if st.button("🎬 바이럴 쇼츠 대본 3종 생성", type="primary"):
                 with st.spinner("쇼츠 대본 작성 중..."):
-                    prompt = f"설교문: {st.session_state.full_sermon[:3000]}\n오직 100% 한국어로 쇼츠/릴스용 60초 대본 3가지 버전(감동형, 질문형, 결단선포형)을 [후킹]-[본론]-[결단] 구조로 작성하세요."
+                    prompt = f"""
+                    성경 본문: {st.session_state.sermon_scripture}
+                    설교 요약: {st.session_state.full_sermon[:3000]}
+                    
+                    [60초 세로 쇼츠 대본 3종: {st.session_state.sermon_title}]
+                    
+                    1. 감동 및 위로형 대본
+                    - [0~5초 후킹 멘트]:
+                    - [5~45초 본론 메시지]:
+                    - [45~60초 결단 및 축복]:
+                    
+                    2. 질문 및 호기심 자극형 대본
+                    - [0~5초 후킹 멘트]:
+                    - [5~45초 본론 메시지]:
+                    - [45~60초 결단 및 축복]:
+                    
+                    3. 강한 결단 선포형 대본
+                    - [0~5초 후킹 멘트]:
+                    - [5~45초 본론 메시지]:
+                    - [45~60초 결단 및 축복]:
+                    """
                     st.session_state.shorts_script_text = get_ai_response(prompt, is_json=False)
                     st.rerun()
 
@@ -624,8 +703,20 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             render_section_top_toolbar(f"{st.session_state.sermon_title}_가정예배지_{age_group}", fam_txt, f"fam_{age_group}")
 
             if st.button(f"✨ {age_group} 맞춤 가정예배지 생성", type="primary"):
-                with st.spinner("가정예배 순서지 작성 중..."):
-                    prompt = f"본문: {st.session_state.sermon_scripture}, 설교문: {st.session_state.full_sermon[:3000]}\n대상: {age_group}\n100% 한국어로 작성: 1.찬양 2.말씀 3.눈높이 3분 메시지 4.가족 나눔 2개 5.축복기도문"
+                with st.spinner(f"{age_group} 가정예배지 작성 중..."):
+                    prompt = f"""
+                    성경 본문: {st.session_state.sermon_scripture}
+                    설교 요약: {st.session_state.full_sermon[:3000]}
+                    대상: {age_group}
+                    
+                    [가정예배 순서지 ({age_group}): {st.session_state.sermon_title}]
+                    
+                    1. 찬양 및 신앙고백
+                    2. 함께 읽는 성경 말씀
+                    3. {age_group} 눈높이에 맞춘 3분 가족 메시지
+                    4. 온 가족 나눔 질문 2가지
+                    5. 가정을 축복하는 마무리 기도문
+                    """
                     st.session_state[f"family_worship_{age_group}"] = get_ai_response(prompt, is_json=False)
                     st.rerun()
 
@@ -648,16 +739,19 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             render_section_top_toolbar(f"{st.session_state.sermon_title}_설교점검및제안", audit_txt, "sermon_audit")
 
             if st.button("🔍 설교 전달력 및 신학적 완성도 정밀 점검", type="primary"):
-                with st.spinner("설교 분석 및 피드백 작성 중..."):
+                with st.spinner("설교 분석 리포트 작성 중..."):
                     prompt = f"""
-                    설교 본문: {st.session_state.sermon_scripture}, 제목: {st.session_state.sermon_title}
+                    성경 본문: {st.session_state.sermon_scripture}
+                    설교 제목: {st.session_state.sermon_title}
                     설교 원고: {st.session_state.full_sermon[:4000]}
-                    100% 한국어로 5가지 전문 피드백 작성:
-                    1. 본문 주해의 정확성 및 성경 중심성
-                    2. 대지 전개 및 구조 평가
-                    3. 예화 및 삶의 적용 적절성
-                    4. 스피치 전달력 개선 제안
-                    5. 총평 및 3가지 권고사항
+                    
+                    [설교 전문 피드백 리포트: {st.session_state.sermon_title}]
+                    
+                    1. 본문 주해의 정확성 및 성경 중심성 평가
+                    2. 논리적 대지 전개 및 설교 구조 분석
+                    3. 청중 공감 예화 및 삶의 적용 적절성
+                    4. 스피치 전달력 및 표현 개선 제안
+                    5. 총평 및 3가지 핵심 권고사항
                     """
                     st.session_state.sermon_audit_text = get_ai_response(prompt, is_json=False)
                     st.rerun()
@@ -681,15 +775,18 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹리더가이드", ldr_txt, "ldr_guide")
 
             if st.button("📖 구역장/순장용 소그룹 리더가이드 생성", type="primary"):
-                with st.spinner("소그룹 인도자용 심화 가이드 작성 중..."):
+                with st.spinner("소그룹 인도자 가이드 작성 중..."):
                     prompt = f"""
-                    설교 본문: {st.session_state.sermon_scripture}, 설교 요약: {st.session_state.full_sermon[:3500]}
-                    100% 한국어로 구역장/셀리더용 리더가이드를 작성하세요:
-                    1. 모임의 핵심 목표
-                    2. 본문 배경 및 신학적 핵심 요약 (리더용 심화 해설)
-                    3. 나눔 질문별 예상 답변 및 인도 팁
-                    4. 침묵/돌발 질문 대처 요령
-                    5. 소그룹 중보기도 제목 3가지
+                    성경 본문: {st.session_state.sermon_scripture}
+                    설교 요약: {st.session_state.full_sermon[:3500]}
+                    
+                    [소그룹 리더(구역장/셀리더/순장) 심화 가이드: {st.session_state.sermon_title}]
+                    
+                    1. 이번 주 모임의 핵심 목표 및 주제 방향
+                    2. 본문 배경 및 신학적 핵심 해설 (리더용 심화 자료)
+                    3. 나눔 질문별 성도들의 예상 답변 및 리더 피드백 팁
+                    4. 모임 중 침묵 또는 돌발 상황 대처 요령
+                    5. 소그룹을 위한 맞춤 중보기도 제목 3가지
                     """
                     st.session_state.leader_guide_text = get_ai_response(prompt, is_json=False)
                     st.rerun()
@@ -708,7 +805,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 st.caption("위 버튼을 눌러 소그룹 리더가이드를 생성하세요.")
 
 # ==============================================================================
-# 2. 📤 새 설교 등록/원고작성 (직접 타이핑 / 파일 업로드 / AI 강해설교문 3종)
+# 2. 📤 새 설교 등록/원고작성
 # ==============================================================================
 elif app_mode == "📤 새 설교 등록/원고작성":
     st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📤 새 설교 등록 및 원고 작성</h1>", unsafe_allow_html=True)
@@ -805,24 +902,24 @@ elif app_mode == "📤 새 설교 등록/원고작성":
         full_scripture_str = f"{sel_book} {sel_chap_verse}"
 
         if st.button("🚀 정통 강해설교문 전문 자동 작성 시작 (25~30분 분량)", type="primary"):
-            with st.spinner(f"[{theology_choice.split(' ')[0]}] 관점으로 {full_scripture_str} 본문 강해설교문 작성 중..."):
+            with st.spinner(f"[{theology_choice.split(' ')[0]}] 관점으로 강해설교문 작성 중... (초고속 생성)"):
                 prompt = f"""
-                당신은 한국 교회의 탁월한 복음주의/개혁주의/장로교 설교학 교수이자 목회자입니다.
-                - 성경 본문: {full_scripture_str}
-                - 주제: {ai_sermon_topic}
-                - 신학적 관점: {theology_choice}
-                - 설교 형태: {sermon_style}
+                성경 본문: {full_scripture_str}
+                설교 주제: {ai_sermon_topic}
+                신학적 관점: {theology_choice}
+                설교 형태: {sermon_style}
                 
-                오직 100% 한국어로 25~30분 분량의 완성된 '설교문 전문(Full Manuscript)'을 서론-본론(3대지)-결론 및 결단의 기도 구조로 작성하세요.
-                각 대지마다 본문 주해 해설과 청중의 삶에 직결되는 현실적 예화, 구체적 적용 방안을 풍성히 포함하세요.
-                어조: 목양적이고 은혜로운 구어체 선포형 어투(~합니다, ~바랍니다).
+                [강해설교문 전문: {sel_book} 강해 - {ai_sermon_topic}]
+                
+                서론(도입부) - 본론(제1대지, 제2대지, 제3대지) - 결론 및 결단의 기도 구조로 강단 선포용 25~30분 완성 원고를 작성하세요.
+                각 대지마다 본문 주해와 성도들의 삶에 와닿는 구체적 예화, 실천 적용 방안을 풍성히 포함하세요.
                 """
                 generated_sermon = get_ai_response(prompt, is_json=False)
                 if generated_sermon:
                     st.session_state.temp_generated_sermon = generated_sermon
                     st.session_state.temp_ai_title = f"{sel_book} 강해: {ai_sermon_topic}"
                     st.session_state.temp_ai_scrip = full_scripture_str
-                    st.success("강해설교문 전문이 성공적으로 완성되었습니다!")
+                    st.success("강해설교문 전문이 완성되었습니다!")
 
         if "temp_generated_sermon" in st.session_state:
             st.write("---")
@@ -924,7 +1021,7 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                     with open(bg_p, "wb") as f: f.write(bg_media.getbuffer())
                 if bgm_media:
                     bgm_p = f"./uploads_{bgm_media.name}"
-                    with open(bgm_p, "wb") as f: f.write(bgm_media.getbuffer())
+                    with open(bg_p, "wb") as f: f.write(bgm_media.getbuffer())
 
                 lines = [l.strip() for l in v_script.split("\n") if l.strip()]
                 voice_id = "ko-KR-InJoonNeural" if "인준" in v_voice else "ko-KR-SunHiNeural"
