@@ -353,44 +353,81 @@ def generate_cardnews_zip(cards, scripture_str="", church_name=""):
     zip_buf.seek(0)
     return zip_buf
 
-# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 (HTTP 403 Forbidden 우회 적용) ---
+# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 (다중 클라이언트 자동 우회 로직) ---
 def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, title: str, subtitle_text: str, church_name: str = ""):
     out_dir = "./outputs"
     os.makedirs(out_dir, exist_ok=True)
     source_template = os.path.join(out_dir, "yt_raw_source.%(ext)s")
     
-    # URL 정제 (/live/주소 또는 URL 파라미터 호환 정규화)
-    clean_url = re.sub(r'youtube\.com/live/([a-zA-Z0-9_-]+)', r'youtube.com/watch?v=\1', yt_url.strip())
-    
-    ydl_opts = {
-        'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
-        'outtmpl': source_template,
-        'overwrites': True,
-        'quiet': True,
-        'no_warnings': True,
-        'nocheckcertificate': True,
-        'http_headers': {
-            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-        },
-        'extractor_args': {
-            'youtube': {
-                'player_client': ['ios', 'android', 'mweb']
-            }
-        }
-    }
-    
-    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([clean_url])
-        
-    src_video = os.path.join(out_dir, "yt_raw_source.mp4")
-    if not os.path.exists(src_video):
+    # 1. 고유 비디오 ID 추출 (live, shorts, watch, 공유 링크 완벽 표준화)
+    clean_input = yt_url.strip()
+    vid_match = re.search(r'(?:v=|\/live\/|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})', clean_input)
+    if vid_match:
+        target_v_id = vid_match.group(1)
+        clean_url = f"https://www.youtube.com/watch?v={target_v_id}"
+    else:
+        clean_url = clean_input
+
+    # 2. HTTP 403 Forbidden 우회를 위한 다중 클라이언트 우회 전략
+    client_strategies = [
+        ['mweb'],
+        ['android'],
+        ['ios'],
+        ['tv_embedded'],
+        ['web']
+    ]
+
+    download_success = False
+    last_err = None
+
+    for clients in client_strategies:
+        # 이전 임시 소스 파일 정돈
         for f in os.listdir(out_dir):
             if f.startswith("yt_raw_source"):
-                src_video = os.path.join(out_dir, f)
-                break
-                
+                try: os.remove(os.path.join(out_dir, f))
+                except Exception: pass
+
+        ydl_opts = {
+            'format': 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
+            'outtmpl': source_template,
+            'overwrites': True,
+            'quiet': True,
+            'no_warnings': True,
+            'nocheckcertificate': True,
+            'geo_bypass': True,
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1',
+                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+            },
+            'extractor_args': {
+                'youtube': {
+                    'player_client': clients
+                }
+            }
+        }
+
+        try:
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([clean_url])
+            download_success = True
+            break
+        except Exception as e:
+            last_err = e
+            continue
+
+    if not download_success:
+        raise Exception(f"유튜브 보안 정책 차단 상태입니다. [🎨 AI 나레이션 & 템플릿 숏츠 제작] 탭에서 동영상을 직접 업로드하여 쇼츠를 바로 제작하실 수 있습니다. (상세 오차: {str(last_err)})")
+
+    src_video = None
+    for f in os.listdir(out_dir):
+        if f.startswith("yt_raw_source"):
+            src_video = os.path.join(out_dir, f)
+            break
+            
+    if not src_video or not os.path.exists(src_video):
+        raise Exception("다운로드된 영상 소스 파일을 찾을 수 없습니다.")
+
     raw_clip = VideoFileClip(src_video)
     max_dur = raw_clip.duration
     start_sec = max(0, min(start_sec, int(max_dur) - 5))
@@ -762,7 +799,7 @@ async def generate_voiceover_audio(text: str, voice: str = "ko-KR-InJoonNeural")
     await communicate.save(out_path)
     return out_path
 
-# --- 7. 모든 섹션 상단 통일 툴바 컴포넌트 [수정 / 복사 / 워드 / PDF / PPT / txt] ---
+# --- 7. 모든 섹션 상단 통일 툴바 컴포넌트 ---
 def render_section_top_toolbar(title: str, content: str, state_key: str):
     col_t, col_btns = st.columns([1.2, 2.8])
     with col_t:
@@ -1524,7 +1561,7 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
             if not yt_url_input.strip():
                 st.warning("유튜브 영상 링크를 입력해주세요.")
             else:
-                with st.spinner("유튜브 영상 다운로드, 9:16 화면 크롭 및 자막 합성 중... (약 20~40초)"):
+                with st.spinner("유튜브 보안 차단 우회 및 영상 추출 중... (약 20~40초)"):
                     try:
                         extracted_file = extract_youtube_to_shorts(
                             yt_url=yt_url_input.strip(),
@@ -1537,7 +1574,7 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                         st.session_state.yt_extracted_result = extracted_file
                         st.success("유튜브 영상 숏츠 추출이 완료되었습니다!")
                     except Exception as e:
-                        st.error(f"유튜브 추출 오류: {str(e)}")
+                        st.error(f"유튜브 추출 알림: {str(e)}")
 
         if "yt_extracted_result" in st.session_state and os.path.exists(st.session_state.yt_extracted_result):
             st.write("---")
