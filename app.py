@@ -109,6 +109,102 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# --- 성경 66권 구약/신약 자동 분류 모듈 ---
+OLD_TESTAMENT_BOOKS = [
+    "창세기", "출애굽기", "레위기", "민수기", "신명기", "여호수아", "사사기", "룻기", 
+    "사무엘상", "사무엘하", "열왕기상", "열왕기하", "역대상", "역대하", "에스라", "느헤미야", 
+    "에스더", "욥기", "시편", "잠언", "전도서", "아가", "이사야", "예레미야", "예레미야애가", 
+    "에스겔", "다니엘", "호세아", "요엘", "아모스", "오바댜", "요나", "미가", "나훔", 
+    "하박국", "스바냐", "학개", "스가랴", "말라기"
+]
+
+NEW_TESTAMENT_BOOKS = [
+    "마태복음", "마가복음", "누가복음", "요한복음", "사도행전", "로마서", "고린도전서", "고린도후서", 
+    "갈라디아서", "에베소서", "빌립보서", "골로새서", "데살로니가전서", "데살로니가후서", "디모데전서", 
+    "디모데후서", "디도서", "빌레몬서", "히브리서", "야고보서", "베드로전서", "베드로후서", 
+    "요한일서", "요한이서", "요한삼서", "유다서", "요한계시록"
+]
+
+BIBLE_BOOKS = OLD_TESTAMENT_BOOKS + NEW_TESTAMENT_BOOKS
+
+def classify_scripture(scripture_text: str):
+    """성경 구절 텍스트에서 구약/신약 및 성경 책 이름을 자동 추출"""
+    if not scripture_text:
+        return "기타", "성경전체"
+    
+    for b in OLD_TESTAMENT_BOOKS:
+        if b in scripture_text:
+            return "구약", b
+            
+    for b in NEW_TESTAMENT_BOOKS:
+        if b in scripture_text:
+            return "신약", b
+            
+    return "기타", "성경전체"
+
+# --- 설교 영구 보관소 파일 데이터베이스 엔진 ---
+SERMON_DB_PATH = "./outputs/sermons_db.json"
+
+def load_sermons_from_db():
+    os.makedirs("./outputs", exist_ok=True)
+    if os.path.exists(SERMON_DB_PATH):
+        try:
+            with open(SERMON_DB_PATH, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, list) and len(data) > 0:
+                    return data
+        except Exception:
+            pass
+
+    default_data = [
+        {
+            "id": 1,
+            "title": "신앙을 다음 세대에 전수하라",
+            "scripture": "시편 78:4-7",
+            "testament": "구약",
+            "book": "시편",
+            "topic": "신앙전수/다음세대",
+            "theology": "개혁주의/장로교",
+            "date": "2026-08-27",
+            "tags": ["신앙 전수", "다음 세대", "가정 예배", "시편"],
+            "summary": """🎯 설교 핵심 명제:
+자녀에게 물려줄 수 있는 최고의 유산은 부동산이나 통장이 아니라 내가 만난 하나님에 대한 생생한 복음 간증입니다.
+
+📌 설교 3대지 핵심 요약:
+1. 침묵은 곧 삭제입니다 (시편 78:4)
+- 하나님의 영예와 능력을 숨기지 않겠다는 의도적인 결단이 필요합니다. 내가 침묵하는 순간 다음 세대의 신앙은 중립이 아닌 영적 삭제 상태가 됩니다.
+
+2. 하나씩 세어가며 전수하라 (시편 78:5)
+- 막연한 훈계가 아닌 삶의 고난 속에서 응답받은 구체적인 은혜의 사건들을 수를 세듯 하나하나 가르쳐야 합니다.
+
+3. 부지런히 새기고 가르치라 (시편 78:6-7)
+- 숫돌에 칼을 갈듯 말씀을 자녀의 심비에 새겨 오직 하나님 한 분에게만 소망을 두는 신앙의 명문가를 세워야 합니다.
+
+💡 성도를 위한 구체적 실천 적용:
+- 바쁘다는 핑계로 식탁 대화에서 하나님 이야기를 침묵하지 않기
+- 하나님이 내 삶에 행하신 생생한 기도 응답을 자녀에게 나누기
+- 오직 하나님께만 소망을 두도록 기도 가이드 설정하기""",
+            "text": """1. 신앙의 유산을 숨기지 말고 적극적으로 전수하십시오.
+오늘 본문 4절은 우리가 여호와의 영예와 능력을 자손에게 숨기지 않겠다고 고백합니다. 내가 말하지 않으면 그 신앙의 역사가 삭제됩니다. 의도적인 결단과 작정을 통해 자녀들에게 복음을 전하는 일에 힘쓰십시오.
+
+2. 하나님이 행하신 구체적인 은혜와 복음을 세어가며 가르치십시오.
+성경에서 전한다는 표현은 마치 수를 세는 것처럼 구체적으로 말하는 것을 뜻합니다. 삶의 위기 때 하나님이 어떻게 응답하셨는지 생생한 간증을 자녀들의 마음에 날카롭게 새겨주십시오.
+
+3. 다음 세대가 오직 하나님께만 인생의 소망을 두게 하십시오.
+우리가 신앙을 전수하는 궁극적 목적은 자녀들이 세상의 헛된 확신이 아닌 오직 하나님께 소망을 두게 하려는 것입니다."""
+        }
+    ]
+    save_sermons_to_db(default_data)
+    return default_data
+
+def save_sermons_to_db(sermons_list):
+    os.makedirs("./outputs", exist_ok=True)
+    try:
+        with open(SERMON_DB_PATH, "w", encoding="utf-8") as f:
+            json.dump(sermons_list, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        st.error(f"서재 파일 저장 오류: {str(e)}")
+
 # --- 1. 개인 보안 접속 인증 ---
 USER_PIN = st.secrets.get("APP_PIN", "7777")
 if "authenticated" not in st.session_state:
@@ -302,7 +398,7 @@ def fetch_image_bytes(url: str):
     except Exception:
         return None
 
-# --- 카드뉴스 PNG 이미지 고화질 합성 엔진 ---
+# --- 카드뉴스 PNG 이미지 합성 엔진 ---
 def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
     bg_url = CARD_BACKGROUNDS[idx % len(CARD_BACKGROUNDS)]
     img_b = fetch_image_bytes(bg_url)
@@ -353,7 +449,7 @@ def generate_cardnews_zip(cards, scripture_str="", church_name=""):
     zip_buf.seek(0)
     return zip_buf
 
-# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 (3중 네트워크 안전 우회) ---
+# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 ---
 def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, title: str, subtitle_text: str, church_name: str = ""):
     out_dir = "./outputs"
     os.makedirs(out_dir, exist_ok=True)
@@ -367,7 +463,6 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
     download_success = False
     last_err = ""
 
-    # 전략 1: Cobalt 글로벌 스트리밍 API (HTTP 403 차단 우회)
     cobalt_endpoints = [
         "https://api.cobalt.tools/api/json",
         "https://co.wuk.sh/api/json",
@@ -401,7 +496,6 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
             last_err = str(ex)
             continue
 
-    # 전략 2: Piped API 비디오 스트림 추출
     if not download_success and video_id:
         piped_apis = [
             f"https://pipedapi.kavin.rocks/streams/{video_id}",
@@ -437,7 +531,6 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
                 last_err = str(ex)
                 continue
 
-    # 전략 3: yt-dlp 모바일/TV 우회 패치
     if not download_success:
         client_strategies = [['ios'], ['android_creator'], ['mweb'], ['tv_embedded']]
         for clients in client_strategies:
@@ -720,7 +813,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             overlay.fill.fore_color.rgb = RGBColor(10, 15, 30)
             overlay.line.fill.background()
 
-        # [슬라이드 1: 표지]
         s1 = prs.slides.add_slide(blank_layout)
         set_bg_with_overlay(s1, CARD_BACKGROUNDS[0])
         tb1 = s1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.8))
@@ -729,7 +821,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p1.font.size, p1.font.bold = Pt(38), True
         p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
 
-        # [슬라이드 2: 들어가며 & 핵심 명제]
         s2 = prs.slides.add_slide(blank_layout)
         s2.background.fill.solid()
         s2.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
@@ -747,7 +838,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p2_body.font.size = Pt(20)
         p2_body.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [슬라이드 3: 설교의 전체 흐름]
         s3 = prs.slides.add_slide(blank_layout)
         s3.background.fill.solid()
         s3.background.fill.fore_color.rgb = RGBColor(15, 23, 42)
@@ -775,7 +865,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             p_c.font.size, p_c.font.bold = Pt(20), True
             p_c.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [슬라이드 4: 본문 핵심 성구]
         s4 = prs.slides.add_slide(blank_layout)
         set_bg_with_overlay(s4, CARD_BACKGROUNDS[1])
         tb4 = s4.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.0))
@@ -791,7 +880,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p4_b.font.size = Pt(19)
         p4_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [슬라이드 5: 제1대지]
         s5 = prs.slides.add_slide(blank_layout)
         s5.background.fill.solid()
         s5.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
@@ -807,7 +895,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p5_b.font.size = Pt(20)
         p5_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [슬라이드 6: 제2대지]
         s6 = prs.slides.add_slide(blank_layout)
         s6.background.fill.solid()
         s6.background.fill.fore_color.rgb = RGBColor(15, 23, 42)
@@ -823,7 +910,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p6_b.font.size = Pt(20)
         p6_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [슬라이드 7: 제3대지]
         s7 = prs.slides.add_slide(blank_layout)
         s7.background.fill.solid()
         s7.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
@@ -839,7 +925,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p7_b.font.size = Pt(20)
         p7_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [슬라이드 8: 신앙의 모델]
         s8 = prs.slides.add_slide(blank_layout)
         set_bg_with_overlay(s8, CARD_BACKGROUNDS[2])
         tb8 = s8.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(11.33), Inches(5.5))
@@ -854,7 +939,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p8_b.font.size = Pt(20)
         p8_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [슬라이드 9: 삶의 적용]
         s9 = prs.slides.add_slide(blank_layout)
         s9.background.fill.solid()
         s9.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
@@ -870,7 +954,6 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p9_b.font.size = Pt(19)
         p9_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [슬라이드 10: 결단 및 기도]
         s10 = prs.slides.add_slide(blank_layout)
         set_bg_with_overlay(s10, CARD_BACKGROUNDS[0])
         tb10 = s10.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.2))
@@ -981,54 +1064,9 @@ def render_section_top_toolbar(title: str, content: str, state_key: str):
         st.info("💡 아래 상자의 텍스트를 복사하여 사용하세요:")
         st.code(content, language="text")
 
-# --- 8. 성경 66권 목록 ---
-BIBLE_BOOKS = [
-    "창세기", "출애굽기", "레위기", "민수기", "신명기", "여호수아", "사사기", "룻기", "사무엘상", "사무엘하",
-    "열왕기상", "열왕기하", "역대상", "역대하", "에스라", "느헤미야", "에스더", "욥기", "시편", "잠언",
-    "전도서", "아가", "이사야", "예레미야", "예레미야애가", "에스겔", "다니엘", "호세아", "요엘", "아모스",
-    "오바댜", "요나", "미가", "나훔", "하박국", "스바냐", "학개", "스가랴", "말라기",
-    "마태복음", "마가복음", "누가복음", "요한복음", "사도행전", "로마서", "고린도전서", "고린도후서", "갈라디아서", "에베소서",
-    "빌립보서", "골로새서", "데살로니가전서", "데살로니가후서", "디모데전서", "디모데후서", "디도서", "빌레몬서", "히브리서", "야고보서",
-    "베드로전서", "베드로후서", "요한일서", "요한이서", "요한삼서", "유다서", "요한계시록"
-]
-
-# --- 9. 전역 세션 초기화 ---
+# --- 8. 전역 세션 및 영구 서재 DB 초기화 ---
 if "sermon_library" not in st.session_state:
-    st.session_state.sermon_library = [
-        {
-            "id": 1,
-            "title": "신앙을 다음 세대에 전수하라",
-            "scripture": "시편 78:4-7",
-            "theology": "개혁주의/장로교",
-            "date": "2026-08-27",
-            "tags": ["신앙 전수", "다음 세대", "가정 예배"],
-            "summary": """🎯 설교 핵심 명제:
-자녀에게 물려줄 수 있는 최고의 유산은 부동산이나 통장이 아니라 내가 만난 하나님에 대한 생생한 복음 간증입니다.
-
-📌 설교 3대지 핵심 요약:
-1. 침묵은 곧 삭제입니다 (시편 78:4)
-- 하나님의 영예와 능력을 숨기지 않겠다는 의도적인 결단이 필요합니다. 내가 침묵하는 순간 다음 세대의 신앙은 중립이 아닌 영적 삭제 상태가 됩니다.
-
-2. 하나씩 세어가며 전수하라 (시편 78:5)
-- 막연한 훈계가 아닌 삶의 고난 속에서 응답받은 구체적인 은혜의 사건들을 수를 세듯 하나하나 가르쳐야 합니다.
-
-3. 부지런히 새기고 가르치라 (시편 78:6-7)
-- 숫돌에 칼을 갈듯 말씀을 자녀의 심비에 새겨 오직 하나님 한 분에게만 소망을 두는 신앙의 명문가를 세워야 합니다.
-
-💡 성도를 위한 구체적 실천 적용:
-- 바쁘다는 핑계로 식탁 대화에서 하나님 이야기를 침묵하지 않기
-- 하나님이 내 삶에 행하신 생생한 기도 응답을 자녀에게 나누기
-- 오직 하나님께만 소망을 두도록 기도 가이드 설정하기""",
-            "text": """1. 신앙의 유산을 숨기지 말고 적극적으로 전수하십시오.
-오늘 본문 4절은 우리가 여호와의 영예와 능력을 자손에게 숨기지 않겠다고 고백합니다. 내가 말하지 않으면 그 신앙의 역사가 삭제됩니다. 의도적인 결단과 작정을 통해 자녀들에게 복음을 전하는 일에 힘쓰십시오.
-
-2. 하나님이 행하신 구체적인 은혜와 복음을 세어가며 가르치십시오.
-성경에서 전한다는 표현은 마치 수를 세는 것처럼 구체적으로 말하는 것을 뜻합니다. 삶의 위기 때 하나님이 어떻게 응답하셨는지 생생한 간증을 자녀들의 마음에 날카롭게 새겨주십시오.
-
-3. 다음 세대가 오직 하나님께만 인생의 소망을 두게 하십시오.
-우리가 신앙을 전수하는 궁극적 목적은 자녀들이 세상의 헛된 확신이 아닌 오직 하나님께 소망을 두게 하려는 것입니다."""
-        }
-    ]
+    st.session_state.sermon_library = load_sermons_from_db()
 
 if "current_sermon_idx" not in st.session_state:
     st.session_state.current_sermon_idx = 0
@@ -1047,7 +1085,7 @@ if "preacher_name" not in st.session_state:
 if "dash_active_view" not in st.session_state:
     st.session_state.dash_active_view = "설교 요약"
 
-# --- 10. 메인 내비게이션 바 ---
+# --- 9. 메인 내비게이션 바 ---
 app_mode = st.sidebar.radio(
     "🕊️ 플랫폼 대메뉴",
     [
@@ -1151,11 +1189,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
     with right_panel:
         active_view = st.session_state.dash_active_view
 
-        # 1. 설교 요약 (전문 원고 대신 '진짜 핵심 요약' 출력)
+        # 1. 설교 요약
         if active_view == "설교 요약":
             summary_val = st.session_state.get("sermon_summary_text", "")
             
-            # 요약이 비어있으면 원고로부터 즉시 자동 추출
             if not summary_val or summary_val == st.session_state.full_sermon:
                 with st.spinner("AI가 설교 원고에서 핵심 요약을 추출 중입니다..."):
                     prompt = f"""
@@ -1591,16 +1628,23 @@ elif app_mode == "📤 새 설교 등록/원고작성":
             if not t_title.strip() or not t_content.strip():
                 st.warning("설교 제목과 본문을 입력해주세요.")
             else:
+                testament, book = classify_scripture(t_scripture.strip())
                 new_entry = {
                     "id": len(st.session_state.sermon_library) + 1,
                     "title": t_title.strip(),
                     "scripture": t_scripture.strip(),
+                    "testament": testament,
+                    "book": book,
+                    "topic": t_tags.split(",")[0].strip() if t_tags else "일반설교",
                     "theology": "직접작성",
                     "date": datetime.now().strftime("%Y-%m-%d"),
                     "tags": [t.strip() for t in t_tags.split(",") if t.strip()],
+                    "summary": "",
                     "text": t_content.strip()
                 }
                 st.session_state.sermon_library.append(new_entry)
+                save_sermons_to_db(st.session_state.sermon_library)
+                
                 st.session_state.current_sermon_idx = len(st.session_state.sermon_library) - 1
                 st.session_state.sermon_title = t_title.strip()
                 st.session_state.sermon_scripture = t_scripture.strip()
@@ -1608,7 +1652,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 st.session_state.full_sermon = t_content.strip()
                 st.session_state.sermon_summary_text = ""
                 st.session_state.dash_active_view = "설교 요약"
-                st.success(f"'{t_title}' 설교가 등록되었습니다! [📊 설교 대시보드]로 이동하여 확인하세요.")
+                st.success(f"'{t_title}' 설교가 영구 서재에 저장되었습니다! [📊 설교 대시보드]로 이동합니다.")
 
     with tab_file:
         st.markdown("#### 설교문 파일 업로드 (.docx, .pdf, .txt)")
@@ -1627,21 +1671,29 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 pdf = PdfReader(u_file)
                 for page in pdf.pages: text += (page.extract_text() or "") + "\n"
 
+            testament, book = classify_scripture(f_scripture.strip())
+            new_entry = {
+                "id": len(st.session_state.sermon_library) + 1,
+                "title": f_title,
+                "scripture": f_scripture,
+                "testament": testament,
+                "book": book,
+                "topic": "파일등록",
+                "theology": "파일업로드",
+                "date": datetime.now().strftime("%Y-%m-%d"),
+                "tags": ["파일등록"],
+                "summary": "",
+                "text": text
+            }
+            st.session_state.sermon_library.append(new_entry)
+            save_sermons_to_db(st.session_state.sermon_library)
+
             st.session_state.sermon_title = f_title
             st.session_state.sermon_scripture = f_scripture
             st.session_state.full_sermon = text
             st.session_state.sermon_summary_text = ""
-            st.session_state.sermon_library.append({
-                "id": len(st.session_state.sermon_library) + 1,
-                "title": f_title,
-                "scripture": f_scripture,
-                "theology": "파일업로드",
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "tags": ["파일등록"],
-                "text": text
-            })
             st.session_state.dash_active_view = "설교 요약"
-            st.success("파일 등록이 완료되었습니다! [📊 설교 대시보드]로 이동하세요.")
+            st.success("파일 등록 및 영구 서재 저장이 완료되었습니다! [📊 설교 대시보드]로 이동합니다.")
 
     with tab_ai:
         st.markdown("#### 📖 성경 본문 선택 기반 정통 강해설교문 자동 생성")
@@ -1691,23 +1743,30 @@ elif app_mode == "📤 새 설교 등록/원고작성":
             st.session_state.temp_generated_sermon = st.text_area("작성된 강해설교문 검토 및 수정", value=st.session_state.temp_generated_sermon, height=450, key="edit_ai_sermon_area")
             
             if st.button("✅ 이 설교문을 내 서재와 대시보드에 최종 등록하기", type="primary", key="btn_save_ai_sermon"):
+                testament, book = classify_scripture(st.session_state.temp_ai_scrip)
                 new_entry = {
                     "id": len(st.session_state.sermon_library) + 1,
                     "title": st.session_state.temp_ai_title,
                     "scripture": st.session_state.temp_ai_scrip,
+                    "testament": testament,
+                    "book": book,
+                    "topic": sel_book,
                     "theology": theology_choice.split(' ')[0],
                     "date": datetime.now().strftime("%Y-%m-%d"),
                     "tags": [sel_book, theology_choice.split(' ')[0], "강해설교"],
+                    "summary": "",
                     "text": st.session_state.temp_generated_sermon
                 }
                 st.session_state.sermon_library.append(new_entry)
+                save_sermons_to_db(st.session_state.sermon_library)
+
                 st.session_state.current_sermon_idx = len(st.session_state.sermon_library) - 1
                 st.session_state.sermon_title = st.session_state.temp_ai_title
                 st.session_state.sermon_scripture = st.session_state.temp_ai_scrip
                 st.session_state.full_sermon = st.session_state.temp_generated_sermon
                 st.session_state.sermon_summary_text = ""
                 st.session_state.dash_active_view = "설교 요약"
-                st.success("설교문이 등록되었습니다! [📊 설교 대시보드] 메뉴에서 확인하세요.")
+                st.success("설교문이 등록 및 영구 보관되었습니다! [📊 설교 대시보드]로 이동합니다.")
 
 # ==============================================================================
 # 3. 🎙️ AI 보이스오버 스튜디오
@@ -1886,32 +1945,104 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                 st.download_button("📥 MP4 비디오 파일 다운로드", data=vf, file_name="sermon_shorts.mp4", mime="video/mp4", key="dl_shorts_mp4")
 
 # ==============================================================================
-# 5. 📚 설교 서재 (Sermon Library)
+# 5. 📚 설교 서재 (Sermon Library) - 영구 보관 및 다차원 정밀 필터링
 # ==============================================================================
 elif app_mode == "📚 설교 서재 (Sermon Library)":
-    st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>설교 서재</h1>", unsafe_allow_html=True)
-    st.caption(f"설교문 {len(st.session_state.sermon_library)}편 보관 중")
+    st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📚 설교 서재 (영구 기록보관소)</h1>", unsafe_allow_html=True)
+    
+    # DB 최신 동기화
+    sermons_db = load_sermons_from_db()
+    st.caption(f"총 {len(sermons_db)}편의 설교 원고가 영구 보관 중입니다.")
 
-    search_kw = st.text_input("🔍 제목 또는 성경 구절로 검색", placeholder="예: 시편, 로마서, 신앙...", key="in_lib_search")
-    for idx, s_item in enumerate(st.session_state.sermon_library):
-        if search_kw and (search_kw not in s_item["title"] and search_kw not in s_item["scripture"]):
-            continue
-        with st.container():
-            st.markdown(
-                f"""
-                <div style="background-color: #0f172a; border: 1px solid #334155; border-radius: 12px; padding: 18px; margin-bottom: 12px;">
-                    <h3 style="margin: 0 0 6px 0; font-size: 18px; font-weight: bold; color: #f8fafc;">{s_item['title']}</h3>
-                    <p style="margin: 0 0 10px 0; font-size: 13px; color: #94a3b8;">{s_item['scripture']} · [{s_item.get('theology', '개혁주의')}] · 등록일: {s_item['date']}</p>
-                    <div>{' '.join([f'<span style=\"background:#1e293b; color:#38bdf8; padding:2px 8px; border-radius:6px; font-size:11px;\">#{t}</span>' for t in s_item.get('tags', [])])}</div>
-                </div>
-                """,
-                unsafe_allow_html=True
+    # 다차원 검색 및 정밀 필터바
+    st.markdown("#### 🔍 다차원 정밀 검색 및 분류 필터")
+    f_c1, f_c2, f_c3, f_c4 = st.columns([1.5, 1.2, 1.5, 1.2])
+    
+    with f_c1:
+        search_kw = st.text_input("검색어 (제목/키워드)", placeholder="예: 신앙전수, 은혜, 고난...", key="lib_search_kw")
+    with f_c2:
+        testament_filter = st.selectbox("구약/신약 구분", ["전체", "구약", "신약"], key="lib_testament_filter")
+    with f_c3:
+        book_filter = st.selectbox("성경 66권 책별", ["전체"] + BIBLE_BOOKS, key="lib_book_filter")
+    with f_c4:
+        sort_order = st.selectbox("정렬 순서", ["최신순 (등록일)", "오래된순"], key="lib_sort_order")
+
+    st.write("---")
+
+    # 필터링 적용 로직
+    filtered_sermons = []
+    for s_item in sermons_db:
+        # 성경 구절 분석 자동 보완
+        if "testament" not in s_item or "book" not in s_item:
+            testament, book = classify_scripture(s_item.get("scripture", ""))
+            s_item["testament"] = testament
+            s_item["book"] = book
+
+        # 1. 키워드 검색
+        if search_kw:
+            kw_match = (
+                search_kw.lower() in s_item.get("title", "").lower() or
+                search_kw.lower() in s_item.get("scripture", "").lower() or
+                search_kw.lower() in s_item.get("text", "").lower() or
+                any(search_kw.lower() in t.lower() for t in s_item.get("tags", []))
             )
-            if st.button("📖 이 설교 불러와서 작업하기", key=f"lib_load_{idx}"):
-                st.session_state.current_sermon_idx = idx
-                st.session_state.sermon_title = s_item["title"]
-                st.session_state.sermon_scripture = s_item["scripture"]
-                st.session_state.full_sermon = s_item["text"]
-                st.session_state.sermon_summary_text = s_item.get("summary", "")
-                st.session_state.dash_active_view = "설교 요약"
-                st.success(f"'{s_item['title']}' 설교를 불러왔습니다! [📊 설교 대시보드]로 이동하세요.")
+            if not kw_match:
+                continue
+
+        # 2. 구약/신약 필터
+        if testament_filter != "전체" and s_item.get("testament") != testament_filter:
+            continue
+
+        # 3. 성경 책별 필터
+        if book_filter != "전체" and s_item.get("book") != book_filter:
+            continue
+
+        filtered_sermons.append(s_item)
+
+    # 정렬 적용
+    if sort_order == "오래된순":
+        filtered_sermons.sort(key=lambda x: x.get("id", 0))
+    else:
+        filtered_sermons.sort(key=lambda x: x.get("id", 0), reverse=True)
+
+    st.markdown(f"**검색 결과:** `{len(filtered_sermons)}편` 검색됨")
+
+    if not filtered_sermons:
+        st.info("조건에 해당하는 설교문이 서재에 없습니다.")
+    else:
+        for item_i, s_item in enumerate(filtered_sermons):
+            with st.container():
+                st.markdown(
+                    f"""
+                    <div style="background-color: #0f172a; border: 1px solid #334155; border-radius: 14px; padding: 20px; margin-bottom: 14px;">
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                            <h3 style="margin: 0; font-size: 20px; font-weight: bold; color: #f8fafc;">{s_item.get('title')}</h3>
+                            <span style="background-color: #1e3a8a; color: #fde047; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">{s_item.get('testament', '구약')} · {s_item.get('book', '성경')}</span>
+                        </div>
+                        <p style="margin: 0 0 10px 0; font-size: 14px; color: #94a3b8;">
+                            📖 <strong>{s_item.get('scripture')}</strong> · [{s_item.get('theology', '개혁주의')}] · 📅 등록일: {s_item.get('date', '2026-08-27')}
+                        </p>
+                        <div style="margin-bottom: 14px;">
+                            {' '.join([f'<span style=\"background:#1e293b; color:#38bdf8; padding:3px 10px; border-radius:6px; font-size:12px; margin-right:4px;\">#{t}</span>' for t in s_item.get('tags', [])])}
+                        </div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True
+                )
+                
+                b_col1, b_col2 = st.columns([3, 1])
+                with b_col1:
+                    if st.button("📖 이 설교를 대시보드로 불러와서 작업하기", key=f"lib_load_btn_{s_item.get('id')}_{item_i}"):
+                        st.session_state.sermon_title = s_item.get('title')
+                        st.session_state.sermon_scripture = s_item.get('scripture')
+                        st.session_state.full_sermon = s_item.get('text')
+                        st.session_state.sermon_summary_text = s_item.get('summary', '')
+                        st.session_state.dash_active_view = "설교 요약"
+                        st.success(f"'{s_item.get('title')}' 설교가 선택되어 대시보드에 연동되었습니다!")
+                        st.rerun()
+                with b_col2:
+                    if st.button("🗑️ 서재에서 삭제", key=f"lib_del_btn_{s_item.get('id')}_{item_i}"):
+                        st.session_state.sermon_library = [x for x in st.session_state.sermon_library if x.get('id') != s_item.get('id')]
+                        save_sermons_to_db(st.session_state.sermon_library)
+                        st.success("설교가 서재에서 삭제되었습니다.")
+                        st.rerun()
