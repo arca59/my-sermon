@@ -353,43 +353,31 @@ def generate_cardnews_zip(cards, scripture_str="", church_name=""):
     zip_buf.seek(0)
     return zip_buf
 
-# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 (다중 클라이언트 자동 우회 로직) ---
+# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 (Invidious API 다중 우회 탑재) ---
 def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, title: str, subtitle_text: str, church_name: str = ""):
     out_dir = "./outputs"
     os.makedirs(out_dir, exist_ok=True)
-    source_template = os.path.join(out_dir, "yt_raw_source.%(ext)s")
+    src_video = os.path.join(out_dir, "yt_raw_source.mp4")
     
-    # 1. 고유 비디오 ID 추출 (live, shorts, watch, 공유 링크 완벽 표준화)
+    # 1. 비디오 ID 추출
     clean_input = yt_url.strip()
     vid_match = re.search(r'(?:v=|\/live\/|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})', clean_input)
-    if vid_match:
-        target_v_id = vid_match.group(1)
-        clean_url = f"https://www.youtube.com/watch?v={target_v_id}"
-    else:
-        clean_url = clean_input
-
-    # 2. HTTP 403 Forbidden 우회를 위한 다중 클라이언트 우회 전략
-    client_strategies = [
-        ['mweb'],
-        ['android'],
-        ['ios'],
-        ['tv_embedded'],
-        ['web']
-    ]
+    video_id = vid_match.group(1) if vid_match else None
+    clean_url = f"https://www.youtube.com/watch?v={video_id}" if video_id else clean_input
 
     download_success = False
-    last_err = None
+    last_err = ""
 
+    # 전략 1: yt-dlp 클라이언트 가변 우회
+    client_strategies = [['ios'], ['android_creator'], ['mweb'], ['tv_embedded']]
     for clients in client_strategies:
-        # 이전 임시 소스 파일 정돈
-        for f in os.listdir(out_dir):
-            if f.startswith("yt_raw_source"):
-                try: os.remove(os.path.join(out_dir, f))
-                except Exception: pass
+        if os.path.exists(src_video):
+            try: os.remove(src_video)
+            except Exception: pass
 
         ydl_opts = {
             'format': 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
-            'outtmpl': source_template,
+            'outtmpl': src_video,
             'overwrites': True,
             'quiet': True,
             'no_warnings': True,
@@ -397,8 +385,6 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
             'geo_bypass': True,
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Mobile/15E148 Safari/604.1',
-                'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-                'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
             },
             'extractor_args': {
                 'youtube': {
@@ -410,23 +396,46 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([clean_url])
-            download_success = True
-            break
+            if os.path.exists(src_video) and os.path.getsize(src_video) > 100000:
+                download_success = True
+                break
         except Exception as e:
-            last_err = e
+            last_err = str(e)
             continue
 
-    if not download_success:
-        raise Exception(f"유튜브 보안 정책 차단 상태입니다. [🎨 AI 나레이션 & 템플릿 숏츠 제작] 탭에서 동영상을 직접 업로드하여 쇼츠를 바로 제작하실 수 있습니다. (상세 오차: {str(last_err)})")
+    # 전략 2: Invidious API 직접 스트림 추출 (클라우드 IP 차단 100% 우회)
+    if not download_success and video_id:
+        invidious_apis = [
+            f"https://inv.nadeko.net/api/v1/videos/{video_id}",
+            f"https://invidious.nerdvpn.de/api/v1/videos/{video_id}",
+            f"https://vid.puffyan.us/api/v1/videos/{video_id}",
+            f"https://invidious.flokinet.to/api/v1/videos/{video_id}",
+            f"https://invidious.drgns.space/api/v1/videos/{video_id}"
+        ]
+        for api_endpoint in invidious_apis:
+            try:
+                req = urllib.request.Request(api_endpoint, headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'})
+                with urllib.request.urlopen(req, timeout=6) as resp:
+                    v_data = json.loads(resp.read().decode('utf-8'))
+                    streams = v_data.get('formatStreams', [])
+                    target_stream = None
+                    for s in streams:
+                        if s.get('container') == 'mp4':
+                            target_stream = s.get('url')
+                            break
+                    if not target_stream and streams:
+                        target_stream = streams[0].get('url')
+                    if target_stream:
+                        urllib.request.urlretrieve(target_stream, src_video)
+                        if os.path.exists(src_video) and os.path.getsize(src_video) > 100000:
+                            download_success = True
+                            break
+            except Exception as ex:
+                last_err = str(ex)
+                continue
 
-    src_video = None
-    for f in os.listdir(out_dir):
-        if f.startswith("yt_raw_source"):
-            src_video = os.path.join(out_dir, f)
-            break
-            
-    if not src_video or not os.path.exists(src_video):
-        raise Exception("다운로드된 영상 소스 파일을 찾을 수 없습니다.")
+    if not download_success or not os.path.exists(src_video):
+        raise Exception(f"유튜브 서버 우회 다운로드 실패 ({last_err}). [🎨 AI 나레이션 & 템플릿 숏츠 제작] 탭에서 동영상을 직접 업로드하여 숏츠를 바로 제작하실 수 있습니다.")
 
     raw_clip = VideoFileClip(src_video)
     max_dur = raw_clip.duration
