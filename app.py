@@ -421,7 +421,6 @@ def fetch_image_bytes(url: str):
 
 # --- PIL 텍스트 줄바꿈 헬퍼 함수 ---
 def wrap_korean_text(text: str, font, max_width: int, draw: PIL.ImageDraw.ImageDraw) -> str:
-    """한글 문장을 max_width 내에 맞춰 자동으로 줄바꿈 처리"""
     if not text:
         return ""
     
@@ -444,7 +443,7 @@ def wrap_korean_text(text: str, font, max_width: int, draw: PIL.ImageDraw.ImageD
             
     return "\n".join(wrapped_lines)
 
-# --- 카드뉴스 PNG 이미지 고화질 합성 엔진 (자동 줄바꿈 버그 완벽 수정) ---
+# --- 카드뉴스 PNG 이미지 고화질 합성 엔진 ---
 def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
     bg_url = CARD_BACKGROUNDS[idx % len(CARD_BACKGROUNDS)]
     img_b = fetch_image_bytes(bg_url)
@@ -472,20 +471,16 @@ def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
             except Exception: pass
     if not font_t: font_t = PIL.ImageFont.load_default()
 
-    # 1. 배지
     draw.text((100, 90), f"CARD {card_item.get('card_number', idx+1)}", fill=(99, 102, 241, 255), font=font_t)
     
-    # 2. 헤드라인 (880px 자동 줄바꿈)
     headline_raw = card_item.get("headline", "")
     headline_wrapped = wrap_korean_text(headline_raw, font_b, 880, draw)
     draw.multiline_text((100, 170), headline_wrapped, fill=(253, 224, 71, 255), font=font_b, spacing=12)
 
-    # 3. 본문 (880px 자동 줄바꿈 및 화면 밖 이탈 차단)
     body_raw = card_item.get("body_text", "")
     body_wrapped = wrap_korean_text(body_raw, font_t, 880, draw)
     draw.multiline_text((100, 380), body_wrapped, fill=(241, 245, 249, 255), font=font_t, spacing=16)
 
-    # 4. 하단 성구 및 교회명
     if scripture_str:
         draw.text((100, 910), f"「 {scripture_str} 」", fill=(253, 224, 71, 255), font=font_t)
     if church_name:
@@ -1168,7 +1163,6 @@ def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_
         else:
             base_img = PIL.Image.new("RGBA", (canvas_w, canvas_h), (15, 23, 42, 255))
 
-    # 반투명 어두운 오버레이 레이어
     alpha_val = int(255 * overlay_opacity)
     overlay = PIL.Image.new("RGBA", (canvas_w, canvas_h), (10, 15, 30, alpha_val))
     combined = PIL.Image.alpha_composite(base_img, overlay)
@@ -1188,7 +1182,6 @@ def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_
             except Exception: pass
     if not font_sub: font_sub = PIL.ImageFont.load_default()
 
-    # 색상 파싱
     def parse_hex(c):
         if c.startswith('#'):
             hex_c = c.lstrip('#')
@@ -1198,11 +1191,9 @@ def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_
     f_color = parse_hex(font_color)
     s_color = parse_hex(stroke_color) if stroke_color else None
 
-    # 본문 자동 줄바꿈
     max_w = 880
     wrapped_text = wrap_korean_text(text_str, font_main, max_w, draw)
 
-    # 중앙 위치 계산
     bbox = draw.multiline_textbbox((0, 0), wrapped_text, font=font_main, spacing=line_spacing)
     t_w = bbox[2] - bbox[0]
     t_h = bbox[3] - bbox[1]
@@ -1210,7 +1201,6 @@ def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_
     x_pos = (canvas_w - t_w) // 2
     y_pos = (canvas_h - t_h) // 2 - 40
 
-    # 테두리(Stroke)
     if s_color:
         for dx in range(-2, 3):
             for dy in range(-2, 3):
@@ -1219,7 +1209,6 @@ def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_
 
     draw.multiline_text((x_pos, y_pos), wrapped_text, font=font_main, fill=f_color, align="center", spacing=line_spacing)
 
-    # 성경 구절 라벨
     if scripture_str:
         scrip_text = f"「 {scripture_str} 」"
         s_bbox = draw.textbbox((0, 0), scrip_text, font=font_sub)
@@ -1227,7 +1216,6 @@ def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_
         sy = y_pos + t_h + 50
         draw.text((sx, sy), scrip_text, fill=(253, 224, 71, 255), font=font_sub)
 
-    # 하단 교회명
     if church_name:
         c_bbox = draw.textbbox((0, 0), church_name, font=font_sub)
         cx = (canvas_w - (c_bbox[2] - c_bbox[0])) // 2
@@ -2201,7 +2189,6 @@ elif app_mode == "📷 말씀카드 이미지":
     with vc_c2:
         st.markdown("### 🖼️ 말씀카드 미리보기 & 다운로드")
         
-        # 실시간 말씀카드 PNG 생성
         card_png_bytes = generate_verse_card_png(
             text_str=v_text_input,
             scripture_str=v_scrip_input,
@@ -2215,7 +2202,8 @@ elif app_mode == "📷 말씀카드 이미지":
             church_name=v_church_input
         )
         
-        st.image(card_png_bytes, caption="1:1 정사각형 고화질 말씀카드", use_column_width=True)
+        # Streamlit 1.38+ 호환성 적용 (use_container_width=True)
+        st.image(card_png_bytes.getvalue(), caption="1:1 정사각형 고화질 말씀카드", use_container_width=True)
         
         st.download_button(
             "📥 말씀카드 PNG 고화질 다운로드",
