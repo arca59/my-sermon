@@ -353,7 +353,7 @@ def generate_cardnews_zip(cards, scripture_str="", church_name=""):
     zip_buf.seek(0)
     return zip_buf
 
-# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 (다중 서버 API 우회 탑재) ---
+# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 (3중 네트워크 안전 우회) ---
 def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, title: str, subtitle_text: str, church_name: str = ""):
     out_dir = "./outputs"
     os.makedirs(out_dir, exist_ok=True)
@@ -474,7 +474,7 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
                 continue
 
     if not download_success or not os.path.exists(src_video):
-        raise Exception(f"클라우드 차단으로 자동 우회 다운로드가 어려울 경우, [🎨 AI 나레이션 & 템플릿 숏츠 제작] 탭에서 동영상 파일(.mp4)을 직접 업로드하여 9:16 숏츠를 바로 제작하실 수 있습니다.")
+        raise Exception(f"클라우드 차단으로 자동 우회 다운로드가 어려울 경우, [🎨 AI 나레이션 & 템플릿 숏츠 제작] 탭에서 설교 동영상을 직접 업로드하여 9:16 숏츠를 바로 렌더링하실 수 있습니다.")
 
     raw_clip = VideoFileClip(src_video)
     max_dur = raw_clip.duration
@@ -1037,7 +1037,7 @@ current_s = st.session_state.sermon_library[st.session_state.current_sermon_idx]
 if "full_sermon" not in st.session_state or not st.session_state.full_sermon:
     st.session_state.full_sermon = current_s["text"]
 if "sermon_summary_text" not in st.session_state or not st.session_state.sermon_summary_text:
-    st.session_state.sermon_summary_text = current_s.get("summary", current_s["text"])
+    st.session_state.sermon_summary_text = current_s.get("summary", "")
 if "sermon_title" not in st.session_state:
     st.session_state.sermon_title = current_s["title"]
 if "sermon_scripture" not in st.session_state:
@@ -1155,7 +1155,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
         if active_view == "설교 요약":
             summary_val = st.session_state.get("sermon_summary_text", "")
             
-            # 요약이 없을 경우 자동으로 핵심 요약 생성
+            # 요약이 비어있으면 원고로부터 즉시 자동 추출
             if not summary_val or summary_val == st.session_state.full_sermon:
                 with st.spinner("AI가 설교 원고에서 핵심 요약을 추출 중입니다..."):
                     prompt = f"""
@@ -1295,11 +1295,11 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 with col_d_zip:
                     if "card_list" in st.session_state:
                         st.download_button(
-                            "📦 이미지 (ZIP)",
+                            "📦 전체 PNG (ZIP)",
                             data=generate_cardnews_zip(st.session_state.card_list, st.session_state.sermon_scripture, st.session_state.get("cn_church_name", "")),
                             file_name=f"{st.session_state.sermon_title}_카드뉴스_이미지.zip",
                             mime="application/zip",
-                            key="cn_dl_all_zip_btn"
+                            key="cn_dl_all_zip_btn_top"
                         )
 
             st.info("💡 텍스트 수정은 물론, 카드 추가/삭제 및 이미지(PNG/ZIP) / PPT 내려받기가 가능합니다!")
@@ -1373,14 +1373,24 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         unsafe_allow_html=True
                     )
                     
-                    single_png_bytes = generate_single_card_png(curr_card, curr_idx, st.session_state.sermon_scripture, church_input)
-                    st.download_button(
-                        f"🖼️ CARD {curr_idx + 1} 개별 PNG 이미지 다운로드",
-                        data=single_png_bytes,
-                        file_name=f"{st.session_state.sermon_title}_card_{curr_idx + 1}.png",
-                        mime="image/png",
-                        key=f"dl_single_png_{curr_idx}"
-                    )
+                    dl_c1, dl_c2 = st.columns(2)
+                    with dl_c1:
+                        single_png_bytes = generate_single_card_png(curr_card, curr_idx, st.session_state.sermon_scripture, church_input)
+                        st.download_button(
+                            f"🖼️ CARD {curr_idx + 1} 개별 PNG 다운로드",
+                            data=single_png_bytes,
+                            file_name=f"{st.session_state.sermon_title}_card_{curr_idx + 1}.png",
+                            mime="image/png",
+                            key=f"dl_single_png_{curr_idx}"
+                        )
+                    with dl_c2:
+                        st.download_button(
+                            "📦 전체 카드뉴스 PNG (ZIP) 다운로드",
+                            data=generate_cardnews_zip(cards, st.session_state.sermon_scripture, church_input),
+                            file_name=f"{st.session_state.sermon_title}_전체_카드뉴스_PNG.zip",
+                            mime="application/zip",
+                            key=f"dl_all_zip_under_preview_{curr_idx}"
+                        )
 
                 st.write("---")
 
@@ -1596,7 +1606,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 st.session_state.sermon_scripture = t_scripture.strip()
                 st.session_state.preacher_name = t_preacher.strip()
                 st.session_state.full_sermon = t_content.strip()
-                st.session_state.sermon_summary_text = ""  # 초기화하여 새 요약 유도
+                st.session_state.sermon_summary_text = ""
                 st.session_state.dash_active_view = "설교 요약"
                 st.success(f"'{t_title}' 설교가 등록되었습니다! [📊 설교 대시보드]로 이동하여 확인하세요.")
 
@@ -1620,7 +1630,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
             st.session_state.sermon_title = f_title
             st.session_state.sermon_scripture = f_scripture
             st.session_state.full_sermon = text
-            st.session_state.sermon_summary_text = ""  # 초기화하여 새 요약 유도
+            st.session_state.sermon_summary_text = ""
             st.session_state.sermon_library.append({
                 "id": len(st.session_state.sermon_library) + 1,
                 "title": f_title,
@@ -1695,7 +1705,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 st.session_state.sermon_title = st.session_state.temp_ai_title
                 st.session_state.sermon_scripture = st.session_state.temp_ai_scrip
                 st.session_state.full_sermon = st.session_state.temp_generated_sermon
-                st.session_state.sermon_summary_text = ""  # 초기화하여 새 요약 유도
+                st.session_state.sermon_summary_text = ""
                 st.session_state.dash_active_view = "설교 요약"
                 st.success("설교문이 등록되었습니다! [📊 설교 대시보드] 메뉴에서 확인하세요.")
 
