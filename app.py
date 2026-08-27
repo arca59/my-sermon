@@ -14,7 +14,7 @@ from video_engine import create_animated_video
 
 st.set_page_config(page_title="MY 설교 AI 스튜디오 Pro", page_icon="🕊️", layout="wide")
 
-# 1. 개인 보안 접속 인증 (기본 PIN: 7777)
+# 1. 개인 보안 접속 인증
 USER_PIN = st.secrets.get("APP_PIN", "7777")
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -30,79 +30,62 @@ if not st.session_state.authenticated:
             st.error("PIN 코드가 올바르지 않습니다.")
     st.stop()
 
-# 2. API 키 설정 및 사이드바 연결 검증
+# 2. Gemini API 키 설정
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 sidebar_key = st.sidebar.text_input("🔑 Gemini API Key (직접 입력/수정)", value=secret_key, type="password")
 ACTIVE_KEY = sidebar_key.strip() if sidebar_key else secret_key.strip()
 
-# 연결된 모델 자동 감지 함수
-@st.cache_resource(show_spinner=False)
-def get_working_model_name(api_key: str):
-    if not api_key:
-        return None, "API 키가 입력되지 않았습니다."
-    try:
-        genai.configure(api_key=api_key)
-        # 계정에서 지원하는 생성 모델 목록 자동 조회
-        available_models = [
-            m.name for m in genai.list_models() 
-            if 'generateContent' in m.supported_generation_methods
-        ]
-        if not available_models:
-            return None, "사용 가능한 텍스트 모델을 찾을 수 없습니다."
-        
-        # 1.5-flash 또는 2.0-flash 우선 선택
-        preferred = ["models/gemini-1.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-pro", "models/gemini-pro"]
-        for p in preferred:
-            if p in available_models:
-                return p, "정상 연결"
-        return available_models[0], "정상 연결"
-    except Exception as e:
-        return None, str(e)
-
-working_model, status_msg = get_working_model_name(ACTIVE_KEY)
-
-# 사이드바 연결 상태 표시
-if working_model:
-    st.sidebar.success(f"🟢 AI 연결 성공 ({working_model.replace('models/', '')})")
-else:
-    st.sidebar.error(f"🔴 AI 연결 실패: {status_msg}")
-    st.sidebar.caption("Google AI Studio(aistudio.google.com)에서 발급받은 키를 위 입력창에 붙여넣어 보세요.")
-
-# 3. AI 요청 처리 함수 (오류 상세 표시)
+# 3. 404 에러 방지 모델 자동 감지 및 호출 엔진
 def get_ai_response(prompt: str, is_json: bool = True):
     if not ACTIVE_KEY:
         st.error("Gemini API Key가 필요합니다. 사이드바에 키를 입력해주세요.")
         return None
-    
-    if not working_model:
-        st.error(f"AI 모델 연결 실패: {status_msg}")
-        return None
 
     try:
         genai.configure(api_key=ACTIVE_KEY)
-        model = genai.GenerativeModel(working_model)
-        
-        if is_json:
-            try:
-                res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
-                return json.loads(res.text)
-            except Exception:
-                # JSON 모드 미지원 시 일반 텍스트에서 JSON 추출
-                res = model.generate_content(prompt)
-                match = re.search(r"\{.*\}|\[.*\]", res.text, re.DOTALL)
-                if match:
-                    return json.loads(match.group(0))
-                st.error("JSON 파싱에 실패했습니다. 다시 시도해주세요.")
-                return None
-        else:
-            res = model.generate_content(prompt)
-            return res.text
-            
     except Exception as e:
-        st.error(f"AI 호출 오류 상세: {str(e)}")
+        st.error(f"API 키 설정 오류: {str(e)}")
         return None
 
-# 4. 파일 텍스트 추출 함수
+    # 표준 모델 후보 목록 (우선순위 순)
+    candidate_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"]
+    
+    # 계정 지원 모델 동적 조회
+    try:
+        live_models = [
+            m.name.replace("models/", "") for m in genai.list_models() 
+            if "generateContent" in m.supported_generation_methods
+        ]
+        if live_models:
+            candidate_models = [m for m in candidate_models if m in live_models] + [m for m in live_models if m not in candidate_models]
+    except Exception:
+        pass
+
+    last_error = None
+    for model_name in candidate_models:
+        try:
+            model = genai.GenerativeModel(model_name)
+            if is_json:
+                try:
+                    res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
+                    return json.loads(res.text)
+                except Exception:
+                    res = model.generate_content(prompt)
+                    match = re.search(r"\{.*\}|\[.*\]", res.text, re.DOTALL)
+                    if match:
+                        return json.loads(match.group(0))
+                    continue
+            else:
+                res = model.generate_content(prompt)
+                return res.text
+        except Exception as err:
+            last_error = err
+            continue
+
+    st.error(f"AI 호출 오류 상세: {str(last_error)}")
+    return None
+
+# 4. 파일 텍스트 추출 함수 (.docx, .pdf, .txt)
 def extract_text_from_file(uploaded_file):
     text = ""
     file_name = uploaded_file.name.lower()
@@ -118,7 +101,7 @@ def extract_text_from_file(uploaded_file):
             if t: text += t + "\n"
     return text
 
-# 5. PPT 생성 엔진 (16:9 와이드 예배용)
+# 5. 16:9 와이드 예배용 PPT 생성기
 def generate_church_pptx(title, scripture, preacher, points, conclusion):
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -131,7 +114,7 @@ def generate_church_pptx(title, scripture, preacher, points, conclusion):
         fill.solid()
         fill.fore_color.rgb = color
 
-    # 표지 슬라이드
+    # 표지
     slide1 = prs.slides.add_slide(blank_layout)
     apply_bg(slide1, RGBColor(15, 23, 42))
     tx = slide1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.0))
@@ -147,7 +130,7 @@ def generate_church_pptx(title, scripture, preacher, points, conclusion):
     p2.font.color.rgb = RGBColor(226, 232, 240)
     p2.alignment = PP_ALIGN.CENTER
 
-    # 대지 슬라이드
+    # 대지별 슬라이드
     for idx, pt in enumerate(points, 1):
         slide = prs.slides.add_slide(blank_layout)
         apply_bg(slide, RGBColor(24, 32, 54))
@@ -221,7 +204,7 @@ def generate_cardnews_pptx(slides_data):
         tp.font.bold = True
         tp.font.color.rgb = RGBColor(253, 224, 71)
 
-        # 본문 문구
+        # 본문
         bbox = slide.shapes.add_textbox(Inches(0.8), Inches(4.3), Inches(8.4), Inches(4.5))
         b_frame = bbox.text_frame
         b_frame.word_wrap = True
@@ -235,13 +218,13 @@ def generate_cardnews_pptx(slides_data):
     bio.seek(0)
     return bio
 
-# 세션 초기화
+# 7. 세션 상태 보관소
 if "outline_data" not in st.session_state: st.session_state.outline_data = None
 if "full_sermon" not in st.session_state: st.session_state.full_sermon = ""
 if "preacher_name" not in st.session_state: st.session_state.preacher_name = "담임목사"
 if "cardnews_data" not in st.session_state: st.session_state.cardnews_data = None
 
-# 네비게이션 메뉴
+# 8. 네비게이션 메뉴
 st.sidebar.title("🕊️ 메뉴 선택")
 menu = st.sidebar.radio(
     "사역 플랫폼 기능",
@@ -528,7 +511,11 @@ elif menu == "🖥️ PPT 슬라이드 생성":
 elif menu == "🎬 영상 & 쇼츠 스튜디오":
     st.title("🎬 자막 애니메이션 & BGM 영상 스튜디오")
     v_title = st.text_input("영상 메인 헤드라인", value="고난 속에서 기억할 한 가지")
-    v_script = st.text_area("자막/대본 (줄바꿈으로 문장 구분)", value="고난은 결코 우연이 아닙니다.\n하나님은 모든 것을 선으로 바꾸십니다.\n오늘 그 은혜 안에서 평안을 누리세요.", height=120)
+    v_script = st.text_area(
+        "자막/대본 (줄바꿈으로 문장 구분)",
+        value="고난은 결코 우연이 아닙니다.\n하나님은 모든 것을 선으로 바꾸십니다.\n오늘 그 은혜 안에서 평안을 누리세요.",
+        height=120
+    )
     
     colA, colB = st.columns(2)
     with colA: v_ratio = st.radio("비율", ["9:16 (세로 쇼츠)", "16:9 (가로 영상)"])
