@@ -128,7 +128,6 @@ if not st.session_state.authenticated:
 # --- 2. API 키 숨김 처리 & 초고속 Gemini AI 엔진 ---
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 
-# API 키 단추를 숨겨 깔끔한 비주얼 유지
 with st.sidebar.expander("⚙️ AI 연결 설정 (클릭하여 열기)", expanded=False):
     sidebar_key = st.text_input("🔑 Gemini API Key", value=secret_key, type="password", key="sidebar_api_key_input")
 
@@ -313,7 +312,6 @@ def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
     else:
         base_img = PIL.Image.new("RGBA", (1080, 1080), (15, 23, 42, 255))
 
-    # 어두운 그라데이션 반투명 오버레이
     overlay = PIL.Image.new("RGBA", (1080, 1080), (10, 15, 30, 200))
     combined = PIL.Image.alpha_composite(base_img, overlay)
     draw = PIL.ImageDraw.Draw(combined)
@@ -332,16 +330,10 @@ def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
             except Exception: pass
     if not font_t: font_t = PIL.ImageFont.load_default()
 
-    # 배지
     draw.text((100, 100), f"CARD {card_item.get('card_number', idx+1)}", fill=(99, 102, 241, 255), font=font_t)
-    
-    # 타이틀 (골드)
     draw.text((100, 200), card_item.get("headline", ""), fill=(253, 224, 71, 255), font=font_b)
-
-    # 본문
     draw.multiline_text((100, 420), card_item.get("body_text", ""), fill=(241, 245, 249, 255), font=font_t, spacing=16)
 
-    # 하단 성구 및 교회명
     if scripture_str:
         draw.text((100, 920), f"「 {scripture_str} 」", fill=(253, 224, 71, 255), font=font_t)
     if church_name:
@@ -361,22 +353,36 @@ def generate_cardnews_zip(cards, scripture_str="", church_name=""):
     zip_buf.seek(0)
     return zip_buf
 
-# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 ---
+# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 (HTTP 403 Forbidden 우회 적용) ---
 def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, title: str, subtitle_text: str, church_name: str = ""):
     out_dir = "./outputs"
     os.makedirs(out_dir, exist_ok=True)
     source_template = os.path.join(out_dir, "yt_raw_source.%(ext)s")
+    
+    # URL 정제 (/live/주소 또는 URL 파라미터 호환 정규화)
+    clean_url = re.sub(r'youtube\.com/live/([a-zA-Z0-9_-]+)', r'youtube.com/watch?v=\1', yt_url.strip())
     
     ydl_opts = {
         'format': 'bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best',
         'outtmpl': source_template,
         'overwrites': True,
         'quiet': True,
-        'no_warnings': True
+        'no_warnings': True,
+        'nocheckcertificate': True,
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+        },
+        'extractor_args': {
+            'youtube': {
+                'player_client': ['ios', 'android', 'mweb']
+            }
+        }
     }
     
     with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-        ydl.download([yt_url])
+        ydl.download([clean_url])
         
     src_video = os.path.join(out_dir, "yt_raw_source.mp4")
     if not os.path.exists(src_video):
@@ -1129,7 +1135,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         unsafe_allow_html=True
                     )
                     
-                    # 현재 개별 카드 PNG 이미지 다운로드 단추
                     single_png_bytes = generate_single_card_png(curr_card, curr_idx, st.session_state.sermon_scripture, church_input)
                     st.download_button(
                         f"🖼️ CARD {curr_idx + 1} 개별 PNG 이미지 다운로드",
@@ -1485,7 +1490,7 @@ elif app_mode == "🎙️ AI 보이스오버 스튜디오":
             st.info("왼쪽에서 버튼을 누르면 이곳에 재생 플레이어가 나타납니다.")
 
 # ==============================================================================
-# 4. 🎬 쇼츠 만들기 (스튜디오) - [가변 폰트 크기 및 Y 위치 제어 탑재]
+# 4. 🎬 쇼츠 만들기 (스튜디오)
 # ==============================================================================
 elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
     st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>▶️ 쇼츠 만들기 스튜디오</h1>", unsafe_allow_html=True)
@@ -1581,7 +1586,6 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
             with c_v1: v_ratio = st.radio("비율", ["9:16 (세로 쇼츠)", "16:9 (가로 영상)"], key="rad_shorts_ratio")
             with c_v2: v_voice = st.selectbox("보이스", ["인준 (남성)", "선희 (여성)"], key="sel_shorts_voice")
 
-            # 폰트 크기 및 위치 정밀 편집 컨트롤 추가
             with st.expander("🎨 폰트 크기 및 자막 위치 정밀 편집", expanded=True):
                 font_c1, font_c2 = st.columns(2)
                 with font_c1:
