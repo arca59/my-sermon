@@ -27,7 +27,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 1. 개인 접속 보안 인증 ---
+# 툴바 버튼 CSS 스타일링 (3번째 이미지처럼 가로 밀착 정렬)
+st.markdown("""
+<style>
+    div[data-testid="column"] button {
+        width: 100% !important;
+        padding: 4px 6px !important;
+        font-size: 12px !important;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# --- 1. 개인 보안 접속 인증 ---
 USER_PIN = st.secrets.get("APP_PIN", "7777")
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -43,7 +54,7 @@ if not st.session_state.authenticated:
             st.error("PIN 코드가 올바르지 않습니다.")
     st.stop()
 
-# --- 2. Gemini AI 연동 엔진 ---
+# --- 2. Gemini AI 연동 엔진 (오류 해결 및 자동 복구) ---
 secret_key = st.secrets.get("GEMINI_API_KEY", "")
 sidebar_key = st.sidebar.text_input("🔑 Gemini API Key", value=secret_key, type="password")
 ACTIVE_KEY = sidebar_key.strip() if sidebar_key else secret_key.strip()
@@ -55,10 +66,22 @@ def get_ai_response(prompt: str, is_json: bool = True):
     try:
         genai.configure(api_key=ACTIVE_KEY)
     except Exception as e:
-        st.error(f"API 키 오류: {str(e)}")
+        st.error(f"API 키 설정 오류: {str(e)}")
         return None
 
+    # 우선순위 모델 리스트
     candidate_models = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-pro"]
+    
+    # 계정 지원 모델 동적 목록 병합
+    try:
+        live_models = [m.name.replace("models/", "") for m in genai.list_models() if "generateContent" in m.supported_generation_methods]
+        for lm in live_models:
+            if lm not in candidate_models:
+                candidate_models.append(lm)
+    except Exception:
+        pass
+
+    last_error_msg = ""
     for model_name in candidate_models:
         try:
             model = genai.GenerativeModel(model_name)
@@ -73,10 +96,13 @@ def get_ai_response(prompt: str, is_json: bool = True):
                         return json.loads(match.group(0))
             else:
                 res = model.generate_content(prompt)
-                return res.text
-        except Exception:
+                if res.text:
+                    return res.text
+        except Exception as e:
+            last_error_msg = str(e)
             continue
-    st.error("AI 응답을 생성하지 못했습니다. 잠시 후 다시 시도해주세요.")
+
+    st.error(f"AI 호출 오류 상세: {last_error_msg}")
     return None
 
 # --- 3. 문서 변환 엔진 (Word / PPT / PDF / TXT) ---
@@ -132,7 +158,7 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
     p.font.size, p.font.bold = Pt(38), True
     p.font.color.rgb, p.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
     
-    # 2. 본문 슬라이드 분할
+    # 2. 본문 분할 슬라이드
     paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
     chunk = ""
     for para in paragraphs:
@@ -222,14 +248,14 @@ async def generate_voiceover_audio(text: str, voice: str = "ko-KR-InJoonNeural")
     await communicate.save(out_path)
     return out_path
 
-# --- 4. 모든 섹션 상단 통일 툴바 함수 [수정/복사/워드/PDF/PPT/txt] ---
+# --- 4. 모든 섹션 상단 통일 툴바 컴포넌트 [수정 / 복사 / 워드 / PDF / PPT / txt] (이미지 2, 3 완벽 구현) ---
 def render_section_top_toolbar(title: str, content: str, state_key: str):
-    col_t, col_btns = st.columns([1.2, 3.8])
+    col_t, col_btns = st.columns([1.3, 2.7])
     with col_t:
-        st.markdown(f"### {title}")
+        st.markdown(f"<h3 style='margin: 0; padding: 0; font-size: 20px; font-weight: 800; line-height: 1.3;'>{title}</h3>", unsafe_allow_html=True)
     with col_btns:
         if content and content.strip():
-            c_edit, c_copy, c_doc, c_pdf, c_ppt, c_txt = st.columns([1, 1, 1.2, 1.2, 1.2, 1.1])
+            c_edit, c_copy, c_doc, c_pdf, c_ppt, c_txt = st.columns([1, 1, 1.1, 1.1, 1.1, 1])
             with c_edit:
                 if st.button("✏️ 수정", key=f"edit_btn_{state_key}"):
                     st.session_state[f"edit_mode_{state_key}"] = not st.session_state.get(f"edit_mode_{state_key}", False)
@@ -307,7 +333,7 @@ app_mode = st.sidebar.radio(
 )
 
 # ==============================================================================
-# 1. 📊 설교 대시보드 (메인 작업실) - 8종 항목 전체 툴바 적용
+# 1. 📊 설교 대시보드 (메인 작업실) - 모든 섹션 상단 6종 툴바 탑재
 # ==============================================================================
 if app_mode == "📊 설교 대시보드 (메인 작업실)":
     st.markdown(
@@ -365,7 +391,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
     st.write("---")
 
-    # 2단 레이아웃 (이미지 100% 동일 구현)
+    # 2단 레이아웃 (좌측 메뉴 / 우측 뷰어)
     left_panel, right_panel = st.columns([1, 2.5])
     with left_panel:
         st.markdown("<p style='font-size:12px; font-weight:bold; color:#94a3b8; margin-bottom:4px;'>콘텐츠</p>", unsafe_allow_html=True)
@@ -381,120 +407,178 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             label_visibility="collapsed"
         )
 
-    # 우측 뷰어 패널
+    # 우측 뷰어 패널 (제목 + 상단 툴바 + 수정/저장 기능)
     with right_panel:
         active_view = maker_sel if maker_sel != "선택 안 함" else content_sel
 
         # 1. 설교 요약
         if active_view == "설교 요약":
             render_section_top_toolbar(f"{st.session_state.sermon_title}_설교요약", st.session_state.full_sermon, "sermon_sum")
-            s_edit = st.text_area("설교문 본문/요약", value=st.session_state.full_sermon, height=380)
-            if st.button("💾 본문 저장", key="save_full_sermon"):
-                st.session_state.full_sermon = s_edit
-                st.success("저장되었습니다.")
+            st.caption("설교문 본문/요약")
+            if st.session_state.get("edit_mode_sermon_sum", False):
+                s_edit = st.text_area("설교문 편집", value=st.session_state.full_sermon, height=380, key="edit_sum_area")
+                if st.button("💾 본문 저장", key="save_full_sermon"):
+                    st.session_state.full_sermon = s_edit
+                    st.session_state.edit_mode_sermon_sum = False
+                    st.success("저장되었습니다.")
+                    st.rerun()
+            else:
+                st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{st.session_state.full_sermon}</div>", unsafe_allow_html=True)
 
         # 2. 소그룹 나눔
         elif active_view == "소그룹 나눔":
-            if "small_group_text" not in st.session_state or not st.session_state.small_group_text:
-                if st.button("✨ 소그룹 나눔 질문 자동 생성", type="primary"):
-                    with st.spinner("소그룹 나눔지 작성 중..."):
-                        prompt = f"설교문: {st.session_state.full_sermon[:3500]}\n소그룹 구역모임 나눔지(마음열기, 말씀나눔 2개, 삶적용 2개, 합심기도문)를 작성하세요."
-                        st.session_state.small_group_text = get_ai_response(prompt, is_json=False)
-            
             grp_txt = st.session_state.get("small_group_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹나눔지", grp_txt, "sm_grp")
-            if st.session_state.get("edit_mode_sm_grp", False):
-                st.session_state.small_group_text = st.text_area("소그룹 나눔지 편집", value=grp_txt, height=350)
+            
+            if st.button("✨ 소그룹 나눔 질문 자동 생성", type="primary"):
+                with st.spinner("소그룹 나눔지 작성 중..."):
+                    prompt = f"설교 본문: {st.session_state.sermon_scripture}\n설교문: {st.session_state.full_sermon[:3500]}\n소그룹 구역모임 나눔지(마음열기, 말씀나눔 2개, 삶적용 2개, 합심기도문)를 작성하세요."
+                    st.session_state.small_group_text = get_ai_response(prompt, is_json=False)
+                    st.rerun()
+
+            if grp_txt:
+                if st.session_state.get("edit_mode_sm_grp", False):
+                    edited_grp = st.text_area("소그룹 나눔지 편집", value=grp_txt, height=350, key="edit_grp_area")
+                    if st.button("💾 저장", key="save_grp_btn"):
+                        st.session_state.small_group_text = edited_grp
+                        st.session_state.edit_mode_sm_grp = False
+                        st.success("저장되었습니다.")
+                        st.rerun()
+                else:
+                    st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{grp_txt}</div>", unsafe_allow_html=True)
             else:
-                st.markdown(grp_txt if grp_txt else "버튼을 눌러 소그룹 나눔지를 생성하세요.")
+                st.caption("위 버튼을 눌러 소그룹 나눔지를 생성하세요.")
 
         # 3. QT 5일치
         elif active_view == "QT 5일치":
-            if "qt5_text" not in st.session_state or not st.session_state.qt5_text:
-                if st.button("✨ 5일치 QT 묵상지 자동 생성", type="primary"):
-                    with st.spinner("주간 5일치 QT 작성 중..."):
-                        prompt = f"본문: {st.session_state.sermon_scripture}, 설교문: {st.session_state.full_sermon[:3000]}\n월~금 5일치 QT 묵상지(제목, 성구, 묵상글, 적용질문, 기도)를 작성하세요."
-                        st.session_state.qt5_text = get_ai_response(prompt, is_json=False)
-            
             qt_txt = st.session_state.get("qt5_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_주간QT5일치", qt_txt, "qt5")
-            if st.session_state.get("edit_mode_qt5", False):
-                st.session_state.qt5_text = st.text_area("QT 5일치 편집", value=qt_txt, height=350)
+
+            if st.button("✨ 5일치 QT 묵상지 자동 생성", type="primary"):
+                with st.spinner("주간 5일치 QT 작성 중..."):
+                    prompt = f"본문: {st.session_state.sermon_scripture}, 설교문: {st.session_state.full_sermon[:3000]}\n월~금 5일치 QT 묵상지(제목, 성구, 묵상글, 적용질문, 기도)를 작성하세요."
+                    st.session_state.qt5_text = get_ai_response(prompt, is_json=False)
+                    st.rerun()
+
+            if qt_txt:
+                if st.session_state.get("edit_mode_qt5", False):
+                    edited_qt = st.text_area("QT 5일치 편집", value=qt_txt, height=350, key="edit_qt_area")
+                    if st.button("💾 저장", key="save_qt_btn"):
+                        st.session_state.qt5_text = edited_qt
+                        st.session_state.edit_mode_qt5 = False
+                        st.success("저장되었습니다.")
+                        st.rerun()
+                else:
+                    st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{qt_txt}</div>", unsafe_allow_html=True)
             else:
-                st.markdown(qt_txt if qt_txt else "버튼을 눌러 5일치 QT를 생성하세요.")
+                st.caption("위 버튼을 눌러 5일치 QT를 생성하세요.")
 
         # 4. 카드뉴스
         elif active_view == "카드뉴스":
+            card_all_text = "\n\n".join([f"CARD {c['card_number']}. {c['headline']}\n{c['body_text']}" for c in st.session_state.get("card_list", [])]) if "card_list" in st.session_state else ""
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_카드뉴스", card_all_text, "cd_news")
+            
             c_cnt = st.slider("카드 장수", 7, 10, 8)
             if st.button("🎨 카드뉴스 문구 생성", type="primary"):
                 with st.spinner("카드뉴스 구성 중..."):
                     prompt = f"설교문: {st.session_state.full_sermon[:3500]}\n정확히 {c_cnt}장의 카드뉴스 JSON 출력: {{\"cards\": [{{\"card_number\": 1, \"headline\": \"제목\", \"body_text\": \"문구\"}}]}}"
                     res = get_ai_response(prompt, is_json=True)
-                    if res and "cards" in res: st.session_state.card_list = res["cards"]
+                    if res and "cards" in res:
+                        st.session_state.card_list = res["cards"]
+                        st.rerun()
 
             if "card_list" in st.session_state:
-                card_all_text = "\n\n".join([f"CARD {c['card_number']}. {c['headline']}\n{c['body_text']}" for c in st.session_state.card_list])
-                render_section_top_toolbar(f"{st.session_state.sermon_title}_카드뉴스", card_all_text, "cd_news")
                 st.download_button("📥 1:1 정사각형 카드뉴스 PPT 내려받기", data=generate_cardnews_pptx(st.session_state.card_list), file_name="카드뉴스_1대1.pptx")
                 for c in st.session_state.card_list:
                     st.info(f"**CARD {c['card_number']}. {c['headline']}**\n\n{c['body_text']}")
 
         # 5. 쇼츠 대본
         elif active_view == "쇼츠 대본":
-            if "shorts_script_text" not in st.session_state or not st.session_state.shorts_script_text:
-                if st.button("🎬 바이럴 쇼츠 대본 3종 생성", type="primary"):
-                    with st.spinner("쇼츠 대본 작성 중..."):
-                        prompt = f"설교문: {st.session_state.full_sermon[:3000]}\n쇼츠/릴스용 60초 대본 3가지 버전(감동형, 질문형, 결단선포형)을 [후킹]-[본론]-[결단] 구조로 작성하세요."
-                        st.session_state.shorts_script_text = get_ai_response(prompt, is_json=False)
-            
             sh_txt = st.session_state.get("shorts_script_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_쇼츠대본", sh_txt, "sh_script")
-            if st.session_state.get("edit_mode_sh_script", False):
-                st.session_state.shorts_script_text = st.text_area("쇼츠 대본 편집", value=sh_txt, height=350)
+
+            if st.button("🎬 바이럴 쇼츠 대본 3종 생성", type="primary"):
+                with st.spinner("쇼츠 대본 작성 중..."):
+                    prompt = f"설교문: {st.session_state.full_sermon[:3000]}\n쇼츠/릴스용 60초 대본 3가지 버전(감동형, 질문형, 결단선포형)을 [후킹]-[본론]-[결단] 구조로 작성하세요."
+                    st.session_state.shorts_script_text = get_ai_response(prompt, is_json=False)
+                    st.rerun()
+
+            if sh_txt:
+                if st.session_state.get("edit_mode_sh_script", False):
+                    edited_sh = st.text_area("쇼츠 대본 편집", value=sh_txt, height=350, key="edit_sh_area")
+                    if st.button("💾 저장", key="save_sh_btn"):
+                        st.session_state.shorts_script_text = edited_sh
+                        st.session_state.edit_mode_sh_script = False
+                        st.success("저장되었습니다.")
+                        st.rerun()
+                else:
+                    st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{sh_txt}</div>", unsafe_allow_html=True)
             else:
-                st.markdown(sh_txt if sh_txt else "버튼을 눌러 쇼츠 대본을 생성하세요.")
+                st.caption("위 버튼을 눌러 쇼츠 대본을 생성하세요.")
 
         # 6. 세대별 가정예배지
         elif active_view == "🏡 세대별 가정예배지":
             age_group = st.selectbox("예배 대상 선택", ["👶 영유아용", "🧒 어린이용", "🧑 청소년용", "👨‍👩‍👧 청장년용"])
+            fam_txt = st.session_state.get(f"family_worship_{age_group}", "")
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_가정예배지_{age_group}", fam_txt, f"fam_{age_group}")
+
             if st.button(f"✨ {age_group} 맞춤 가정예배지 생성", type="primary"):
                 with st.spinner("가정예배 순서지 작성 중..."):
                     prompt = f"본문: {st.session_state.sermon_scripture}, 설교문: {st.session_state.full_sermon[:3000]}\n대상: {age_group}\n1.찬양 2.말씀 3.눈높이 3분 메시지 4.가족 나눔 2개 5.축복기도문"
-                    st.session_state.family_worship_text = get_ai_response(prompt, is_json=False)
-            
-            fam_txt = st.session_state.get("family_worship_text", "")
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_가정예배지_{age_group}", fam_txt, "fam_worship")
-            if st.session_state.get("edit_mode_fam_worship", False):
-                st.session_state.family_worship_text = st.text_area("가정예배지 편집", value=fam_txt, height=320)
+                    st.session_state[f"family_worship_{age_group}"] = get_ai_response(prompt, is_json=False)
+                    st.rerun()
+
+            if fam_txt:
+                if st.session_state.get(f"edit_mode_fam_{age_group}", False):
+                    edited_fam = st.text_area("가정예배지 편집", value=fam_txt, height=320, key=f"edit_fam_{age_group}")
+                    if st.button("💾 저장", key=f"save_fam_{age_group}"):
+                        st.session_state[f"family_worship_{age_group}"] = edited_fam
+                        st.session_state[f"edit_mode_fam_{age_group}"] = False
+                        st.success("저장되었습니다.")
+                        st.rerun()
+                else:
+                    st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{fam_txt}</div>", unsafe_allow_html=True)
             else:
-                st.markdown(fam_txt if fam_txt else "버튼을 눌러 세대별 가정예배지를 생성하세요.")
+                st.caption(f"위 버튼을 눌러 {age_group} 맞춤 가정예배지를 생성하세요.")
 
         # 7. 설교 점검 및 제안
         elif active_view == "🔍 설교 점검 및 제안":
+            audit_txt = st.session_state.get("sermon_audit_text", "")
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교점검및제안", audit_txt, "sermon_audit")
+
             if st.button("🔍 설교 전달력 및 신학적 완성도 정밀 점검", type="primary"):
                 with st.spinner("설교 분석 및 피드백 작성 중..."):
                     prompt = f"""
                     설교 본문: {st.session_state.sermon_scripture}, 제목: {st.session_state.sermon_title}
                     설교 원고: {st.session_state.full_sermon[:4000]}
-                    
                     다음 5가지 항목으로 전문적인 설교학적 피드백과 개선 제안을 작성하세요:
                     1. 본문 주해의 정확성 및 성경 중심성 평가
                     2. 논리적 대지 전개 및 설교 구조 평가
                     3. 청중 공감 예화 및 삶의 적용의 적절성
-                    4. 스피치 전달력 및 표현 개선 제안 (도입부 훅, 결론 선포)
+                    4. 스피치 전달력 및 표현 개선 제안
                     5. 총평 및 3가지 핵심 개선 권고사항
                     """
                     st.session_state.sermon_audit_text = get_ai_response(prompt, is_json=False)
+                    st.rerun()
 
-            audit_txt = st.session_state.get("sermon_audit_text", "")
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교점검및제안", audit_txt, "sermon_audit")
-            if st.session_state.get("edit_mode_sermon_audit", False):
-                st.session_state.sermon_audit_text = st.text_area("설교 점검 내용 편집", value=audit_txt, height=350)
+            if audit_txt:
+                if st.session_state.get("edit_mode_sermon_audit", False):
+                    edited_audit = st.text_area("설교 점검 내용 편집", value=audit_txt, height=350, key="edit_audit_area")
+                    if st.button("💾 저장", key="save_audit_btn"):
+                        st.session_state.sermon_audit_text = edited_audit
+                        st.session_state.edit_mode_sermon_audit = False
+                        st.success("저장되었습니다.")
+                        st.rerun()
+                else:
+                    st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{audit_txt}</div>", unsafe_allow_html=True)
             else:
-                st.markdown(audit_txt if audit_txt else "버튼을 눌러 설교 점검 리포트를 생성하세요.")
+                st.caption("위 버튼을 눌러 설교 점검 리포트를 생성하세요.")
 
         # 8. 소그룹 리더가이드
         elif active_view == "📖 소그룹 리더가이드":
+            ldr_txt = st.session_state.get("leader_guide_text", "")
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹리더가이드", ldr_txt, "ldr_guide")
+
             if st.button("📖 구역장/순장용 소그룹 리더가이드 생성", type="primary"):
                 with st.spinner("소그룹 인도자용 심화 가이드 작성 중..."):
                     prompt = f"""
@@ -507,16 +591,23 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     5. 소그룹을 위한 중보기도 제목 3가지
                     """
                     st.session_state.leader_guide_text = get_ai_response(prompt, is_json=False)
+                    st.rerun()
 
-            ldr_txt = st.session_state.get("leader_guide_text", "")
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹리더가이드", ldr_txt, "ldr_guide")
-            if st.session_state.get("edit_mode_ldr_guide", False):
-                st.session_state.leader_guide_text = st.text_area("리더가이드 편집", value=ldr_txt, height=350)
+            if ldr_txt:
+                if st.session_state.get("edit_mode_ldr_guide", False):
+                    edited_ldr = st.text_area("리더가이드 편집", value=ldr_txt, height=350, key="edit_ldr_area")
+                    if st.button("💾 저장", key="save_ldr_btn"):
+                        st.session_state.leader_guide_text = edited_ldr
+                        st.session_state.edit_mode_ldr_guide = False
+                        st.success("저장되었습니다.")
+                        st.rerun()
+                else:
+                    st.markdown(f"<div style='background-color:#0f172a; border:1px solid #334155; border-radius:12px; padding:18px; line-height:1.7; white-space:pre-wrap; color:#f1f5f9;'>{ldr_txt}</div>", unsafe_allow_html=True)
             else:
-                st.markdown(ldr_txt if ldr_txt else "버튼을 눌러 소그룹 리더가이드를 생성하세요.")
+                st.caption("위 버튼을 눌러 소그룹 리더가이드를 생성하세요.")
 
 # ==============================================================================
-# 2. 📤 새 설교 등록/원고작성 (3가지 방식: 타이핑 / 파일 / AI 강해설교문)
+# 2. 📤 새 설교 등록/원고작성 (직접 타이핑 / 파일 업로드 / AI 강해설교문 3종)
 # ==============================================================================
 elif app_mode == "📤 새 설교 등록/원고작성":
     st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📤 새 설교 등록 및 원고 작성</h1>", unsafe_allow_html=True)
@@ -528,7 +619,6 @@ elif app_mode == "📤 새 설교 등록/원고작성":
         "📖 AI 강해설교문 생성 (개혁주의/복음주의/장로교)"
     ])
 
-    # 탭 1: 직접 타이핑 작성
     with tab_type:
         st.markdown("#### 강단 선포용 설교 원고 직접 작성")
         tc1, tc2, tc3 = st.columns([2, 1.5, 1])
@@ -559,9 +649,8 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 st.session_state.sermon_scripture = t_scripture.strip()
                 st.session_state.preacher_name = t_preacher.strip()
                 st.session_state.full_sermon = t_content.strip()
-                st.success(f"'{t_title}' 설교가 등록되었습니다! [설교 대시보드]로 이동하여 확인하세요.")
+                st.success(f"'{t_title}' 설교가 등록되었습니다! [📊 설교 대시보드]로 이동하여 확인하세요.")
 
-    # 탭 2: 파일 업로드
     with tab_file:
         st.markdown("#### 설교문 파일 업로드 (.docx, .pdf, .txt)")
         u_file = st.file_uploader("설교 파일 선택", type=["docx", "pdf", "txt"], key="up_sermon_file")
@@ -591,17 +680,13 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 "tags": ["파일등록"],
                 "text": text
             })
-            st.success("파일 등록이 완료되었습니다! [설교 대시보드]로 이동하세요.")
+            st.success("파일 등록이 완료되었습니다! [📊 설교 대시보드]로 이동하세요.")
 
-    # 탭 3: AI 강해설교문 생성 (개혁주의/복음주의/장로교)
     with tab_ai:
         st.markdown("#### 📖 성경 본문 선택 기반 정통 강해설교문 자동 생성")
-        
         ai_c1, ai_c2, ai_c3 = st.columns([1.2, 1.5, 1.3])
-        with ai_c1:
-            sel_book = st.selectbox("성경 66권 선택", BIBLE_BOOKS, index=44) # 기본 로마서
-        with ai_c2:
-            sel_chap_verse = st.text_input("장 및 절 입력", value="8장 28절~39절")
+        with ai_c1: sel_book = st.selectbox("성경 66권 선택", BIBLE_BOOKS, index=44)
+        with ai_c2: sel_chap_verse = st.text_input("장 및 절 입력", value="8장 28절~39절")
         with ai_c3:
             theology_choice = st.selectbox(
                 "신학적 관점 선택",
@@ -613,30 +698,23 @@ elif app_mode == "📤 새 설교 등록/원고작성":
             )
 
         ai_t1, ai_t2 = st.columns([2, 1])
-        with ai_t1:
-            ai_sermon_topic = st.text_input("설교 주제 / 강조 포인트 (선택)", value="고난 속에서도 흔들리지 않는 하나님의 영원한 사랑과 구원의 확신")
-        with ai_t2:
-            sermon_style = st.selectbox("설교 형태", ["3대지 본문중심 강해설교", "구속사적 복음설교", "원어 주해 중심 강해설교"])
+        with ai_t1: ai_sermon_topic = st.text_input("설교 주제 / 강조 포인트 (선택)", value="고난 속에서도 흔들리지 않는 하나님의 영원한 사랑과 구원의 확신")
+        with ai_t2: sermon_style = st.selectbox("설교 형태", ["3대지 본문중심 강해설교", "구속사적 복음설교", "원어 주해 중심 강해설교"])
 
         full_scripture_str = f"{sel_book} {sel_chap_verse}"
 
         if st.button("🚀 정통 강해설교문 전문 자동 작성 시작 (25~30분 분량)", type="primary"):
-            with st.spinner(f"[{theology_choice.split(' ')[0]}] 관점으로 {full_scripture_str} 본문 강해설교문 작성 중... (약 20~30초)"):
+            with st.spinner(f"[{theology_choice.split(' ')[0]}] 관점으로 {full_scripture_str} 본문 강해설교문 작성 중..."):
                 prompt = f"""
-                당신은 한국 교회의 탁월하고 신뢰받는 복음주의/개혁주의/장로교 설교학 교수이자 목회자입니다.
-                
-                [설교 정보]
+                당신은 한국 교회의 탁월한 복음주의/개혁주의/장로교 설교학 교수이자 목회자입니다.
                 - 성경 본문: {full_scripture_str}
                 - 주제: {ai_sermon_topic}
                 - 신학적 관점: {theology_choice}
                 - 설교 형태: {sermon_style}
                 
-                [작성 지침]
-                1. 강단에서 실제로 선포할 수 있는 25~30분 분량의 완성된 '설교문 전문(Full Manuscript)'을 작성하세요.
-                2. {theology_choice} 관점에 입각하여 오직 성경(Sola Scriptura), 오직 은혜(Sola Gratia), 하나님의 주권과 구속사적 맥락(예수 그리스도의 십자가 복음)을 명확히 드러내세요.
-                3. 서론(도입 및 질문) - 본론(제1대지, 제2대지, 제3대지) - 결론 및 결단의 기도 구조로 작성하세요.
-                4. 각 대지마다 본문 주해 해설과 청중의 삶에 직결되는 현실적 예화, 구체적 적용 방안을 풍성히 포함하세요.
-                5. 어조: 목양적이고 은혜로운 구어체 선포형 어투(~합니다, ~바랍니다).
+                25~30분 분량의 완성된 '설교문 전문(Full Manuscript)'을 서론-본론(3대지)-결론 및 결단의 기도 구조로 작성하세요.
+                각 대지마다 본문 주해 해설과 청중의 삶에 직결되는 현실적 예화, 구체적 적용 방안을 풍성히 포함하세요.
+                어조: 목양적이고 은혜로운 구어체 선포형 어투(~합니다, ~바랍니다).
                 """
                 generated_sermon = get_ai_response(prompt, is_json=False)
                 if generated_sermon:
@@ -647,9 +725,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
 
         if "temp_generated_sermon" in st.session_state:
             st.write("---")
-            st.subheader(f"📌 {st.session_state.temp_ai_title}")
             render_section_top_toolbar(st.session_state.temp_ai_title, st.session_state.temp_generated_sermon, "ai_gen_sermon")
-            
             st.session_state.temp_generated_sermon = st.text_area("작성된 강해설교문 검토 및 수정", value=st.session_state.temp_generated_sermon, height=450)
             
             if st.button("✅ 이 설교문을 내 서재와 대시보드에 최종 등록하기", type="primary"):
@@ -667,7 +743,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 st.session_state.sermon_title = st.session_state.temp_ai_title
                 st.session_state.sermon_scripture = st.session_state.temp_ai_scrip
                 st.session_state.full_sermon = st.session_state.temp_generated_sermon
-                st.success("설교문이 등록되었습니다! [📊 설교 대시보드] 메뉴에서 모든 사역자료(QT, 소그룹, PPT, 영상)를 바로 확인하세요.")
+                st.success("설교문이 등록되었습니다! [📊 설교 대시보드] 메뉴에서 확인하세요.")
 
 # ==============================================================================
 # 3. 🎙️ AI 보이스오버 스튜디오
@@ -791,4 +867,4 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
                 st.session_state.sermon_title = s_item["title"]
                 st.session_state.sermon_scripture = s_item["scripture"]
                 st.session_state.full_sermon = s_item["text"]
-                st.success(f"'{s_item['title']}' 설교를 불러왔습니다! [설교 대시보드]로 이동하세요.")
+                st.success(f"'{s_item['title']}' 설교를 불러왔습니다! [📊 설교 대시보드]로 이동하세요.")
