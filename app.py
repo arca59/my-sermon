@@ -14,7 +14,7 @@ from video_engine import create_animated_video
 
 st.set_page_config(page_title="MY 설교 AI 스튜디오 Pro", page_icon="🕊️", layout="wide")
 
-# 1. 개인 보안 접속 인증
+# 1. 개인 보안 접속 인증 (기본 PIN: 7777)
 USER_PIN = st.secrets.get("APP_PIN", "7777")
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -30,47 +30,79 @@ if not st.session_state.authenticated:
             st.error("PIN 코드가 올바르지 않습니다.")
     st.stop()
 
-# 2. Gemini AI 안전 호출 래퍼 (NotFound 에러 완벽 방지)
-GEMINI_KEY = st.secrets.get("GEMINI_API_KEY", "")
-if not GEMINI_KEY:
-    GEMINI_KEY = st.sidebar.text_input("Gemini API Key를 입력하세요", type="password")
+# 2. API 키 설정 및 사이드바 연결 검증
+secret_key = st.secrets.get("GEMINI_API_KEY", "")
+sidebar_key = st.sidebar.text_input("🔑 Gemini API Key (직접 입력/수정)", value=secret_key, type="password")
+ACTIVE_KEY = sidebar_key.strip() if sidebar_key else secret_key.strip()
 
+# 연결된 모델 자동 감지 함수
+@st.cache_resource(show_spinner=False)
+def get_working_model_name(api_key: str):
+    if not api_key:
+        return None, "API 키가 입력되지 않았습니다."
+    try:
+        genai.configure(api_key=api_key)
+        # 계정에서 지원하는 생성 모델 목록 자동 조회
+        available_models = [
+            m.name for m in genai.list_models() 
+            if 'generateContent' in m.supported_generation_methods
+        ]
+        if not available_models:
+            return None, "사용 가능한 텍스트 모델을 찾을 수 없습니다."
+        
+        # 1.5-flash 또는 2.0-flash 우선 선택
+        preferred = ["models/gemini-1.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-pro", "models/gemini-pro"]
+        for p in preferred:
+            if p in available_models:
+                return p, "정상 연결"
+        return available_models[0], "정상 연결"
+    except Exception as e:
+        return None, str(e)
+
+working_model, status_msg = get_working_model_name(ACTIVE_KEY)
+
+# 사이드바 연결 상태 표시
+if working_model:
+    st.sidebar.success(f"🟢 AI 연결 성공 ({working_model.replace('models/', '')})")
+else:
+    st.sidebar.error(f"🔴 AI 연결 실패: {status_msg}")
+    st.sidebar.caption("Google AI Studio(aistudio.google.com)에서 발급받은 키를 위 입력창에 붙여넣어 보세요.")
+
+# 3. AI 요청 처리 함수 (오류 상세 표시)
 def get_ai_response(prompt: str, is_json: bool = True):
-    if not GEMINI_KEY:
-        st.error("Gemini API Key가 등록되지 않았습니다.")
+    if not ACTIVE_KEY:
+        st.error("Gemini API Key가 필요합니다. 사이드바에 키를 입력해주세요.")
         return None
     
-    genai.configure(api_key=GEMINI_KEY)
-    
-    # 404 NotFound 방지를 위한 우선순위 모델 리스트
-    candidate_models = ["gemini-1.5-flash", "gemini-1.5-flash-latest", "gemini-1.5-pro", "gemini-pro"]
-    
-    for model_name in candidate_models:
-        try:
-            model = genai.GenerativeModel(model_name)
-            if is_json:
+    if not working_model:
+        st.error(f"AI 모델 연결 실패: {status_msg}")
+        return None
+
+    try:
+        genai.configure(api_key=ACTIVE_KEY)
+        model = genai.GenerativeModel(working_model)
+        
+        if is_json:
+            try:
                 res = model.generate_content(prompt, generation_config={"response_mime_type": "application/json"})
                 return json.loads(res.text)
-            else:
-                res = model.generate_content(prompt)
-                return res.text
-        except Exception as e:
-            # JSON 파싱 실패 시 정규식으로 JSON 블록 추출 시도
-            try:
-                model = genai.GenerativeModel(model_name)
-                res = model.generate_content(prompt)
-                if is_json:
-                    match = re.search(r"\{.*\}|\[.*\]", res.text, re.DOTALL)
-                    if match:
-                        return json.loads(match.group(0))
-                else:
-                    return res.text
             except Exception:
-                continue
-    st.error("AI 모델 응답을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.")
-    return None
+                # JSON 모드 미지원 시 일반 텍스트에서 JSON 추출
+                res = model.generate_content(prompt)
+                match = re.search(r"\{.*\}|\[.*\]", res.text, re.DOTALL)
+                if match:
+                    return json.loads(match.group(0))
+                st.error("JSON 파싱에 실패했습니다. 다시 시도해주세요.")
+                return None
+        else:
+            res = model.generate_content(prompt)
+            return res.text
+            
+    except Exception as e:
+        st.error(f"AI 호출 오류 상세: {str(e)}")
+        return None
 
-# 3. 파일 텍스트 추출 함수 (.docx, .pdf, .txt)
+# 4. 파일 텍스트 추출 함수
 def extract_text_from_file(uploaded_file):
     text = ""
     file_name = uploaded_file.name.lower()
@@ -86,7 +118,7 @@ def extract_text_from_file(uploaded_file):
             if t: text += t + "\n"
     return text
 
-# 4. 16:9 예배용 PPT 생성기
+# 5. PPT 생성 엔진 (16:9 와이드 예배용)
 def generate_church_pptx(title, scripture, preacher, points, conclusion):
     prs = Presentation()
     prs.slide_width = Inches(13.333)
@@ -99,7 +131,7 @@ def generate_church_pptx(title, scripture, preacher, points, conclusion):
         fill.solid()
         fill.fore_color.rgb = color
 
-    # 표지
+    # 표지 슬라이드
     slide1 = prs.slides.add_slide(blank_layout)
     apply_bg(slide1, RGBColor(15, 23, 42))
     tx = slide1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.0))
@@ -115,7 +147,7 @@ def generate_church_pptx(title, scripture, preacher, points, conclusion):
     p2.font.color.rgb = RGBColor(226, 232, 240)
     p2.alignment = PP_ALIGN.CENTER
 
-    # 대지별 슬라이드
+    # 대지 슬라이드
     for idx, pt in enumerate(points, 1):
         slide = prs.slides.add_slide(blank_layout)
         apply_bg(slide, RGBColor(24, 32, 54))
@@ -157,7 +189,7 @@ def generate_church_pptx(title, scripture, preacher, points, conclusion):
     bio.seek(0)
     return bio
 
-# 5. 1:1 정사각형 카드뉴스 PPT 생성기
+# 6. 1:1 정사각형 카드뉴스 PPT 생성기
 def generate_cardnews_pptx(slides_data):
     prs = Presentation()
     prs.slide_width = Inches(10)
@@ -203,16 +235,16 @@ def generate_cardnews_pptx(slides_data):
     bio.seek(0)
     return bio
 
-# 6. 세션 상태 초기화
+# 세션 초기화
 if "outline_data" not in st.session_state: st.session_state.outline_data = None
 if "full_sermon" not in st.session_state: st.session_state.full_sermon = ""
 if "preacher_name" not in st.session_state: st.session_state.preacher_name = "담임목사"
 if "cardnews_data" not in st.session_state: st.session_state.cardnews_data = None
 
-# 7. 네비게이션
-st.sidebar.title("🕊️ 설교 AI 스튜디오")
+# 네비게이션 메뉴
+st.sidebar.title("🕊️ 메뉴 선택")
 menu = st.sidebar.radio(
-    "메뉴 선택",
+    "사역 플랫폼 기능",
     [
         "📤 기존 설교문 업로드",
         "📖 새 설교 개요 & 주해",
@@ -229,22 +261,22 @@ menu = st.sidebar.radio(
 # --- 1. 기존 설교문 업로드 ---
 if menu == "📤 기존 설교문 업로드":
     st.title("📤 기존 설교문 파일 업로드 & 연동")
-    st.caption("이미 작성해두신 설교문 파일(.docx, .pdf, .txt)을 올리거나 텍스트를 붙여넣으면 모든 사역자료가 즉시 생성됩니다.")
+    st.caption("설교문 파일(.docx, .pdf, .txt)을 올리거나 본문을 붙여넣으면 모든 사역자료가 즉시 생성됩니다.")
     
     upload_col, direct_col = st.columns([1.2, 1])
     with upload_col:
-        up_file = st.file_uploader("설교문 파일 업로드", type=["docx", "pdf", "txt"])
+        up_file = st.file_uploader("설교문 파일 업로드 (.docx, .pdf, .txt)", type=["docx", "pdf", "txt"])
         if up_file is not None:
             extracted = extract_text_from_file(up_file)
             if extracted:
                 st.session_state.full_sermon = extracted
-                st.success(f"'{up_file.name}'에서 설교문을 성공적으로 불러왔습니다! ({len(extracted)}자)")
+                st.success(f"'{up_file.name}' 설교문을 성공적으로 불러왔습니다! ({len(extracted)}자)")
 
     with direct_col:
         direct_text = st.text_area("또는 원고 직접 붙여넣기", value=st.session_state.full_sermon, height=220)
         if st.button("원고 저장 및 동기화", type="primary"):
             st.session_state.full_sermon = direct_text
-            st.success("설교문이 플랫폼에 등록되었습니다. 이제 왼쪽 메뉴에서 요약, 소그룹, 카드뉴스, PPT를 바로 생성하세요!")
+            st.success("설교문이 등록되었습니다! 이제 요약, 소그룹, 카드뉴스, PPT를 바로 생성하세요.")
 
 # --- 2. 설교 개요 & 주해 ---
 elif menu == "📖 새 설교 개요 & 주해":
@@ -293,7 +325,7 @@ elif menu == "✍️ 설교문 전문 작성":
     
     if st.button("🚀 개요 기반으로 전체 원고 생성"):
         if not st.session_state.outline_data:
-            st.warning("먼저 [설교 개요]를 생성하거나 [기존 설교문 업로드] 탭을 이용해주세요.")
+            st.warning("먼저 [새 설교 개요]를 생성하거나 [기존 설교문 업로드] 탭을 이용해주세요.")
         else:
             with st.spinner("25분 완성형 설교문 작성 중..."):
                 prompt = f"""
@@ -313,7 +345,7 @@ elif menu == "📋 설교문 요약 & 주보":
     st.title("📋 설교문 요약 및 주보 게재용 요약문")
     if st.button("📑 핵심 요약문 추출하기", type="primary"):
         if not st.session_state.full_sermon:
-            st.warning("먼저 설교문을 입력하거나 업로드해주세요.")
+            st.warning("먼저 [기존 설교문 업로드] 메뉴에 원고를 넣거나 [설교문 전문 작성]을 완료해주세요.")
         else:
             with st.spinner("주보용 핵심 요약 추출 중..."):
                 prompt = f"""
@@ -329,7 +361,7 @@ elif menu == "📋 설교문 요약 & 주보":
                 if summary:
                     st.subheader("💡 3줄 핵심 요약")
                     for l in summary.get("three_lines", []): st.success(f"✓ {l}")
-                    st.subheader("📰 주보 게재용 요약문")
+                    st.subheader("📰 주보 게재용 요약문 (복사하여 사용)")
                     st.text_area("복사용 텍스트", value=summary.get("bulletin_summary", ""), height=150)
                     st.subheader("🙏 한 줄 묵상")
                     st.info(summary.get("one_sentence_meditation", ""))
@@ -396,7 +428,7 @@ elif menu == "🏡 가정예배 순서지":
 # --- 7. 카드뉴스 (7~10장) ---
 elif menu == "📱 카드뉴스 (7~10장)":
     st.title("📱 SNS / 인스타그램 카드뉴스 (7~10장) 스튜디오")
-    st.caption("설교문에서 성도들이 SNS로 쉽게 읽을 수 있는 7~10장의 정갈한 카드뉴스를 자동 추출합니다.")
+    st.caption("설교문에서 SNS용 7~10장 카드뉴스를 자동 생성하고 1:1 파워포인트 파일로 내려받습니다.")
     
     card_count = st.slider("카드뉴스 장수 선택", min_value=7, max_value=10, value=8)
     
@@ -407,13 +439,7 @@ elif menu == "📱 카드뉴스 (7~10장)":
             with st.spinner(f"{card_count}장의 카드뉴스를 구성 중입니다..."):
                 prompt = f"""
                 설교문: {st.session_state.full_sermon[:4000]}
-                정확히 {card_count}장의 인스타그램 카드뉴스 형태로 작성해주세요.
-                구조:
-                - 1번 카드: 표지 (강렬한 헤드라인 + 부제목)
-                - 2번~{card_count-1}번 카드: 본론 (문제 제기 - 공감 - 말씀 핵심 - 교훈 - 실천 방안)
-                - {card_count}번 카드: 마무리 (결단 기도 및 축복)
-
-                JSON 포맷:
+                정확히 {card_count}장의 카드뉴스 구조로 JSON 작성:
                 {{
                     "cards": [
                         {{
@@ -431,8 +457,6 @@ elif menu == "📱 카드뉴스 (7~10장)":
 
     if st.session_state.cardnews_data:
         cards = st.session_state.cardnews_data
-        
-        # 다운로드 버튼
         card_pptx = generate_cardnews_pptx(cards)
         st.download_button(
             label="📥 1:1 정사각형 카드뉴스 PPT(.pptx) 다운로드",
@@ -442,7 +466,6 @@ elif menu == "📱 카드뉴스 (7~10장)":
         )
         st.write("---")
 
-        # 카드 미리보기 뷰어 (2열 그리드)
         cols = st.columns(2)
         for idx, card in enumerate(cards):
             with cols[idx % 2]:
@@ -461,13 +484,12 @@ elif menu == "📱 카드뉴스 (7~10장)":
 elif menu == "🖥️ PPT 슬라이드 생성":
     st.title("🖥️ 예배 설교용 와이드 PPT (.pptx) 생성")
     
-    # 개요 데이터가 없으면 설교문에서 즉석 대지 추출
     if not st.session_state.outline_data and st.session_state.full_sermon:
         if st.button("📝 현재 설교문에서 PPT 슬라이드 구조 자동 추출"):
             with st.spinner("설교문에서 3대지 구조 추출 중..."):
                 prompt = f"""
                 설교문: {st.session_state.full_sermon[:4000]}
-                PPT 제작을 위해 JSON 형식으로 출력:
+                PPT 제작을 위한 JSON 출력:
                 {{
                     "title": "설교 제목",
                     "scripture": "본문 구절",
