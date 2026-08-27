@@ -1,19 +1,104 @@
 import asyncio
 import os
+import numpy as np
 import PIL.Image
+import PIL.ImageDraw
+import PIL.ImageFont
 
-# Pillow 10+ 호환성을 위한 패치 (MoviePy 1.0.3 AttributeError 방지)
+# Pillow 호환성 패치
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = getattr(PIL.Image, 'Resampling', PIL.Image).LANCZOS
 
 import edge_tts
 from moviepy.editor import (
-    VideoFileClip, ImageClip, ColorClip, TextClip,
-    AudioFileClip, CompositeAudioClip, CompositeVideoClip, afx, vfx
+    VideoFileClip, ImageClip, ColorClip, AudioFileClip,
+    CompositeAudioClip, CompositeVideoClip, afx, vfx
 )
 
 OUTPUT_DIR = "./outputs"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# --- PIL 기반 안전 텍스트 클립 생성기 (ImageMagick OSError 완벽 방지) ---
+def create_pil_text_clip(text, fontsize=40, color="white", stroke_color="black", stroke_width=2, size=(900, None), duration=None):
+    font = None
+    font_candidates = [
+        "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+        "/usr/share/fonts/opentype/nanum/NanumGothic.ttf",
+        "C:/Windows/Fonts/malgun.ttf",
+        "./NanumGothic.ttf"
+    ]
+    for f in font_candidates:
+        if os.path.exists(f):
+            try:
+                font = PIL.ImageFont.truetype(f, fontsize)
+                break
+            except Exception:
+                pass
+    if font is None:
+        font = PIL.ImageFont.load_default()
+
+    max_w = size[0] if size and size[0] else 900
+    dummy_img = PIL.Image.new('RGBA', (1, 1))
+    dummy_draw = PIL.ImageDraw.Draw(dummy_img)
+
+    lines = []
+    for para in str(text).split('\n'):
+        words = para.split(' ')
+        curr_line = ""
+        for w in words:
+            test_line = f"{curr_line} {w}".strip()
+            bbox = dummy_draw.textbbox((0, 0), test_line, font=font)
+            if (bbox[2] - bbox[0]) > max_w - 40 and curr_line:
+                lines.append(curr_line)
+                curr_line = w
+            else:
+                curr_line = test_line
+        if curr_line:
+            lines.append(curr_line)
+
+    wrapped_text = "\n".join(lines) if lines else str(text)
+
+    bbox = dummy_draw.multiline_textbbox((0, 0), wrapped_text, font=font, spacing=12)
+    text_w = bbox[2] - bbox[0]
+    text_h = bbox[3] - bbox[1]
+
+    canvas_w = max_w
+    canvas_h = text_h + 40 + stroke_width * 2
+
+    img = PIL.Image.new('RGBA', (canvas_w, canvas_h), (0, 0, 0, 0))
+    draw = PIL.ImageDraw.Draw(img)
+
+    def parse_color(c):
+        if isinstance(c, tuple): return c
+        if c == "white": return (255, 255, 255, 255)
+        if c == "black": return (0, 0, 0, 255)
+        if c == "#FDE047": return (253, 224, 71, 255)
+        if c == "#93C5FD": return (147, 197, 253, 255)
+        if c.startswith('#'):
+            hex_c = c.lstrip('#')
+            return tuple(int(hex_c[i:i+2], 16) for i in (0, 2, 4)) + (255,)
+        return (255, 255, 255, 255)
+
+    fill_color = parse_color(color)
+    s_color = parse_color(stroke_color) if stroke_color else None
+
+    x_pos = (canvas_w - text_w) // 2
+    y_pos = 20
+
+    if stroke_width > 0 and s_color:
+        for dx in range(-stroke_width, stroke_width + 1):
+            for dy in range(-stroke_width, stroke_width + 1):
+                if dx != 0 or dy != 0:
+                    draw.multiline_text((x_pos + dx, y_pos + dy), wrapped_text, font=font, fill=s_color, align="center", spacing=12)
+
+    draw.multiline_text((x_pos, y_pos), wrapped_text, font=font, fill=fill_color, align="center", spacing=12)
+
+    np_arr = np.array(img)
+    clip = ImageClip(np_arr)
+    if duration:
+        clip = clip.set_duration(duration)
+    return clip
 
 async def generate_tts(text: str, voice: str = "ko-KR-InJoonNeural") -> str:
     audio_path = os.path.join(OUTPUT_DIR, "temp_voice.mp3")
@@ -72,16 +157,16 @@ def create_animated_video(
         base_clip = ColorClip(size=(width, height), color=(15, 23, 42), duration=total_duration)
 
     title_clip = (
-        TextClip(
+        create_pil_text_clip(
             title,
             fontsize=48 if aspect_ratio == "9:16" else 40,
             color="#FDE047",
-            font=font_name,
-            method="caption",
-            size=(width - 160, None)
+            stroke_color="black",
+            stroke_width=2,
+            size=(width - 160, None),
+            duration=total_duration
         )
         .set_position(("center", 180 if aspect_ratio == "9:16" else 90))
-        .set_duration(total_duration)
         .fadein(0.5)
     )
 
@@ -91,18 +176,16 @@ def create_animated_video(
     for idx, sentence in enumerate(script_paragraphs):
         start_time = idx * segment_duration
         sub_text = (
-            TextClip(
+            create_pil_text_clip(
                 sentence.strip(),
                 fontsize=42 if aspect_ratio == "9:16" else 36,
                 color="white",
-                font=font_name,
-                method="caption",
-                size=(width - 180, None),
                 stroke_color="black",
-                stroke_width=1.5
+                stroke_width=2,
+                size=(width - 180, None),
+                duration=segment_duration
             )
             .set_start(start_time)
-            .set_duration(segment_duration)
             .set_position(("center", height // 2 if aspect_ratio == "9:16" else height * 0.65))
             .fadein(0.2)
             .fadeout(0.2)
