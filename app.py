@@ -72,6 +72,16 @@ st.markdown("""
         margin-bottom: 8px;
         font-weight: bold;
     }
+    .leader-tip {
+        color: #38bdf8 !important;
+        font-weight: 700;
+        background: rgba(14, 165, 233, 0.12);
+        padding: 4px 10px;
+        border-radius: 6px;
+        display: inline-block;
+        margin: 6px 0;
+        border-left: 3px solid #38bdf8;
+    }
     .card-preview-container {
         display: flex;
         flex-direction: column;
@@ -130,15 +140,12 @@ BIBLE_BOOKS = OLD_TESTAMENT_BOOKS + NEW_TESTAMENT_BOOKS
 def classify_scripture(scripture_text: str):
     if not scripture_text:
         return "기타", "성경전체"
-    
     for b in OLD_TESTAMENT_BOOKS:
         if b in scripture_text:
             return "구약", b
-            
     for b in NEW_TESTAMENT_BOOKS:
         if b in scripture_text:
             return "신약", b
-            
     return "기타", "성경전체"
 
 # --- 설교 영구 보관소 파일 데이터베이스 엔진 ---
@@ -169,20 +176,23 @@ def load_sermons_from_db():
             "summary": """🎯 설교 핵심 명제:
 나를 눈동자 같이 지키시고 주의 날개 그늘 아래에 감추시는 하나님의 신실한 은혜를 온전히 신뢰하며 나아갑니다.
 
-📌 설교 3대지 핵심 요약:
-1. 눈동자처럼 우리를 보호하시는 하나님 (시편 17:8)
-- 하나님께서는 우리의 모든 순간을 눈동자처럼 아끼며 지켜주십니다.
+📌 강해적 3대지 핵심 요약:
+1. 눈동자처럼 지키시는 사랑 (시편 17:8a)
+- 성경적 원리: 하나님께서는 우리의 모든 순간을 시선을 떼지 않으시고 눈동자처럼 아끼며 지켜주십니다. 세상의 위협 속에서도 성도를 온전히 보호하십니다.
 
-2. 주의 날개 그늘 아래 참된 안식과 평안
-- 거친 풍랑 속에서도 주의 날개 아래 피할 때 참된 평안과 안식을 누립니다.
+2. 날개 그늘 아래의 참된 피난처 (시편 17:8b)
+- 성경적 원리: 거친 풍랑 속에서도 주의 날개 아래 피할 때 참된 안식을 누립니다. 세상의 스펙이 아닌 오직 하나님의 품만이 영원한 피난처입니다.
 
-3. 고난 속에서도 흔들리지 않는 기도와 선포
-- 기도로 나아가면 주님께서 우리의 부르짖음에 응답하시며 담대함을 주십니다.
+3. 고난 속에서도 흔들리지 않는 기도 (시편 17:6-7)
+- 성경적 원리: 절망의 자리에 머물지 않고 기도로 나아갈 때 주님께서 부르짖음에 응답하시며 영적 담대함을 회복시켜 주십니다.
 
-💡 성도를 위한 구체적 실천 적용:
-- 매일의 삶 속에서 나를 지키시는 하나님의 은혜를 묵상하고 감사하기
-- 두려움과 두 갈래 길에 설 때 세상이 아닌 주의 날개 아래로 먼저 피하기
-- 만나는 사람들에게 주의 신실하신 사랑과 간증을 기쁨으로 나누기""",
+💡 성도를 위한 구체적 실천 적용 3가지:
+- 1. 매일 삶 속에서 나를 지키시는 하나님의 은혜를 묵상하고 감사하기
+- 2. 두 갈래 길에 설 때 세상 방법 대신 주의 날개 아래로 먼저 피하기
+- 3. 만나는 사람들에게 주의 신실하신 보호와 사랑을 기쁨으로 간증하기
+
+🙏 결단 및 축복 기도문:
+살아계신 하나님, 우리를 눈동자 같이 지켜주시고 주의 날개 그늘 아래 감싸주시니 감사합니다. 어떤 풍랑 속에서도 오직 주님만을 피난처 삼아 믿음으로 승리하게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘.""",
             "text": """1. 눈동자처럼 지키시는 사랑입니다.
 하나님께서는 우리의 모든 순간을 시선을 떼지 않으시고 눈동자처럼 아끼며 지켜주십니다. 세상의 고난과 위협 속에서도 우리를 결코 혼자 두지 않으시는 은혜를 믿으십시오.
 
@@ -204,13 +214,49 @@ def save_sermons_to_db(sermons_list):
     except Exception as e:
         st.error(f"서재 파일 저장 오류: {str(e)}")
 
+# 빠른 초기 요약 생성기
+def generate_instant_fallback_summary(title, scripture, full_text):
+    paragraphs = [p.strip() for p in full_text.split('\n') if p.strip()]
+    p1 = paragraphs[0][:140] if len(paragraphs) > 0 else f"{title}의 은혜"
+    p2 = paragraphs[1][:140] if len(paragraphs) > 1 else f"{scripture} 중심 선포"
+    p3 = paragraphs[2][:140] if len(paragraphs) > 2 else "믿음과 순종의 삶"
+    
+    return f"""🎯 설교 핵심 명제:
+{title} — 하나님의 신실하신 약속({scripture})을 굳게 붙잡고 믿음으로 승리하십시오.
+
+📌 강해적 3대지 핵심 요약:
+1. 첫 번째 메시지 ({scripture})
+- 성경적 원리: {p1}
+
+2. 두 번째 메시지 ({scripture})
+- 성경적 원리: {p2}
+
+3. 세 번째 메시지 ({scripture})
+- 성경적 원리: {p3}
+
+💡 성도를 위한 구체적 실천 적용 3가지:
+- 1. 매일 말씀을 묵상하며 하나님의 은혜를 기억하기
+- 2. 삶의 위기 속에서도 흔들리지 않고 기도로 나아가기
+- 3. 이웃과 가정에 복음의 선한 능력을 전파하기
+
+🙏 결단 및 축복 기도문:
+살아계신 하나님, 주신 말씀을 마음에 새기고 날마다 믿음으로 승리하는 복된 성도가 되게 하옵소서. 아멘."""
+
 # --- 모든 메뉴 완벽 동기화 및 캐시 초기화 핵심 함수 ---
 def load_sermon_to_workspace(sermon_item, idx=0):
     st.session_state.current_sermon_idx = idx
     st.session_state.sermon_title = sermon_item.get("title", "")
     st.session_state.sermon_scripture = sermon_item.get("scripture", "")
     st.session_state.full_sermon = sermon_item.get("text", "")
-    st.session_state.sermon_summary_text = sermon_item.get("summary", "")
+    
+    sum_text = sermon_item.get("summary", "")
+    if not sum_text:
+        sum_text = generate_instant_fallback_summary(
+            st.session_state.sermon_title,
+            st.session_state.sermon_scripture,
+            st.session_state.full_sermon
+        )
+    st.session_state.sermon_summary_text = sum_text
     
     keys_to_clear = [
         "small_group_text", "qt5_text", "card_list", "shorts_script_text",
@@ -257,6 +303,7 @@ def clean_korean_output(text: str) -> str:
     markers = [
         r"(\[(?:소그룹|주간|가정예배|60초|참고|설교|세대별|리더|신앙).*?\])",
         r"(###?\s*[0-9가-힣])",
+        r"(🎯\s*설교)",
         r"(1\.\s*마음\s*열기)",
         r"(1\.\s*[가-힣]{2,})"
     ]
@@ -296,6 +343,14 @@ def clean_korean_output(text: str) -> str:
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result
 
+FAST_MODELS = [
+    "gemini-1.5-flash",
+    "gemini-2.0-flash",
+    "gemini-1.5-pro",
+    "models/gemini-1.5-flash",
+    "models/gemini-2.0-flash"
+]
+
 def get_ai_response(prompt: str, is_json: bool = True):
     if not ACTIVE_KEY:
         st.error("🔑 사이드바의 [⚙️ AI 연결 설정] 메뉴에 Gemini API Key를 입력해주세요.")
@@ -306,36 +361,14 @@ def get_ai_response(prompt: str, is_json: bool = True):
         st.error(f"API 키 설정 오류: {str(e)}")
         return None
 
-    valid_models = []
-    try:
-        for m in genai.list_models():
-            if "generateContent" in m.supported_generation_methods:
-                if "gemini-1.0" not in m.name and m.name != "models/gemini-pro":
-                    valid_models.append(m.name)
-    except Exception:
-        pass
-
-    def model_priority(m_name):
-        m = m_name.lower()
-        if "1.5-flash" in m: return 1
-        elif "2.0-flash" in m: return 2
-        elif "flash" in m: return 3
-        elif "1.5-pro" in m: return 4
-        return 10
-
-    if valid_models:
-        valid_models.sort(key=model_priority)
-    else:
-        valid_models = ["models/gemini-1.5-flash", "gemini-1.5-flash", "models/gemini-2.0-flash", "models/gemini-1.5-pro"]
-
     system_instruction = (
-        "당신은 한국 교회의 사역을 돕는 목회 전문 어시스턴트입니다. "
-        "영문 생각 과정, 기획 메모(Drafting, Concept, Focus, Checklist 등)나 영어 단어는 일절 작성하지 마십시오. "
-        "글머리 기호(*)나 번호(1.) 바로 뒤에 줄바꿈 없이 본문을 이어서 100% 완성된 한국어 사역 문서 본문만 바로 출력하십시오."
+        "당신은 한국 교회의 사역을 돕는 최고 권위의 목회 전문 어시스턴트입니다. "
+        "영문 생각 과정이나 기획 메모는 일절 작성하지 마십시오. "
+        "인도자(리더/인도자/부모)만 알아야 할 안내 팁이나 멘트는 반드시 '[인도자 팁 / 가이드]' 머리말로 구분하여 작성하십시오. "
+        "글머리 기호나 번호 바로 뒤에 줄바꿈 없이 100% 완성된 한국어 사역 문서 본문만 바로 출력하십시오."
     )
 
-    errors = []
-    for model_name in valid_models:
+    for model_name in FAST_MODELS:
         try:
             try:
                 model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
@@ -352,11 +385,9 @@ def get_ai_response(prompt: str, is_json: bool = True):
                 res = model.generate_content(prompt, generation_config={"temperature": 0.3})
                 if res and res.text:
                     return clean_korean_output(res.text)
-        except Exception as e:
-            errors.append(f"[{model_name}] {str(e)}")
+        except Exception:
             continue
 
-    st.error(f"AI 호출 실패: {errors[-1] if errors else '모델 응답 오류'}")
     return None
 
 # --- 3. 폰트 캐싱 엔진 ---
@@ -398,7 +429,7 @@ def init_korean_font():
 
 PDF_FONT_NAME = init_korean_font()
 
-# --- 4. 고화질 풍경 배경 이미지 큐레이션 목록 ---
+# --- 4. 풍경 배경 캐싱 ---
 CARD_BACKGROUNDS = [
     "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1080&q=80",
     "https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=1080&q=80",
@@ -410,11 +441,11 @@ CARD_BACKGROUNDS = [
     "https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=1080&q=80"
 ]
 
-@st.cache_data(show_spinner=False)
+@st.cache_data(show_spinner=False, ttl=86400)
 def fetch_image_bytes(url: str):
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=4) as response:
+        with urllib.request.urlopen(req, timeout=1.5) as response:
             return response.read()
     except Exception:
         return None
@@ -423,7 +454,6 @@ def fetch_image_bytes(url: str):
 def wrap_korean_text(text: str, font, max_width: int, draw: PIL.ImageDraw.ImageDraw) -> str:
     if not text:
         return ""
-    
     wrapped_lines = []
     paragraphs = str(text).split('\n')
     for p in paragraphs:
@@ -440,10 +470,9 @@ def wrap_korean_text(text: str, font, max_width: int, draw: PIL.ImageDraw.ImageD
                 curr_line = test_line
         if curr_line:
             wrapped_lines.append(curr_line)
-            
     return "\n".join(wrapped_lines)
 
-# --- 카드뉴스 PNG 이미지 고화질 합성 엔진 ---
+# --- 카드뉴스 PNG 이미지 고화질 합성 엔진 (자동 줄바꿈 완벽 적용) ---
 def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
     bg_url = CARD_BACKGROUNDS[idx % len(CARD_BACKGROUNDS)]
     img_b = fetch_image_bytes(bg_url)
@@ -528,7 +557,7 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
                 headers={
                     "Accept": "application/json",
                     "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
                 }
             )
             with urllib.request.urlopen(req, timeout=8) as resp:
@@ -547,41 +576,6 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
             last_err = str(ex)
             continue
 
-    if not download_success and video_id:
-        piped_apis = [
-            f"https://pipedapi.kavin.rocks/streams/{video_id}",
-            f"https://pipedapi.adminforge.de/streams/{video_id}",
-            f"https://piped-api.lunar.icu/streams/{video_id}"
-        ]
-        for p_api in piped_apis:
-            try:
-                req = urllib.request.Request(p_api, headers={'User-Agent': 'Mozilla/5.0'})
-                with urllib.request.urlopen(req, timeout=8) as resp:
-                    resp_bytes = resp.read()
-                    try:
-                        p_data = json.loads(resp_bytes.decode('utf-8'))
-                        v_streams = p_data.get("videoStreams", [])
-                        mp4_url = None
-                        for vs in v_streams:
-                            if vs.get("mimeType", "").startswith("video/mp4") and not vs.get("videoOnly", True):
-                                mp4_url = vs.get("url")
-                                break
-                        if not mp4_url:
-                            for vs in v_streams:
-                                if vs.get("mimeType", "").startswith("video/mp4"):
-                                    mp4_url = vs.get("url")
-                                    break
-                        if mp4_url:
-                            urllib.request.urlretrieve(mp4_url, src_video)
-                            if os.path.exists(src_video) and os.path.getsize(src_video) > 100000:
-                                download_success = True
-                                break
-                    except Exception:
-                        continue
-            except Exception as ex:
-                last_err = str(ex)
-                continue
-
     if not download_success:
         client_strategies = [['ios'], ['android_creator'], ['mweb'], ['tv_embedded']]
         for clients in client_strategies:
@@ -598,7 +592,7 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
                 'nocheckcertificate': True,
                 'geo_bypass': True,
                 'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X) AppleWebKit/605.1.15',
+                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X)',
                 },
                 'extractor_args': {
                     'youtube': {
@@ -639,7 +633,6 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
     clip_dur = final_video_clip.duration
     
     overlays = [final_video_clip]
-    
     top_bar = ColorClip(size=(1080, 240), color=(0,0,0), duration=clip_dur).set_opacity(0.45).set_position(('center', 100))
     overlays.append(top_bar)
     
@@ -845,7 +838,7 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
 
 # --- 100% 동적 설교 파싱 엔진 ---
 def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
-    text = summary_content if summary_content and len(summary_content) > 50 else full_sermon
+    text = summary_content if summary_content and len(summary_content) > 30 else full_sermon
     
     prop = ""
     prop_match = re.search(r'(?:🎯|핵심\s*명제|명제|개요)[:\s]*(.*?)(?=\n📌|\n💡|\n🙏|\n\d+\.|\n[1-9]대지|$)', text, re.DOTALL)
@@ -857,7 +850,6 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
 
     points = []
     point_matches = re.findall(r'(?:^|\n)\s*(?:[1-4]\.|\d+[\.\)]|제\s*[1-4]\s*대지|•|-)\s*(.*?)(?=\n\s*(?:[1-4]\.|\d+[\.\)]|제\s*[1-4]\s*대지|•|-|💡|🙏|🎯|📌)|$)', text, re.DOTALL)
-    
     for pm in point_matches:
         pm_clean = pm.strip()
         if pm_clean and len(pm_clean) > 3:
@@ -903,14 +895,14 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         blank_layout = prs.slide_layouts[6]
 
         def set_dark_slide(slide, img_url=None):
+            fill = slide.background.fill
+            fill.solid()
+            fill.fore_color.rgb = RGBColor(15, 23, 42)
+
             if img_url:
                 img_b = fetch_image_bytes(img_url)
                 if img_b:
                     slide.shapes.add_picture(io.BytesIO(img_b), 0, 0, width=Inches(13.333), height=Inches(7.5))
-            else:
-                fill = slide.background.fill
-                fill.solid()
-                fill.fore_color.rgb = RGBColor(15, 23, 42)
 
             overlay = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
             overlay.fill.solid()
@@ -1333,7 +1325,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 2. 일상 및 현대적 공감 예화 2가지
                 3. 교회사 및 기독교 사상가 명언 2가지
                 """
-                st.session_state.rich_materials = get_ai_response(prompt, is_json=False)
+                res = get_ai_response(prompt, is_json=False)
+                if res:
+                    st.session_state.rich_materials = res
+                    st.rerun()
         
         rich_mat_content = st.session_state.get("rich_materials", "")
         if rich_mat_content:
@@ -1347,7 +1342,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 본문: {st.session_state.sermon_scripture}, 제목: {st.session_state.sermon_title}
                 JSON: {{"hymns": ["새찬송가 000장 - 제목 5곡"], "gospel_songs": ["복음성가 5곡"], "ccm": ["CCM 5곡"]}}
                 """
-                st.session_state.praise_list = get_ai_response(prompt, is_json=True)
+                res = get_ai_response(prompt, is_json=True)
+                if res:
+                    st.session_state.praise_list = res
+                    st.rerun()
 
         if "praise_list" in st.session_state and st.session_state.praise_list:
             p_data = st.session_state.praise_list
@@ -1397,31 +1395,50 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
     with right_panel:
         active_view = st.session_state.dash_active_view
 
-        # 1. 설교 요약
+        # 1. 설교 요약 (강해적 원리 완벽 적용)
         if active_view == "설교 요약":
             summary_val = st.session_state.get("sermon_summary_text", "")
+            if not summary_val:
+                summary_val = generate_instant_fallback_summary(
+                    st.session_state.sermon_title,
+                    st.session_state.sermon_scripture,
+                    st.session_state.full_sermon
+                )
+                st.session_state.sermon_summary_text = summary_val
+
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교요약", summary_val, "sermon_sum")
             
-            if not summary_val or summary_val == st.session_state.full_sermon:
-                with st.spinner("AI가 설교 원고에서 핵심 요약을 추출 중입니다..."):
+            if st.button("✨ 강해적 3대지 핵심 요약 다시 생성하기", type="primary", key="btn_regen_ai_summary"):
+                with st.spinner("AI가 설교 원고에서 성경구절과 강해적 원리를 추출하여 체계적으로 요약 중입니다..."):
                     prompt = f"""
                     설교 제목: {st.session_state.sermon_title}
                     성경 본문: {st.session_state.sermon_scripture}
                     설교 전문: {st.session_state.full_sermon[:4000]}
 
-                    [설교 핵심 요약 작성]
+                    [강해적 설교 핵심 요약 작성]
                     위 설교 전문을 바탕으로 강단 선포용 핵심 요약을 100% 한국어로만 작성하세요:
-                    🎯 설교 핵심 명제 (1문장)
-                    📌 설교 3대지 핵심 요약 (제1대지, 제2대지, 제3대지별 핵심 구절과 2줄 설명)
-                    💡 성도를 위한 구체적 실천 적용 3가지
+                    🎯 설교 핵심 명제 (중심 사상 1문장)
+                    📌 강해적 3대지 핵심 요약:
+                    - 1. 제1대지명 (본문 구절 포함)
+                      • 성경적 원리 및 주해적 설명
+                    - 2. 제2대지명 (본문 구절 포함)
+                      • 성경적 원리 및 주해적 설명
+                    - 3. 제3대지명 (본문 구절 포함)
+                      • 성경적 원리 및 주해적 설명
+                    💡 성도를 위한 구체적 실천 적용 3가지 (구체적 행동 지침)
                     🙏 결단 및 축복 기도문 (2줄)
                     """
                     gen_sum = get_ai_response(prompt, is_json=False)
                     if gen_sum:
                         st.session_state.sermon_summary_text = gen_sum
                         summary_val = gen_sum
+                        
+                        if "sermon_library" in st.session_state and len(st.session_state.sermon_library) > st.session_state.current_sermon_idx:
+                            st.session_state.sermon_library[st.session_state.current_sermon_idx]["summary"] = gen_sum
+                            save_sermons_to_db(st.session_state.sermon_library)
+                        st.success("강해적 핵심 요약 생성이 완료되었습니다!")
+                        st.rerun()
 
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교요약", summary_val, "sermon_sum")
-            
             if st.session_state.get("edit_mode_sermon_sum", False):
                 s_edit = st.text_area("설교 요약 내용 편집", value=summary_val, height=380, key="edit_sum_area")
                 if st.button("💾 저장", key="save_full_sermon"):
@@ -1435,7 +1452,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     st.success("요약 내용이 저장 및 동기화되었습니다.")
                     st.rerun()
             else:
-                st.markdown(f"<div class='content-box'>{summary_val}</div>", unsafe_allow_html=True)
+                # 서식 미화 렌더링
+                formatted_summary = summary_val
+                formatted_summary = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", formatted_summary)
+                st.markdown(f"<div class='content-box'>{formatted_summary}</div>", unsafe_allow_html=True)
 
             with st.expander("📜 설교문 원고 전문 보기", expanded=False):
                 st.write(st.session_state.full_sermon)
@@ -1453,13 +1473,16 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     [소그룹 나눔지: {st.session_state.sermon_title}]
                     
                     1. 마음 열기 (아이스브레이크)
+                    - [인도자 팁 / 가이드]: (분위기를 부드럽게 만드는 인도자 멘트)
                     - (일상의 따뜻한 나눔 질문 1가지)
                     
                     2. 말씀 속으로
+                    - [인도자 팁 / 가이드]: (본문 이해를 돕는 인도자 가이드)
                     - 1. (본문 말씀 이해 질문)
                     - 2. (설교 핵심 메시지 나눔 질문)
                     
                     3. 삶 속으로
+                    - [인도자 팁 / 가이드]: (솔직한 나눔을 이끄는 리더 조언)
                     - 1. (구체적 실천 방안 질문)
                     - 2. (한 주간의 결단 질문)
                     
@@ -1480,7 +1503,8 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.success("저장되었습니다.")
                         st.rerun()
                 else:
-                    st.markdown(f"<div class='content-box'>{grp_txt}</div>", unsafe_allow_html=True)
+                    formatted_grp = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", grp_txt)
+                    st.markdown(f"<div class='content-box'>{formatted_grp}</div>", unsafe_allow_html=True)
             else:
                 st.caption("위 버튼을 눌러 소그룹 나눔지를 생성하세요.")
 
@@ -1498,11 +1522,11 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     
                     월요일부터 금요일까지 5일치 말씀 묵상지를 작성하세요:
                     각 날짜마다:
-                    - 제목:
-                    - 본문 구절:
-                    - 말씀 묵상 해설:
-                    - 삶의 적용 질문:
-                    - 오늘의 기도:
+                    - 📅 제목:
+                    - 📖 본문 구절:
+                    - 💡 말씀 묵상 해설:
+                    - 🎯 삶의 적용 질문:
+                    - 🙏 오늘의 기도:
                     """
                     res = get_ai_response(prompt, is_json=False)
                     if res:
@@ -1669,17 +1693,17 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     
                     [60초 세로 쇼츠 대본 3종: {st.session_state.sermon_title}]
                     
-                    1. 감동 및 위로형 대본
+                    1. 🎬 감동 및 위로형 대본
                     - [0~5초 후킹 멘트]:
                     - [5~45초 본론 메시지]:
                     - [45~60초 결단 및 축복]:
                     
-                    2. 질문 및 호기심 자극형 대본
+                    2. 💡 질문 및 호기심 자극형 대본
                     - [0~5초 후킹 멘트]:
                     - [5~45초 본론 메시지]:
                     - [45~60초 결단 및 축복]:
                     
-                    3. 강한 결단 선포형 대본
+                    3. 🔥 강한 결단 선포형 대본
                     - [0~5초 후킹 멘트]:
                     - [5~45초 본론 메시지]:
                     - [45~60초 결단 및 축복]:
@@ -1717,9 +1741,17 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     [가정예배 순서지 ({age_group}): {st.session_state.sermon_title}]
                     
                     1. 찬양 및 신앙고백
+                    - [인도자 팁 / 가이드]: (인도자를 위한 찬양 선곡 및 시작 멘트 안내)
+                    
                     2. 함께 읽는 성경 말씀
+                    - [인도자 팁 / 가이드]: (가족들이 교독할 때 주의할 포인트)
+                    
                     3. {age_group} 눈높이에 맞춘 3분 가족 메시지
+                    - [인도자 팁 / 가이드]: ({age_group} 자녀가 쉽게 이해할 수 있는 예화 전달 팁)
+                    
                     4. 온 가족 나눔 질문 2가지
+                    - [인도자 팁 / 가이드]: (자녀가 편안하게 대답할 수 있도록 격려하는 방법)
+                    
                     5. 가정을 축복하는 마무리 기도문
                     """
                     res = get_ai_response(prompt, is_json=False)
@@ -1736,7 +1768,8 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.success("저장되었습니다.")
                         st.rerun()
                 else:
-                    st.markdown(f"<div class='content-box'>{fam_txt}</div>", unsafe_allow_html=True)
+                    formatted_fam = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", fam_txt)
+                    st.markdown(f"<div class='content-box'>{formatted_fam}</div>", unsafe_allow_html=True)
             else:
                 st.caption(f"위 버튼을 눌러 {age_group} 맞춤 가정예배지를 생성하세요.")
 
@@ -1753,11 +1786,11 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     
                     [설교 전문 피드백 리포트: {st.session_state.sermon_title}]
                     
-                    1. 본문 주해의 정확성 및 성경 중심성 평가
+                    1. 본문 주해의 정확성 및 성경 중심성 평가 (점수 및 상세 분석)
                     2. 논리적 대지 전개 및 설교 구조 분석
                     3. 청중 공감 예화 및 삶의 적용 적절성
                     4. 스피치 전달력 및 표현 개선 제안
-                    5. 총평 및 3가지 핵심 권고사항
+                    5. 📊 종합 총평 및 3가지 핵심 권고사항
                     """
                     res = get_ai_response(prompt, is_json=False)
                     if res:
@@ -1789,11 +1822,19 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     
                     [소그룹 리더(구역장/셀리더/순장) 심화 가이드: {st.session_state.sermon_title}]
                     
-                    1. 이번 주 모임의 핵심 목표 및 주제 방향
-                    2. 본문 배경 및 신학적 핵심 해설 (리더용 심화 자료)
-                    3. 나눔 질문별 성도들의 예상 답변 및 리더 피드백 팁
-                    4. 모임 중 침묵 또는 돌발 상황 대처 요령
-                    5. 소그룹을 위한 맞춤 중보기도 제목 3가지
+                    1. 🎯 이번 주 모임의 핵심 목표 및 주제 방향
+                    - [인도자 팁 / 가이드]: (리더가 마음에 품어야 할 중심 태도)
+                    
+                    2. 📖 본문 배경 및 신학적 핵심 해설 (리더용 심화 자료)
+                    - [인도자 팁 / 가이드]: (성도들이 질문하기 쉬운 신학적 난점 대비)
+                    
+                    3. 💬 나눔 질문별 성도들의 예상 답변 및 리더 피드백 팁
+                    - [인도자 팁 / 가이드]: (대화가 한 사람에게 쏠리지 않도록 조율하는 요령)
+                    
+                    4. ⚠️ 모임 중 침묵 또는 돌발 상황 대처 요령
+                    - [인도자 팁 / 가이드]: (침묵이 길어질 때 분위기를 환기시키는 질문 팁)
+                    
+                    5. 🙏 소그룹을 위한 맞춤 중보기도 제목 3가지
                     """
                     res = get_ai_response(prompt, is_json=False)
                     if res:
@@ -1809,7 +1850,8 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.success("저장되었습니다.")
                         st.rerun()
                 else:
-                    st.markdown(f"<div class='content-box'>{ldr_txt}</div>", unsafe_allow_html=True)
+                    formatted_ldr = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", ldr_txt)
+                    st.markdown(f"<div class='content-box'>{formatted_ldr}</div>", unsafe_allow_html=True)
             else:
                 st.caption("위 버튼을 눌러 소그룹 리더가이드를 생성하세요.")
 
@@ -2078,7 +2120,10 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
         if st.button("✨ 조회수 폭발 5가지 쇼츠 제목 & 해시태그 뽑기", key="btn_gen_shorts_meta"):
             with st.spinner("제목 및 태그 분석 중..."):
                 prompt = f"설교제목: {st.session_state.sermon_title}, 요약: {st.session_state.full_sermon[:1500]}\n100% 한국어로 쇼츠 클릭률을 높이는 제목 5개와 해시태그 8개를 JSON으로 작성: {{\"titles\": [\"1.제목\", \"2.제목\", \"3.제목\", \"4.제목\", \"5.제목\"], \"hashtags\": [\"#쇼츠\", \"#은혜\"]}}"
-                st.session_state.shorts_rec = get_ai_response(prompt, is_json=True)
+                res = get_ai_response(prompt, is_json=True)
+                if res:
+                    st.session_state.shorts_rec = res
+                    st.rerun()
 
         selected_title = st.session_state.sermon_title
         if "shorts_rec" in st.session_state and st.session_state.shorts_rec:
@@ -2202,7 +2247,6 @@ elif app_mode == "📷 말씀카드 이미지":
             church_name=v_church_input
         )
         
-        # Streamlit 1.38+ 호환성 적용 (use_container_width=True)
         st.image(card_png_bytes.getvalue(), caption="1:1 정사각형 고화질 말씀카드", use_container_width=True)
         
         st.download_button(
