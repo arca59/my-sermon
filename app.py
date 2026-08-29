@@ -181,7 +181,7 @@ def get_db_sermons():
 - 성경적 원리: 하나님께서는 우리의 모든 순간을 시선을 떼지 않으시고 눈동자처럼 아끼며 지켜주십니다. 세상의 위협 속에서도 성도를 온전히 보호하십니다.
 
 2. 날개 그늘 아래의 참된 피난처 (시편 17:8b)
-- 성경적 원리: 거친 풍랑 속에서도 주의 날개 아래 피할 때 참된 안식을 누립니다. 세상의 스펙이 아닌 오직 하나님의 품만이 영원한 피난처입니다.
+- 성경적 원리: 거친 풍랑 속에서도 주의 날개 아래 피할 때 참된 안식을 누립니다. 세상의 안전지대가 아닌 오직 하나님의 품만이 영원한 피난처입니다.
 
 3. 고난 속에서도 흔들리지 않는 기도 (시편 17:6-7)
 - 성경적 원리: 절망의 자리에 머물지 않고 기도로 나아갈 때 주님께서 부르짖음에 응답하시며 영적 담대함을 회복시켜 주십니다.
@@ -437,7 +437,7 @@ def init_korean_font():
     local_f = "./NanumGothic.ttf"
     if not os.path.exists(local_f):
         try:
-            url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
+            url = "[https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf](https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf)"
             urllib.request.urlretrieve(url, local_f)
         except Exception:
             pass
@@ -453,14 +453,14 @@ PDF_FONT_NAME = init_korean_font()
 
 # --- 4. 풍경 배경 캐싱 ---
 CARD_BACKGROUNDS = [
-    "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1080&q=80",
-    "https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=1080&q=80",
-    "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1080&q=80",
-    "https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080&q=80",
-    "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1080&q=80",
-    "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1080&q=80",
-    "https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?w=1080&q=80",
-    "https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=1080&q=80"
+    "[https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1080&q=80](https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1080&q=80)",
+    "[https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=1080&q=80](https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=1080&q=80)",
+    "[https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1080&q=80](https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1080&q=80)",
+    "[https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080&q=80](https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080&q=80)",
+    "[https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1080&q=80](https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1080&q=80)",
+    "[https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1080&q=80](https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1080&q=80)",
+    "[https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?w=1080&q=80](https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?w=1080&q=80)",
+    "[https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=1080&q=80](https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=1080&q=80)"
 ]
 
 @st.cache_data(show_spinner=False, ttl=86400)
@@ -560,15 +560,15 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
     clean_input = yt_url.strip()
     vid_match = re.search(r'(?:v=|\/live\/|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})', clean_input)
     video_id = vid_match.group(1) if vid_match else None
-    clean_url = f"https://www.youtube.com/watch?v={video_id}" if video_id else clean_input
+    clean_url = f"[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=){video_id}" if video_id else clean_input
 
     download_success = False
     last_err = ""
 
     cobalt_endpoints = [
-        "https://api.cobalt.tools/api/json",
-        "https://co.wuk.sh/api/json",
-        "https://cobalt-api.koyeb.app/api/json"
+        "[https://api.cobalt.tools/api/json](https://api.cobalt.tools/api/json)",
+        "[https://co.wuk.sh/api/json](https://co.wuk.sh/api/json)",
+        "[https://cobalt-api.koyeb.app/api/json](https://cobalt-api.koyeb.app/api/json)"
     ]
     for ep in cobalt_endpoints:
         try:
@@ -909,7 +909,7 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
         "prayer": prayer_text
     }
 
-# --- 동적 10-슬라이드 구조화 PPTX 생성기 (대비 규칙 100% 반영) ---
+# --- 동적 10-슬라이드 구조화 PPTX 생성기 (색상 대비 규칙 100% 적용) ---
 def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str, full_sermon: str = "") -> io.BytesIO:
     try:
         prs = Presentation()
@@ -942,7 +942,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         app_text = parsed["app"]
         prayer_text = parsed["prayer"]
 
-        # [Slide 1: 표지 - Dark Bg -> Bright Yellow Font]
+        # [Slide 1: 표지 - DARK BG -> LIGHT FONT]
         s1 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s1, CARD_BACKGROUNDS[0])
         tb1 = s1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.8))
@@ -951,7 +951,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p1.font.size, p1.font.bold = Pt(38), True
         p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
 
-        # [Slide 2: 들어가며 - Light Bg -> Deep Navy Font]
+        # [Slide 2: 들어가며 - LIGHT BG -> DARK FONT]
         s2 = prs.slides.add_slide(blank_layout)
         set_light_slide(s2)
         tb2 = s2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -967,7 +967,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p2_body.font.size = Pt(20)
         p2_body.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 3: 설교의 흐름 - Dark Bg -> Light Font]
+        # [Slide 3: 설교의 전체 흐름 - DARK BG -> LIGHT FONT]
         s3 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s3)
         tb3_h = s3.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
@@ -989,7 +989,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             p_c.font.size, p_c.font.bold = Pt(20), True
             p_c.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 4: 본문 말씀 - Dark Overlay Bg -> Light Font]
+        # [Slide 4: 본문 핵심 성구 - DARK OVERLAY BG -> LIGHT FONT]
         s4 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s4, CARD_BACKGROUNDS[1])
         tb4 = s4.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.0))
@@ -1005,7 +1005,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p4_b.font.size = Pt(20)
         p4_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 5: 제1대지 - Light Bg -> Dark Font]
+        # [Slide 5: 제1대지 - LIGHT BG -> DARK FONT]
         s5 = prs.slides.add_slide(blank_layout)
         set_light_slide(s5)
         tb5 = s5.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1020,7 +1020,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p5_b.font.size = Pt(20)
         p5_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 6: 제2대지 - Dark Bg -> Light Font]
+        # [Slide 6: 제2대지 - DARK BG -> LIGHT FONT]
         s6 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s6)
         tb6 = s6.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1035,7 +1035,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p6_b.font.size = Pt(20)
         p6_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 7: 제3대지 - Light Bg -> Dark Font]
+        # [Slide 7: 제3대지 - LIGHT BG -> DARK FONT]
         s7 = prs.slides.add_slide(blank_layout)
         set_light_slide(s7)
         tb7 = s7.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1050,7 +1050,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p7_b.font.size = Pt(20)
         p7_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 8: 핵심 메시지 - Dark Bg -> Light Font]
+        # [Slide 8: 핵심 메시지 - DARK BG -> LIGHT FONT]
         s8 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s8, CARD_BACKGROUNDS[2])
         tb8 = s8.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(11.33), Inches(5.5))
@@ -1065,7 +1065,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p8_b.font.size = Pt(20)
         p8_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 9: 삶의 적용 - Light Bg -> Dark Font]
+        # [Slide 9: 삶의 적용 - LIGHT BG -> DARK FONT]
         s9 = prs.slides.add_slide(blank_layout)
         set_light_slide(s9)
         tb9 = s9.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1080,7 +1080,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p9_b.font.size = Pt(19)
         p9_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 10: 결단 및 기도 - Dark Bg -> Light Font]
+        # [Slide 10: 결단 및 기도 - DARK BG -> LIGHT FONT]
         s10 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s10, CARD_BACKGROUNDS[0])
         tb10 = s10.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.2))
@@ -1419,7 +1419,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
     with right_panel:
         active_view = st.session_state.dash_active_view
 
-        # 1. 설교 요약 (강해적 3대지 원리 추출 및 실시간 DB 동기화)
+        # 1. 설교 요약
         if active_view == "설교 요약":
             summary_val = st.session_state.get("sermon_summary_text", "")
             if not summary_val:
@@ -2066,7 +2066,7 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
         st.markdown("#### 📺 유튜브 예배/설교 영상에서 세로 숏츠 자동 추출")
         st.caption("유튜브 영상 링크를 입력하고 원하는 시작 시간과 길이를 설정하면 9:16 고화질 숏츠를 즉시 추출합니다.")
         
-        yt_url_input = st.text_input("유튜브 영상 링크 (URL)", placeholder="https://www.youtube.com/watch?v=... 또는 https://youtu.be/...", key="yt_url_input")
+        yt_url_input = st.text_input("유튜브 영상 링크 (URL)", placeholder="[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=)... 또는 [https://youtu.be/](https://youtu.be/)...", key="yt_url_input")
         
         yt_c1, yt_c2, yt_c3 = st.columns(3)
         with yt_c1:
@@ -2120,9 +2120,9 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
     with tab_ai_compose:
         st.markdown("#### 🌐 무료 미디어/BGM 소스 바로가기")
         src_c1, src_c2, src_c3 = st.columns(3)
-        with src_c1: st.link_button("🎥 픽사베이 (Pixabay 무료 영상)", "https://pixabay.com/ko/videos/")
-        with src_c2: st.link_button("📸 펙셀스 (Pexels 무료 비디오)", "https://www.pexels.com/ko-kr/videos/")
-        with src_c3: st.link_button("🎵 픽사베이 무료 음악(BGM)", "https://pixabay.com/ko/music/")
+        with src_c1: st.link_button("🎥 픽사베이 (Pixabay 무료 영상)", "[https://pixabay.com/ko/videos/](https://pixabay.com/ko/videos/)")
+        with src_c2: st.link_button("📸 펙셀스 (Pexels 무료 비디오)", "[https://www.pexels.com/ko-kr/videos/](https://www.pexels.com/ko-kr/videos/)")
+        with src_c3: st.link_button("🎵 픽사베이 무료 음악(BGM)", "[https://pixabay.com/ko/music/](https://pixabay.com/ko/music/)")
 
         st.write("---")
         st.markdown("#### 💡 확 끌리는 5가지 쇼츠 제목 & #해시태그 추천")
@@ -2388,7 +2388,3 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
                         st.session_state.sermon_library = updated_lib
                         st.success("설교가 서재에서 안전하게 삭제되었습니다.")
                         st.rerun()
-
-```eof
-
-GitHub 저장소의 `app.py` 파일을 위 코드로 업데이트하시면 오류 없이 모든 생성 기능과 향상된 PPT 디자인을 바로 사용하실 수 있습니다!
