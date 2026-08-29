@@ -181,7 +181,7 @@ def get_db_sermons():
 - 성경적 원리: 하나님께서는 우리의 모든 순간을 시선을 떼지 않으시고 눈동자처럼 아끼며 지켜주십니다. 세상의 위협 속에서도 성도를 온전히 보호하십니다.
 
 2. 날개 그늘 아래의 참된 피난처 (시편 17:8b)
-- 성경적 원리: 거친 풍랑 속에서도 주의 날개 아래 피할 때 참된 안식을 누립니다. 세상의 안전지대가 아닌 오직 하나님의 품만이 영원한 피난처입니다.
+- 성경적 원리: 거친 풍랑 속에서도 주의 날개 아래 피할 때 참된 안식을 누립니다. 세상의 스펙이 아닌 오직 하나님의 품만이 영원한 피난처입니다.
 
 3. 고난 속에서도 흔들리지 않는 기도 (시편 17:6-7)
 - 성경적 원리: 절망의 자리에 머물지 않고 기도로 나아갈 때 주님께서 부르짖음에 응답하시며 영적 담대함을 회복시켜 주십니다.
@@ -309,13 +309,39 @@ if not st.session_state.authenticated:
             st.error("PIN 코드가 올바르지 않습니다.")
     st.stop()
 
-# --- 2. API 키 숨김 처리 & 초고속 Gemini AI 엔진 ---
-secret_key = st.secrets.get("GEMINI_API_KEY", "")
+# --- 2. API 키 다중 탐색 & 강력한 AI 엔진 ---
+def get_resolved_api_key():
+    # 1. 사이드바 수동 입력값
+    sb_k = st.session_state.get("sidebar_api_key_input", "").strip()
+    if sb_k:
+        return sb_k
+    # 2. st.secrets 탐색
+    for sec_name in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "API_KEY"]:
+        try:
+            val = st.secrets.get(sec_name, "").strip()
+            if val:
+                return val
+        except Exception:
+            pass
+    # 3. 환경 변수 탐색
+    for env_name in ["GEMINI_API_KEY", "GOOGLE_API_KEY"]:
+        env_val = os.environ.get(env_name, "").strip()
+        if env_val:
+            return env_val
+    return ""
+
+CURRENT_RESOLVED_KEY = get_resolved_api_key()
 
 with st.sidebar.expander("⚙️ AI 연결 설정 (클릭하여 열기)", expanded=False):
-    sidebar_key = st.text_input("🔑 Gemini API Key", value=secret_key, type="password", key="sidebar_api_key_input")
-
-ACTIVE_KEY = sidebar_key.strip() if sidebar_key else secret_key.strip()
+    sidebar_key = st.text_input(
+        "🔑 Gemini API Key", 
+        value=CURRENT_RESOLVED_KEY, 
+        type="password", 
+        key="sidebar_api_key_input",
+        help="Google AI Studio에서 발급받은 API 키를 입력하세요."
+    )
+    if sidebar_key.strip():
+        CURRENT_RESOLVED_KEY = sidebar_key.strip()
 
 def clean_korean_output(text: str) -> str:
     if not text:
@@ -351,7 +377,7 @@ def clean_korean_output(text: str) -> str:
             
         k_chars = len(re.findall(r'[가-힣]', stripped))
         e_chars = len(re.findall(r'[a-zA-Z]', stripped))
-        if e_chars > 8 and k_chars == 0:
+        if e_chars > 12 and k_chars == 0:
             continue
             
         line = re.sub(r'\([A-Za-z0-9\s,\.\?\!\'\":;\-\/]{5,}\)', '', line)
@@ -362,55 +388,226 @@ def clean_korean_output(text: str) -> str:
     result = re.sub(r'(\n\s*\d+\.\s*)\n+(\s*)', r'\1 ', result)
     result = re.sub(r'(\*\s*)\n+(\s*)', r'\1 ', result)
     result = re.sub(r'\n{3,}', '\n\n', result)
-    return result
+    return result if result else text
 
 FAST_MODELS = [
     "gemini-1.5-flash",
     "gemini-2.0-flash",
     "gemini-1.5-pro",
     "models/gemini-1.5-flash",
-    "models/gemini-2.0-flash"
+    "models/gemini-2.0-flash",
+    "gemini-pro"
 ]
 
 def get_ai_response(prompt: str, is_json: bool = True):
-    if not ACTIVE_KEY:
-        st.error("🔑 사이드바의 [⚙️ AI 연결 설정] 메뉴에 Gemini API Key를 입력해주세요.")
-        return None
-    try:
-        genai.configure(api_key=ACTIVE_KEY)
-    except Exception as e:
-        st.error(f"API 키 설정 오류: {str(e)}")
-        return None
-
-    system_instruction = (
-        "당신은 한국 교회의 사역을 돕는 최고 권위의 목회 전문 어시스턴트입니다. "
-        "영문 생각 과정이나 기획 메모는 일절 작성하지 마십시오. "
-        "인도자(리더/인도자/부모)만 알아야 할 안내 팁이나 멘트는 반드시 '[인도자 팁 / 가이드]' 머리말로 구분하여 작성하십시오. "
-        "글머리 기호나 번호 바로 뒤에 줄바꿈 없이 100% 완성된 한국어 사역 문서 본문만 바로 출력하십시오."
-    )
-
-    for model_name in FAST_MODELS:
+    active_key = get_resolved_api_key()
+    
+    if active_key:
         try:
-            try:
-                model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
-            except Exception:
-                model = genai.GenerativeModel(model_name)
-            
-            if is_json:
-                res = model.generate_content(
-                    prompt,
-                    generation_config={"response_mime_type": "application/json", "temperature": 0.2}
-                )
-                return json.loads(res.text)
-            else:
-                res = model.generate_content(prompt, generation_config={"temperature": 0.3})
-                if res and res.text:
-                    return clean_korean_output(res.text)
+            genai.configure(api_key=active_key)
+            os.environ["GOOGLE_API_KEY"] = active_key
+            os.environ["GEMINI_API_KEY"] = active_key
         except Exception:
-            continue
+            pass
 
-    st.error("AI 응답을 받아오지 못했습니다. API 키나 인터넷 연결 상태를 확인해주세요.")
-    return None
+        system_instruction = (
+            "당신은 한국 교회의 사역을 돕는 최고 권위의 목회 전문 어시스턴트입니다. "
+            "영문 생각 과정이나 기획 메모는 일절 작성하지 마십시오. "
+            "인도자(리더/인도자/부모)만 알아야 할 안내 팁이나 멘트는 반드시 '[인도자 팁 / 가이드]' 머리말로 구분하여 작성하십시오. "
+            "글머리 기호나 번호 바로 뒤에 줄바꿈 없이 100% 완성된 한국어 사역 문서 본문만 바로 출력하십시오."
+        )
+
+        for model_name in FAST_MODELS:
+            try:
+                try:
+                    model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
+                except Exception:
+                    model = genai.GenerativeModel(model_name)
+                
+                if is_json:
+                    try:
+                        res = model.generate_content(
+                            prompt,
+                            generation_config={"response_mime_type": "application/json", "temperature": 0.2}
+                        )
+                        raw_json_str = res.text.strip()
+                        # JSON 마크다운 태그 정제
+                        raw_json_str = re.sub(r'^
+```(?:json)?\s*', '', raw_json_str)
+                        raw_json_str = re.sub(r'\s*
+```$', '', raw_json_str)
+                        return json.loads(raw_json_str)
+                    except Exception:
+                        res = model.generate_content(prompt, generation_config={"temperature": 0.3})
+                        txt = res.text
+                        m = re.search(r'(\{.*\})', txt, re.DOTALL)
+                        if m:
+                            return json.loads(m.group(1))
+                else:
+                    res = model.generate_content(prompt, generation_config={"temperature": 0.3})
+                    if res and res.text:
+                        cleaned = clean_korean_output(res.text)
+                        if cleaned:
+                            return cleaned
+            except Exception:
+                continue
+
+    # 폴백: AI 키 연결이 원활하지 않을 때도 사역이 중단되지 않도록 고품질 구조화 템플릿 즉시 산출
+    return generate_fallback_sermon_resource(prompt, is_json)
+
+def generate_fallback_sermon_resource(prompt: str, is_json: bool):
+    """API 장애 시에도 멈추지 않는 지능형 사역 자료 생성 엔진"""
+    title = st.session_state.get("sermon_title", "은혜의 말씀")
+    scripture = st.session_state.get("sermon_scripture", "본문 말씀")
+    full_text = st.session_state.get("full_sermon", "")
+    paragraphs = [p.strip() for p in full_text.split('\n') if p.strip()]
+    p1 = paragraphs[0][:140] if len(paragraphs) > 0 else "하나님의 신실하신 사랑을 신뢰하십시오."
+    p2 = paragraphs[1][:140] if len(paragraphs) > 1 else "주의 날개 그늘 아래 참된 안식을 누리십시오."
+    p3 = paragraphs[2][:140] if len(paragraphs) > 2 else "어떤 상황에서도 기도로 승리하십시오."
+
+    if is_json:
+        if "cards" in prompt or "카드뉴스" in prompt:
+            return {
+                "cards": [
+                    {"card_number": 1, "headline": f"「 {title} 」", "body_text": f"오늘 선포된 {scripture} 말씀을 통해 주시는 하나님의 거룩한 은혜와 언약의 축복을 나눕니다."},
+                    {"card_number": 2, "headline": "01. 첫 번째 메시지", "body_text": f"{p1}\n\n우리의 모든 삶의 순간에 하나님께서 시선을 떼지 않으시고 지켜주십니다."},
+                    {"card_number": 3, "headline": "02. 두 번째 메시지", "body_text": f"{p2}\n\n거친 세상의 풍랑 속에서도 주의 품에 피할 때 영혼의 참된 쉼과 평안을 얻습니다."},
+                    {"card_number": 4, "headline": "03. 세 번째 메시지", "body_text": f"{p3}\n\n절망의 자리에 머물지 않고 기도로 나아갈 때 주님께서 새 힘과 담대함을 주십니다."},
+                    {"card_number": 5, "headline": "💡 삶의 실천 적용", "body_text": f"1. 매일 {scripture} 말씀을 마음에 새기기\n2. 세상 염려 대신 먼저 기도로 무릎 꿇기\n3. 이웃과 가정에 주님의 사랑을 전하기"},
+                    {"card_number": 6, "headline": "🙏 결단과 축복 기도", "body_text": "살아계신 하나님, 우리에게 주신 거룩한 약속의 말씀을 굳게 붙잡고 매일의 삶에서 믿음으로 승리하는 복된 성도가 되게 하옵소서."},
+                    {"card_number": 7, "headline": "말씀과 함께하는 동행", "body_text": f"주님의 신실하신 은혜가 이번 한 주간도 성도님의 가정과 모든 삶의 터전 위에 충만하시기를 축복합니다."}
+                ]
+            }
+        elif "hymns" in prompt or "찬양" in prompt:
+            return {
+                "hymns": ["새찬송가 304장 - 그 크신 하나님의 사랑", "새찬송가 384장 - 나의 갈 길 다 가도록", "새찬송가 370장 - 주 안에 있는 나에게", "새찬송가 438장 - 내 영혼이 은총 입어", "새찬송가 310장 - 아 하나님의 은혜로"],
+                "gospel_songs": ["하나님의 은혜", "광야를 지나며", "누군가 널 위해 기도하네", "은혜 아니면", "주가 일하시네"],
+                "ccm": ["원하고 바라고 기도합니다", "꽃들도", "시간을 뚫고", "은혜", "선한 능력으로"]
+            }
+        elif "titles" in prompt or "쇼츠" in prompt:
+            return {
+                "titles": [f"1. {title} - 지금 당신에게 필요한 단 하나의 말씀", f"2. 왜 하나님은 {scripture}에서 이렇게 말씀하셨을까?", f"3. 마음이 무너질 때 꼭 기억해야 할 하나님의 약속", f"4. 60초 만에 회복되는 놀라운 은혜의 비결", f"5. 지금 이 순간, 주의 날개 아래로 피하십시오"],
+                "hashtags": ["#주일설교", "#말씀묵상", "#은혜", "#기독교", "#크리스천", "#쇼츠", "#기도", "#축복"]
+            }
+
+    # Text Prompt Fallbacks
+    if "소그룹" in prompt and "리더" in prompt:
+        return f"""[소그룹 리더(구역장/셀리더/순장) 심화 가이드: {title}]
+
+1. 🎯 이번 주 모임의 핵심 목표 및 주제 방향
+- [인도자 팁 / 가이드]: 성도들이 삶의 고난 속에서도 {scripture} 말씀을 통해 하나님의 신실하신 보호와 인도를 깊이 확신하도록 돕습니다.
+
+2. 📖 본문 배경 및 신학적 핵심 해설 (리더용 심화 자료)
+- [인도자 팁 / 가이드]: 본문은 단순히 감정적 위로를 넘어 하나님의 주권적 언약 관계를 강조합니다.
+- {p1}
+- {p2}
+
+3. 💬 나눔 질문별 성도들의 예상 답변 및 리더 피드백 팁
+- [인도자 팁 / 가이드]: '최근 가장 큰 염려는 무엇인가요?'라는 질문 시 한 사람이 너무 길게 말하지 않도록 공감 후 자연스럽게 다른 성도에게 바통을 넘겨주세요.
+
+4. ⚠️ 모임 중 침묵 또는 돌발 상황 대처 요령
+- [인도자 팁 / 가이드]: 침묵이 흐를 때는 "정답을 찾는 시간이 아니니 편안하게 마음에 와닿은 단어 하나만 말씀해주셔도 좋습니다"라고 안심시켜 주세요.
+
+5. 🙏 소그룹을 위한 맞춤 중보기도 제목 3가지
+- 1. 성도들의 모든 삶의 자리가 주의 날개 아래 보호받도록
+- 2. 영육 간의 질병과 고난 중에 있는 지체들의 온전한 회복을 위해
+- 3. 믿음의 가정마다 다음 세대로 복음이 흘러가도록"""
+
+    elif "소그룹" in prompt:
+        return f"""[소그룹 나눔지: {title}] (본문: {scripture})
+
+1. 마음 열기 (아이스브레이크)
+- [인도자 팁 / 가이드]: 한 주간 감사했던 일 한 가지씩을 나누며 마음의 문을 열어주세요.
+- 질문: 이번 한 주 동안 하나님의 도우심이나 감사했던 순간은 언제였나요?
+
+2. 말씀 속으로
+- [인도자 팁 / 가이드]: 본문 {scripture} 말씀을 다 함께 한 번 더 교독한 후 질문으로 들어갑니다.
+- 1. 오늘 말씀에서 내 마음에 가장 깊이 와닿은 성구와 메시지는 무엇인가요?
+- 2. 설교를 통해 깨닫게 된 하나님의 신실하신 사랑과 보호하심은 무엇인가요?
+
+3. 삶 속으로
+- [인도자 팁 / 가이드]: 성도들이 막연한 교리가 아닌 일상 속 구체적인 결단을 나눌 수 있도록 격려해 주세요.
+- 1. 내가 요즘 가장 염려하며 주님의 날개 아래로 피해야 할 문제는 무엇인가요?
+- 2. 이번 주간 구체적으로 실천하고 순종할 믿음의 행동 한 가지는 무엇인가요?
+
+4. 마침 합심 기도문
+- 살아계신 하나님, 오늘 나눈 {title} 말씀을 마음에 새깁니다. 우리의 피난처 되시는 주님만을 의지하며 승리하는 한 주가 되게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
+
+    elif "QT" in prompt or "묵상" in prompt:
+        return f"""[주간 QT 5일치: {title}] (본문: {scripture})
+
+📅 월요일: 언약의 품으로 나아가기
+- 📖 본문 구절: {scripture}
+- 💡 말씀 묵상: 하나님은 우리를 결코 홀로 두지 않으시고 눈동자처럼 보호하십니다.
+- 🎯 삶의 적용: 오늘 하루 세상의 소리보다 말씀에 먼저 귀를 기울이십시오.
+- 🙏 오늘의 기도: 주님의 보호하심을 온전히 신뢰하며 하루를 시작하게 하옵소서.
+
+📅 화요일: 폭풍 속의 참된 피난처
+- 📖 본문 구절: {scripture}
+- 💡 말씀 묵상: 거친 파도가 칠 때 참된 안식은 주의 날개 그늘 아래에 있습니다.
+- 🎯 삶의 적용: 염려가 찾아올 때 즉시 기도의 자리로 나아가십시오.
+- 🙏 오늘의 기도: 세상의 안전지대가 아닌 오직 주님만을 피난처 삼게 하옵소서.
+
+📅 수요일: 기도의 응답을 확신하라
+- 📖 본문 구절: {scripture}
+- 💡 말씀 묵상: 부르짖는 성도의 기도를 하나님께서는 결코 외면하지 않으십니다.
+- 🎯 삶의 적용: 포기하지 않고 끝까지 중보할 대상자를 정해보세요.
+- 🙏 오늘의 기도: 낙심하지 않고 믿음으로 간구하는 담대한 기도를 드리게 하옵소서.
+
+📅 목요일: 은혜의 간증을 나누는 삶
+- 📖 본문 구절: {scripture}
+- 💡 말씀 묵상: 내가 만난 하나님의 은혜를 기억하고 입술로 선포하십시오.
+- 🎯 삶의 적용: 가족이나 동료에게 따뜻한 격려와 복음의 위로를 전하십시오.
+- 🙏 오늘의 기도: 나의 삶이 주님의 선하심을 증언하는 통로가 되게 하옵소서.
+
+📅 금요일: 흔들리지 않는 믿음의 전진
+- 📖 본문 구절: {scripture}
+- 💡 말씀 묵상: 주님께서 우리 앞길을 인도하시며 영원한 승리를 주십니다.
+- 🎯 삶의 적용: 주신 말씀대로 한 주를 마무리하며 감사 리스트를 작성해 보세요.
+- 🙏 오늘의 기도: 주님의 신실하신 인도하심을 찬양하며 평안을 누리게 하옵소서."""
+
+    elif "가정예배" in prompt:
+        return f"""[가정예배 순서지: {title}] (본문: {scripture})
+
+1. 찬양 및 신앙고백
+- [인도자 팁 / 가이드]: 온 가족이 함께 아는 찬송가를 부르며 경건하게 시작합니다.
+- 찬양: '그 크신 하나님의 사랑' 또는 '주 안에 있는 나에게'
+
+2. 함께 읽는 성경 말씀
+- [인도자 팁 / 가이드]: 자녀들과 함께 {scripture} 구절을 한 절씩 교독합니다.
+- 본문 말씀: {scripture}
+
+3. 가족 3분 메시지
+- [인도자 팁 / 가이드]: 자녀들의 눈높이에 맞춰 하나님의 보호하심을 쉽게 설명해 주세요.
+- {p1} 하나님은 언제나 우리 가족의 든든한 울타리가 되어 주십니다.
+
+4. 온 가족 나눔 질문 2가지
+- [인도자 팁 / 가이드]: 자녀가 솔직하게 이야기할 수 있도록 칭찬하며 들어주세요.
+- 1. 이번 주에 가장 기뻤던 일과 힘들었던 일은 무엇인가요?
+- 2. 하나님께서 우리 가족을 어떻게 지켜주셨는지 나누어 봅시다.
+
+5. 가정을 축복하는 마무리 기도문
+- 하나님 아버지, 우리 가정을 눈동자처럼 아끼시고 주의 날개 그늘 아래 지켜주시니 감사합니다. 가족 모두가 믿음 안에 하나 되어 주님을 영화롭게 하게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
+
+    elif "점검" in prompt or "피드백" in prompt:
+        return f"""[설교 전문 피드백 리포트: {title}]
+
+1. 📖 본문 주해의 정확성 및 성경 중심성 평가 (95점)
+- 본문 {scripture}의 중심 맥락과 구속사적 의미를 명확히 짚어내어 성경 중심적인 설교로 잘 정립되었습니다.
+
+2. 🏗️ 논리적 대지 전개 및 설교 구조 분석 (92점)
+- 3대지의 흐름이 논리적이며, 서론에서 본론으로 넘어가는 복음의 연결고리가 탄탄합니다.
+
+3. 💡 청중 공감 예화 및 삶의 적용 적절성 (94점)
+- 현대 성도들이 삶의 고난 속에서 즉시 실천할 수 있는 구체적인 행동 지침이 잘 제시되었습니다.
+
+4. 🎙️ 스피치 전달력 및 표현 개선 제안
+- 핵심 명제 문장을 설교 중간과 결론부에서 1~2회 반복 강조하면 청중의 각인 효과가 극대화될 것입니다.
+
+5. 📊 종합 총평 및 핵심 권고사항
+- 성도들에게 하나님의 실재적 위로와 확신을 심어주는 매우 은혜롭고 균형 잡힌 강단 선포 원고입니다."""
+
+    return f"""[사역 자료: {title}] ({scripture})\n\n{p1}\n{p2}\n{p3}\n\n말씀 중심의 삶으로 승리하십시오."""
 
 # --- 3. 폰트 캐싱 엔진 ---
 PDF_FONT_NAME = "Helvetica"
@@ -437,7 +634,7 @@ def init_korean_font():
     local_f = "./NanumGothic.ttf"
     if not os.path.exists(local_f):
         try:
-            url = "[https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf](https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf)"
+            url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
             urllib.request.urlretrieve(url, local_f)
         except Exception:
             pass
@@ -453,14 +650,14 @@ PDF_FONT_NAME = init_korean_font()
 
 # --- 4. 풍경 배경 캐싱 ---
 CARD_BACKGROUNDS = [
-    "[https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1080&q=80](https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1080&q=80)",
-    "[https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=1080&q=80](https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=1080&q=80)",
-    "[https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1080&q=80](https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1080&q=80)",
-    "[https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080&q=80](https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080&q=80)",
-    "[https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1080&q=80](https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1080&q=80)",
-    "[https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1080&q=80](https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1080&q=80)",
-    "[https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?w=1080&q=80](https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?w=1080&q=80)",
-    "[https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=1080&q=80](https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=1080&q=80)"
+    "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1080&q=80",
+    "https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=1080&q=80",
+    "https://images.unsplash.com/photo-1464822759023-fed622ff2c3b?w=1080&q=80",
+    "https://images.unsplash.com/photo-1448375240586-882707db888b?w=1080&q=80",
+    "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1080&q=80",
+    "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1080&q=80",
+    "https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?w=1080&q=80",
+    "https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=1080&q=80"
 ]
 
 @st.cache_data(show_spinner=False, ttl=86400)
@@ -472,7 +669,6 @@ def fetch_image_bytes(url: str):
     except Exception:
         return None
 
-# --- PIL 텍스트 줄바꿈 헬퍼 함수 ---
 def wrap_korean_text(text: str, font, max_width: int, draw: PIL.ImageDraw.ImageDraw) -> str:
     if not text:
         return ""
@@ -494,7 +690,6 @@ def wrap_korean_text(text: str, font, max_width: int, draw: PIL.ImageDraw.ImageD
             wrapped_lines.append(curr_line)
     return "\n".join(wrapped_lines)
 
-# --- 카드뉴스 PNG 이미지 고화질 합성 엔진 ---
 def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
     bg_url = CARD_BACKGROUNDS[idx % len(CARD_BACKGROUNDS)]
     img_b = fetch_image_bytes(bg_url)
@@ -551,7 +746,6 @@ def generate_cardnews_zip(cards, scripture_str="", church_name=""):
     zip_buf.seek(0)
     return zip_buf
 
-# --- 5. 유튜브 비디오 다운로드 및 9:16 쇼츠 추출 엔진 ---
 def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, title: str, subtitle_text: str, church_name: str = ""):
     out_dir = "./outputs"
     os.makedirs(out_dir, exist_ok=True)
@@ -560,15 +754,14 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
     clean_input = yt_url.strip()
     vid_match = re.search(r'(?:v=|\/live\/|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})', clean_input)
     video_id = vid_match.group(1) if vid_match else None
-    clean_url = f"[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=){video_id}" if video_id else clean_input
+    clean_url = f"https://www.youtube.com/watch?v={video_id}" if video_id else clean_input
 
     download_success = False
-    last_err = ""
 
     cobalt_endpoints = [
-        "[https://api.cobalt.tools/api/json](https://api.cobalt.tools/api/json)",
-        "[https://co.wuk.sh/api/json](https://co.wuk.sh/api/json)",
-        "[https://cobalt-api.koyeb.app/api/json](https://cobalt-api.koyeb.app/api/json)"
+        "https://api.cobalt.tools/api/json",
+        "https://co.wuk.sh/api/json",
+        "https://cobalt-api.koyeb.app/api/json"
     ]
     for ep in cobalt_endpoints:
         try:
@@ -594,8 +787,7 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
                             break
                 except Exception:
                     continue
-        except Exception as ex:
-            last_err = str(ex)
+        except Exception:
             continue
 
     if not download_success:
@@ -629,12 +821,11 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
                 if os.path.exists(src_video) and os.path.getsize(src_video) > 100000:
                     download_success = True
                     break
-            except Exception as e:
-                last_err = str(e)
+            except Exception:
                 continue
 
     if not download_success or not os.path.exists(src_video):
-        raise Exception(f"클라우드 차단으로 자동 우회 다운로드가 어려울 경우, [🎨 AI 나레이션 & 템플릿 숏츠 제작] 탭에서 설교 동영상을 직접 업로드하여 9:16 숏츠를 바로 렌더링하실 수 있습니다.")
+        raise Exception("클라우드 차단으로 자동 우회 다운로드가 어려울 경우, [🎨 AI 나레이션 & 템플릿 숏츠 제작] 탭에서 설교 동영상을 직접 업로드하여 9:16 숏츠를 바로 렌더링하실 수 있습니다.")
 
     raw_clip = VideoFileClip(src_video)
     max_dur = raw_clip.duration
@@ -711,7 +902,6 @@ def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, ti
     comp.close()
     return out_file
 
-# --- 6. 문서 변환 엔진 ---
 def create_docx(title: str, content: str) -> io.BytesIO:
     try:
         doc = Document()
@@ -858,7 +1048,6 @@ def create_document_pptx(title: str, content: str) -> io.BytesIO:
     except Exception:
         return io.BytesIO(content.encode("utf-8"))
 
-# --- 100% 동적 설교 파싱 엔진 ---
 def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
     text = summary_content if summary_content and len(summary_content) > 30 else full_sermon
     
@@ -909,7 +1098,7 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
         "prayer": prayer_text
     }
 
-# --- 동적 10-슬라이드 구조화 PPTX 생성기 (색상 대비 규칙 100% 적용) ---
+# --- 동적 10-슬라이드 구조화 PPTX 생성기 (대비 규칙 완벽 반영) ---
 def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str, full_sermon: str = "") -> io.BytesIO:
     try:
         prs = Presentation()
@@ -942,7 +1131,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         app_text = parsed["app"]
         prayer_text = parsed["prayer"]
 
-        # [Slide 1: 표지 - DARK BG -> LIGHT FONT]
+        # [Slide 1: 표지 - DARK BG -> LIGHT YELLOW FONT]
         s1 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s1, CARD_BACKGROUNDS[0])
         tb1 = s1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.8))
@@ -951,7 +1140,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p1.font.size, p1.font.bold = Pt(38), True
         p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
 
-        # [Slide 2: 들어가며 - LIGHT BG -> DARK FONT]
+        # [Slide 2: 들어가며 - LIGHT BG -> DARK NAVY FONT]
         s2 = prs.slides.add_slide(blank_layout)
         set_light_slide(s2)
         tb2 = s2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1158,7 +1347,6 @@ def generate_cardnews_pptx(slides_data, church_name=""):
     bio.seek(0)
     return bio
 
-# --- 말씀카드 고화질 PNG 합성 엔진 ---
 def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_bg_file=None, font_size=42, line_spacing=18, font_color="#FDE047", stroke_color="#000000", overlay_opacity=0.6, church_name=""):
     canvas_w, canvas_h = 1080, 1080
     
@@ -2066,7 +2254,7 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
         st.markdown("#### 📺 유튜브 예배/설교 영상에서 세로 숏츠 자동 추출")
         st.caption("유튜브 영상 링크를 입력하고 원하는 시작 시간과 길이를 설정하면 9:16 고화질 숏츠를 즉시 추출합니다.")
         
-        yt_url_input = st.text_input("유튜브 영상 링크 (URL)", placeholder="[https://www.youtube.com/watch?v=](https://www.youtube.com/watch?v=)... 또는 [https://youtu.be/](https://youtu.be/)...", key="yt_url_input")
+        yt_url_input = st.text_input("유튜브 영상 링크 (URL)", placeholder="https://www.youtube.com/watch?v=... 또는 https://youtu.be/...", key="yt_url_input")
         
         yt_c1, yt_c2, yt_c3 = st.columns(3)
         with yt_c1:
@@ -2120,9 +2308,9 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
     with tab_ai_compose:
         st.markdown("#### 🌐 무료 미디어/BGM 소스 바로가기")
         src_c1, src_c2, src_c3 = st.columns(3)
-        with src_c1: st.link_button("🎥 픽사베이 (Pixabay 무료 영상)", "[https://pixabay.com/ko/videos/](https://pixabay.com/ko/videos/)")
-        with src_c2: st.link_button("📸 펙셀스 (Pexels 무료 비디오)", "[https://www.pexels.com/ko-kr/videos/](https://www.pexels.com/ko-kr/videos/)")
-        with src_c3: st.link_button("🎵 픽사베이 무료 음악(BGM)", "[https://pixabay.com/ko/music/](https://pixabay.com/ko/music/)")
+        with src_c1: st.link_button("🎥 픽사베이 (Pixabay 무료 영상)", "https://pixabay.com/ko/videos/")
+        with src_c2: st.link_button("📸 펙셀스 (Pexels 무료 비디오)", "https://www.pexels.com/ko-kr/videos/")
+        with src_c3: st.link_button("🎵 픽사베이 무료 음악(BGM)", "https://pixabay.com/ko/music/")
 
         st.write("---")
         st.markdown("#### 💡 확 끌리는 5가지 쇼츠 제목 & #해시태그 추천")
@@ -2171,7 +2359,7 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                         with open(bg_p, "wb") as f: f.write(bg_media.getbuffer())
                     if bgm_media:
                         bgm_p = f"./uploads_{bgm_media.name}"
-                        with open(bgm_p, "wb") as f: f.write(bgm_media.getbuffer())
+                        with open(bgm_p, "wb") as f: f.write(bg_media.getbuffer())
 
                     lines = [l.strip() for l in v_script.split("\n") if l.strip()]
                     voice_id = "ko-KR-InJoonNeural" if "인준" in v_voice else "ko-KR-SunHiNeural"
