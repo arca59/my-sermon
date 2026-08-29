@@ -66,11 +66,30 @@ try:
 except Exception:
     HAS_YTDLP = False
 
+# moviepy 1.x 는 최신 파이썬에서 설치가 실패하므로 2.x 를 우선 사용하고,
+# 1.x 스타일 메서드 이름(set_position / subclip / resize / crop ...)은 별칭으로 되살린다.
+HAS_MOVIEPY = False
 try:
-    from moviepy.editor import VideoFileClip, ColorClip, CompositeVideoClip
+    from moviepy import VideoFileClip, ColorClip, CompositeVideoClip   # moviepy 2.x
     HAS_MOVIEPY = True
 except Exception:
-    HAS_MOVIEPY = False
+    try:
+        from moviepy.editor import VideoFileClip, ColorClip, CompositeVideoClip   # moviepy 1.x
+        HAS_MOVIEPY = True
+    except Exception:
+        HAS_MOVIEPY = False
+
+if HAS_MOVIEPY:
+    for _cls in (VideoFileClip, ColorClip, CompositeVideoClip):
+        for _old, _new in (("set_position", "with_position"), ("set_duration", "with_duration"),
+                           ("set_start", "with_start"), ("set_opacity", "with_opacity"),
+                           ("set_audio", "with_audio"), ("subclip", "subclipped"),
+                           ("resize", "resized"), ("crop", "cropped")):
+            if not hasattr(_cls, _old) and hasattr(_cls, _new):
+                try:
+                    setattr(_cls, _old, getattr(_cls, _new))
+                except Exception:
+                    pass
 
 try:
     from video_engine import create_animated_video, create_pil_text_clip
@@ -667,7 +686,16 @@ def load_sermon_to_workspace(sermon_item, idx=0):
 # ==============================================================================
 # 보안 접속
 # ==============================================================================
-USER_PIN = st.secrets.get("APP_PIN", "7777") if hasattr(st, "secrets") else "7777"
+def _get_secret(name: str, default: str = "") -> str:
+    """secrets.toml 이 아예 없는 환경에서도 죽지 않도록 감싼다."""
+    try:
+        v = st.secrets.get(name, default)
+        return str(v) if v is not None else default
+    except Exception:
+        return default
+
+
+USER_PIN = _get_secret("APP_PIN", "7777") or "7777"
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
