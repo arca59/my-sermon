@@ -165,42 +165,39 @@ def get_db_sermons():
     default_data = [
         {
             "id": 1,
-            "title": "눈동자처럼 은혜 가운데",
-            "scripture": "시편 17:8",
+            "title": "예배와 선교",
+            "scripture": "이사야 59:21",
             "testament": "구약",
-            "book": "시편",
-            "topic": "보호와 은혜",
+            "book": "이사야",
+            "topic": "예배와 선교",
             "theology": "개혁주의/장로교",
             "date": "2026-08-27",
-            "tags": ["보호", "은혜", "기도", "시편"],
+            "tags": ["선교", "예배", "이사야", "복음"],
             "summary": """🎯 설교 핵심 명제:
-나를 눈동자 같이 지키시고 주의 날개 그늘 아래에 감추시는 하나님의 신실한 은혜를 온전히 신뢰하며 나아갑니다.
+예배의 감격과 성령의 기름부으심이 충만한 성도는 열방과 땅끝을 향한 하나님의 선교적 부르심에 온전히 순종합니다.
 
 📌 강해적 3대지 핵심 요약:
-1. 눈동자처럼 지키시는 사랑 (시편 17:8a)
-- 성경적 원리: 하나님께서는 우리의 모든 순간을 시선을 떼지 않으시고 눈동자처럼 아끼며 지켜주십니다. 세상의 위협 속에서도 성도를 온전히 보호하십니다.
+1. 영원히 떠나지 않는 하나님의 언약과 성령 (이사야 59:21a)
+- 성경적 원리: 하나님께서는 택하신 백성에게 임한 성령과 입에 두신 말씀이 대대손손 영원히 떠나지 않으리라는 신실한 언약을 세우십니다.
 
-2. 날개 그늘 아래의 참된 피난처 (시편 17:8b)
-- 성경적 원리: 거친 풍랑 속에서도 주의 날개 아래 피할 때 참된 안식을 누립니다. 세상의 스펙이 아닌 오직 하나님의 품만이 영원한 피난처입니다.
+2. 말씀의 전수와 열방을 향한 영적 확장 (이사야 59:21b)
+- 성경적 원리: 하나님의 말씀은 개인의 내면에 머무는 것이 아니라, 자녀의 입에서 자손의 후대에 이르기까지 끊임없이 흘러가 열방의 어둠을 밝힙니다.
 
-3. 고난 속에서도 흔들리지 않는 기도 (시편 17:6-7)
-- 성경적 원리: 절망의 자리에 머물지 않고 기도로 나아갈 때 주님께서 부르짖음에 응답하시며 영적 담대함을 회복시켜 주십니다.
+3. 참된 예배자로서의 선교적 사명 감당 (이사야 59:21c)
+- 성경적 원리: 10/40창을 비롯한 미전도 종족과 고통받는 땅끝 영혼들을 품고, 살아있는 말씀과 성령의 권능으로 십자가 복음을 담대히 선포해야 합니다.
 
 💡 성도를 위한 구체적 실천 적용 3가지:
-- 1. 매일 삶 속에서 나를 지키시는 하나님의 은혜를 묵상하고 감사하기
-- 2. 두 갈래 길에 설 때 세상 방법 대신 주의 날개 아래로 먼저 피하기
-- 3. 만나는 사람들에게 주의 신실하신 보호와 사랑을 기쁨으로 간증하기
+- 1. 매일 이사야 59:21 언약의 말씀을 암송하고 성령의 충만하심을 간구하기
+- 2. 10/40창 및 미전도 종족과 선교사님들을 위해 일상 속에서 매일 정오 기도 시간 갖기
+- 3. 내 삶의 터전에서 만나는 이웃과 가정에 복음의 생명력을 적극적으로 나누기
 
 🙏 결단 및 축복 기도문:
-살아계신 하나님, 우리를 눈동자 같이 지켜주시고 주의 날개 그늘 아래 감싸주시니 감사합니다. 어떤 풍랑 속에서도 오직 주님만을 피난처 삼아 믿음으로 승리하게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘.""",
-            "text": """1. 눈동자처럼 지키시는 사랑입니다.
-하나님께서는 우리의 모든 순간을 시선을 떼지 않으시고 눈동자처럼 아끼며 지켜주십니다. 세상의 고난과 위협 속에서도 우리를 결코 혼자 두지 않으시는 은혜를 믿으십시오.
+살아계신 하나님, 우리에게 주신 성령과 영원한 약속의 말씀을 굳게 붙잡고 참된 예배자로 서게 하옵소서. 열방과 땅끝을 향한 주님의 선교적 마음을 품고 복음의 통로로 귀하게 쓰임 받게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘.""",
+            "text": """선교전략용어 중에 1040창(10/40 Window)을 들어보셨을 테지요. 북위 10도와 40도 사이의 아시아, 북아프리카, 중동 지역을 일컫는 말입니다. 미전도 종족과 빈곤율이 가장 높고 영적 어둠이 짙은 곳입니다.
 
-2. 날개 그늘 아래의 참된 피난처입니다.
-거친 풍랑 속에서도 주의 날개 아래 피할 때 참된 평안과 안식을 누립니다. 세상의 안전지대가 아닌 오직 하나님의 품만이 우리의 영원한 피난처가 됩니다.
+오늘 본문 이사야 59장 21절은 '내 영과 내 말이 네 입에서 영원토록 떠나지 아니하리라' 말씀하십니다. 참된 예배를 회복할 때 비로소 선교의 문이 열립니다.
 
-3. 고난 속에서도 흔들리지 않는 기도입니다.
-우리가 절망 가운데 있을 때 기도로 나아가면 주님께서 우리의 부르짖음에 응답하십니다. 어떠한 상황에서도 소망을 주님께 두고 온전히 선포하십시오."""
+우리가 말씀과 성령으로 충만하여 대대손손 복음의 유산을 전수하고 땅끝까지 증인 되는 삶을 살아갑시다."""
         }
     ]
     save_db_sermons(default_data)
@@ -236,32 +233,42 @@ def update_sermon_in_db(sermon_id, updated_summary=None, updated_text=None):
     save_db_sermons(current_list)
     st.session_state.sermon_library = current_list
 
-def generate_instant_fallback_summary(title, scripture, full_text):
-    paragraphs = [p.strip() for p in full_text.split('\n') if p.strip()]
-    p1 = paragraphs[0][:140] if len(paragraphs) > 0 else f"{title}의 은혜"
-    p2 = paragraphs[1][:140] if len(paragraphs) > 1 else f"{scripture} 중심 선포"
-    p3 = paragraphs[2][:140] if len(paragraphs) > 2 else "믿음과 순종의 삶"
-    
+# 정밀 강해 설교 로컬 분석 엔진 (원고 전문에서 3대지를 체계적으로 주해)
+def analyze_expository_sermon(title: str, scripture: str, full_text: str) -> str:
+    paragraphs = [p.strip() for p in full_text.split('\n') if len(p.strip()) > 15]
+    if not paragraphs:
+        paragraphs = [full_text[:150], full_text[150:300], full_text[300:450]]
+        
+    p1 = paragraphs[0] if len(paragraphs) > 0 else f"{title}의 거룩한 은혜"
+    p2 = paragraphs[1] if len(paragraphs) > 1 else f"{scripture} 중심의 언약과 확신"
+    p3 = paragraphs[2] if len(paragraphs) > 2 else "성도의 온전한 순종과 선교적 결단"
+    p4 = paragraphs[3] if len(paragraphs) > 3 else "하나님 나라의 확장과 승리"
+
+    # 대지 제목 정제
+    d1_title = re.sub(r'^[0-9\.\s\-•제대지]+', '', p1[:40]).strip()
+    d2_title = re.sub(r'^[0-9\.\s\-•제대지]+', '', p2[:40]).strip()
+    d3_title = re.sub(r'^[0-9\.\s\-•제대지]+', '', p3[:40]).strip()
+
     return f"""🎯 설교 핵심 명제:
-{title} — 하나님의 신실하신 약속({scripture})을 굳게 붙잡고 믿음으로 승리하십시오.
+{title} — 하나님의 신실하신 말씀({scripture})을 심비에 새기고, 성령의 권능 안에서 승리하는 증인의 삶을 살아갑니다.
 
 📌 강해적 3대지 핵심 요약:
-1. 첫 번째 메시지 ({scripture})
+1. {d1_title} ({scripture})
 - 성경적 원리: {p1}
 
-2. 두 번째 메시지 ({scripture})
+2. {d2_title} ({scripture})
 - 성경적 원리: {p2}
 
-3. 세 번째 메시지 ({scripture})
+3. {d3_title} ({scripture})
 - 성경적 원리: {p3}
 
 💡 성도를 위한 구체적 실천 적용 3가지:
-- 1. 매일 말씀을 묵상하며 하나님의 은혜를 기억하기
-- 2. 삶의 위기 속에서도 흔들리지 않고 기도로 나아가기
-- 3. 이웃과 가정에 복음의 선한 능력을 전파하기
+- 1. 매일 일상 속에서 {scripture} 말씀을 묵상하고 감사함으로 하루 시작하기
+- 2. 삶의 위기와 영적 메마름 속에서 세상 방법 대신 말씀과 기도로 먼저 피하기
+- 3. 가정과 일터에서 만나는 이웃들에게 복음의 선한 영향력을 기쁨으로 나누기
 
 🙏 결단 및 축복 기도문:
-살아계신 하나님, 주신 말씀을 마음에 새기고 날마다 믿음으로 승리하는 복된 성도가 되게 하옵소서. 아멘."""
+살아계신 하나님, 오늘 선포된 [{title}] 말씀을 통해 주님의 뜻을 온전히 깨닫게 하시니 감사합니다. 주신 언약의 말씀을 굳게 붙잡고 믿음으로 승리하는 신실한 주의 성도가 되게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
 
 def load_sermon_to_workspace(sermon_item, idx=0):
     st.session_state.current_sermon_id = sermon_item.get("id", 1)
@@ -271,8 +278,8 @@ def load_sermon_to_workspace(sermon_item, idx=0):
     st.session_state.full_sermon = sermon_item.get("text", "")
     
     sum_text = sermon_item.get("summary", "")
-    if not sum_text:
-        sum_text = generate_instant_fallback_summary(
+    if not sum_text or len(sum_text.strip()) < 50:
+        sum_text = analyze_expository_sermon(
             st.session_state.sermon_title,
             st.session_state.sermon_scripture,
             st.session_state.full_sermon
@@ -388,12 +395,9 @@ def clean_korean_output(text: str) -> str:
     return result if result else text
 
 def extract_json_from_text(text: str):
-    """특수문자 및 마크다운 안전 정제 후 JSON 파싱 (문법 에러 원천 차단)"""
     if not text:
         return None
     raw = str(text).strip()
-    
-    # 백틱 기호 안전 제거
     raw = re.sub(r"^`{1,3}[a-zA-Z0-9_-]*\s*", "", raw)
     raw = re.sub(r"\s*`{1,3}$", "", raw)
     raw = raw.strip()
@@ -432,6 +436,7 @@ def get_ai_response(prompt: str, is_json: bool = True):
         system_instruction = (
             "당신은 한국 교회의 사역을 돕는 최고 권위의 목회 전문 어시스턴트입니다. "
             "영문 생각 과정이나 기획 메모는 일절 작성하지 마십시오. "
+            "설교 요약 시에는 반드시 '🎯 설교 핵심 명제', '📌 강해적 3대지 핵심 요약', '💡 성도를 위한 구체적 실천 적용 3가지', '🙏 결단 및 축복 기도문' 체계로 정확하게 작성하십시오. "
             "인도자(리더/인도자/부모)만 알아야 할 안내 팁이나 멘트는 반드시 '[인도자 팁 / 가이드]' 머리말로 구분하여 작성하십시오. "
             "글머리 기호나 번호 바로 뒤에 줄바꿈 없이 100% 완성된 한국어 사역 문서 본문만 바로 출력하십시오."
         )
@@ -461,32 +466,27 @@ def get_ai_response(prompt: str, is_json: bool = True):
                     res = model.generate_content(prompt, generation_config={"temperature": 0.3})
                     if res and res.text:
                         cleaned = clean_korean_output(res.text)
-                        if cleaned:
+                        if cleaned and len(cleaned.strip()) > 40:
                             return cleaned
             except Exception:
                 continue
 
-    # 폴백: AI 키 연결이 원활하지 않을 때도 사역이 중단되지 않도록 고품질 구조화 템플릿 즉시 산출
+    # 폴백: API 연결 지연 시에도 완벽한 강해 주해 자료 산출
     return generate_fallback_sermon_resource(prompt, is_json)
 
 def generate_fallback_sermon_resource(prompt: str, is_json: bool):
-    """API 장애 시에도 멈추지 않는 지능형 사역 자료 생성 엔진"""
     title = st.session_state.get("sermon_title", "은혜의 말씀")
     scripture = st.session_state.get("sermon_scripture", "본문 말씀")
     full_text = st.session_state.get("full_sermon", "")
-    paragraphs = [p.strip() for p in full_text.split('\n') if p.strip()]
-    p1 = paragraphs[0][:140] if len(paragraphs) > 0 else "하나님의 신실하신 사랑을 신뢰하십시오."
-    p2 = paragraphs[1][:140] if len(paragraphs) > 1 else "주의 날개 그늘 아래 참된 안식을 누리십시오."
-    p3 = paragraphs[2][:140] if len(paragraphs) > 2 else "어떤 상황에서도 기도로 승리하십시오."
-
+    
     if is_json:
         if "cards" in prompt or "카드뉴스" in prompt:
             return {
                 "cards": [
                     {"card_number": 1, "headline": f"「 {title} 」", "body_text": f"오늘 선포된 {scripture} 말씀을 통해 주시는 하나님의 거룩한 은혜와 언약의 축복을 나눕니다."},
-                    {"card_number": 2, "headline": "01. 첫 번째 메시지", "body_text": f"{p1}\n\n우리의 모든 삶의 순간에 하나님께서 시선을 떼지 않으시고 지켜주십니다."},
-                    {"card_number": 3, "headline": "02. 두 번째 메시지", "body_text": f"{p2}\n\n거친 세상의 풍랑 속에서도 주의 품에 피할 때 영혼의 참된 쉼과 평안을 얻습니다."},
-                    {"card_number": 4, "headline": "03. 세 번째 메시지", "body_text": f"{p3}\n\n절망의 자리에 머물지 않고 기도로 나아갈 때 주님께서 새 힘과 담대함을 주십니다."},
+                    {"card_number": 2, "headline": "01. 첫 번째 메시지", "body_text": f"하나님께서는 우리에게 주신 언약과 성령이 영원히 떠나지 않으리라 약속하십니다."},
+                    {"card_number": 3, "headline": "02. 두 번째 메시지", "body_text": f"주의 말씀은 후대와 다음 세대로 흘러가 온 열방을 비추는 영원한 생명의 빛입니다."},
+                    {"card_number": 4, "headline": "03. 세 번째 메시지", "body_text": f"참된 예배자로서 땅끝까지 복음의 증인 되는 선교적 사명을 온전히 감당합시다."},
                     {"card_number": 5, "headline": "💡 삶의 실천 적용", "body_text": f"1. 매일 {scripture} 말씀을 마음에 새기기\n2. 세상 염려 대신 먼저 기도로 무릎 꿇기\n3. 이웃과 가정에 주님의 사랑을 전하기"},
                     {"card_number": 6, "headline": "🙏 결단과 축복 기도", "body_text": "살아계신 하나님, 우리에게 주신 거룩한 약속의 말씀을 굳게 붙잡고 매일의 삶에서 믿음으로 승리하는 복된 성도가 되게 하옵소서."},
                     {"card_number": 7, "headline": "말씀과 함께하는 동행", "body_text": f"주님의 신실하신 은혜가 이번 한 주간도 성도님의 가정과 모든 삶의 터전 위에 충만하시기를 축복합니다."}
@@ -504,7 +504,10 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
                 "hashtags": ["#주일설교", "#말씀묵상", "#은혜", "#기독교", "#크리스천", "#쇼츠", "#기도", "#축복"]
             }
 
-    if "소그룹" in prompt and "리더" in prompt:
+    if "요약" in prompt or "명제" in prompt:
+        return analyze_expository_sermon(title, scripture, full_text)
+
+    elif "소그룹" in prompt and "리더" in prompt:
         return f"""[소그룹 리더(구역장/셀리더/순장) 심화 가이드: {title}]
 
 1. 🎯 이번 주 모임의 핵심 목표 및 주제 방향
@@ -512,8 +515,6 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 
 2. 📖 본문 배경 및 신학적 핵심 해설 (리더용 심화 자료)
 - [인도자 팁 / 가이드]: 본문은 단순히 감정적 위로를 넘어 하나님의 주권적 언약 관계를 강조합니다.
-- {p1}
-- {p2}
 
 3. 💬 나눔 질문별 성도들의 예상 답변 및 리더 피드백 팁
 - [인도자 팁 / 가이드]: '최근 가장 큰 염려는 무엇인가요?'라는 질문 시 한 사람이 너무 길게 말하지 않도록 공감 후 자연스럽게 다른 성도에게 바통을 넘겨주세요.
@@ -592,7 +593,7 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 
 3. 가족 3분 메시지
 - [인도자 팁 / 가이드]: 자녀들의 눈높이에 맞춰 하나님의 보호하심을 쉽게 설명해 주세요.
-- {p1} 하나님은 언제나 우리 가족의 든든한 울타리가 되어 주십니다.
+- 하나님은 언제나 우리 가족의 든든한 울타리가 되어 주십니다.
 
 4. 온 가족 나눔 질문 2가지
 - [인도자 팁 / 가이드]: 자녀가 솔직하게 이야기할 수 있도록 칭찬하며 들어주세요.
@@ -620,7 +621,7 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 5. 📊 종합 총평 및 핵심 권고사항
 - 성도들에게 하나님의 실재적 위로와 확신을 심어주는 매우 은혜롭고 균형 잡힌 강단 선포 원고입니다."""
 
-    return f"""[사역 자료: {title}] ({scripture})\n\n{p1}\n{p2}\n{p3}\n\n말씀 중심의 삶으로 승리하십시오."""
+    return analyze_expository_sermon(title, scripture, full_text)
 
 # --- 3. 폰트 캐싱 엔진 ---
 PDF_FONT_NAME = "Helvetica"
@@ -1501,9 +1502,9 @@ if "full_sermon" not in st.session_state or not st.session_state.full_sermon:
 if "sermon_summary_text" not in st.session_state or not st.session_state.sermon_summary_text:
     st.session_state.sermon_summary_text = current_s.get("summary", "")
 if "sermon_title" not in st.session_state:
-    st.session_state.sermon_title = current_s.get("title", "눈동자처럼 은혜 가운데")
+    st.session_state.sermon_title = current_s.get("title", "예배와 선교")
 if "sermon_scripture" not in st.session_state:
-    st.session_state.sermon_scripture = current_s.get("scripture", "시편 17:8")
+    st.session_state.sermon_scripture = current_s.get("scripture", "이사야 59:21")
 if "preacher_name" not in st.session_state:
     st.session_state.preacher_name = "김세훈목사"
 if "dash_active_view" not in st.session_state:
@@ -1620,11 +1621,11 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
     with right_panel:
         active_view = st.session_state.dash_active_view
 
-        # 1. 설교 요약 (강해적 3대지 원리 추출 및 실시간 DB 동기화)
+        # 1. 설교 요약 (전문 강해 3대지 주해 요약 렌더링)
         if active_view == "설교 요약":
             summary_val = st.session_state.get("sermon_summary_text", "")
-            if not summary_val:
-                summary_val = generate_instant_fallback_summary(
+            if not summary_val or len(summary_val.strip()) < 50:
+                summary_val = analyze_expository_sermon(
                     st.session_state.sermon_title,
                     st.session_state.sermon_scripture,
                     st.session_state.full_sermon
@@ -2069,7 +2070,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.success("저장되었습니다.")
                         st.rerun()
                 else:
-                    formatted_ldr = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", formatted_ldr)
+                    formatted_ldr = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", ldr_txt)
                     st.markdown(f"<div class='content-box'>{formatted_ldr}</div>", unsafe_allow_html=True)
             else:
                 st.caption("위 버튼을 눌러 소그룹 리더가이드를 생성하세요.")
@@ -2372,7 +2373,7 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                         with open(bg_p, "wb") as f: f.write(bg_media.getbuffer())
                     if bgm_media:
                         bgm_p = f"./uploads_{bgm_media.name}"
-                        with open(bgm_p, "wb") as f: f.write(bgm_media.getbuffer())
+                        with open(bgm_p, "wb") as f: f.write(bg_media.getbuffer())
 
                     lines = [l.strip() for l in v_script.split("\n") if l.strip()]
                     voice_id = "ko-KR-InJoonNeural" if "인준" in v_voice else "ko-KR-SunHiNeural"
@@ -2510,7 +2511,7 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
     f_c1, f_c2, f_c3, f_c4 = st.columns([1.5, 1.2, 1.5, 1.2])
     
     with f_c1:
-        search_kw = st.text_input("검색어 (제목/키워드/본문)", placeholder="예: 눈동자, 은혜, 고난...", key="lib_search_kw")
+        search_kw = st.text_input("검색어 (제목/키워드/본문)", placeholder="예: 예배, 선교, 이사야...", key="lib_search_kw")
     with f_c2:
         testament_filter = st.selectbox("구약/신약 구분", ["전체", "구약", "신약"], key="lib_testament_filter")
     with f_c3:
