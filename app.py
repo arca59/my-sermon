@@ -348,7 +348,6 @@ with st.sidebar.expander("⚙️ AI 연결 설정 (클릭하여 열기)", expand
 def clean_korean_output(text: str) -> str:
     if not text:
         return ""
-    
     lines = text.split("\n")
     cleaned_lines = []
     for line in lines:
@@ -356,20 +355,16 @@ def clean_korean_output(text: str) -> str:
         if not stripped:
             cleaned_lines.append("")
             continue
-            
         if re.match(r'^(Reliable|100%|Check|Ensure|Draft|Concept|Focus|Selection|Idea|Question|Application|Target|Passage|Summary|Matches|Follows)', stripped, re.IGNORECASE):
             continue
         if stripped.startswith("* Check") or stripped.startswith("* Ensure") or stripped.startswith("* Focus:"):
             continue
-            
         k_chars = len(re.findall(r'[가-힣]', stripped))
         e_chars = len(re.findall(r'[a-zA-Z]', stripped))
         if e_chars > 20 and k_chars == 0:
             continue
-            
         line = re.sub(r'\([A-Za-z0-9\s,\.\?\!\'\":;\-\/]{5,}\)', '', line)
         cleaned_lines.append(line)
-        
     result = "\n".join(cleaned_lines).strip()
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result if result else text
@@ -381,7 +376,6 @@ def extract_json_from_text(text: str):
     raw = re.sub(r"^`{1,3}[a-zA-Z0-9_-]*\s*", "", raw)
     raw = re.sub(r"\s*`{1,3}$", "", raw)
     raw = raw.strip()
-    
     try:
         return json.loads(raw)
     except Exception:
@@ -416,7 +410,7 @@ def get_ai_response(prompt: str, is_json: bool = True):
         system_instruction = (
             "당신은 한국 교회의 사역을 돕는 최고 권위의 목회 전문 어시스턴트입니다. "
             "영문 생각 과정이나 기획 메모는 일절 작성하지 마십시오. "
-            "사용자가 요청한 메뉴와 목적(참고 성구 및 예화, 소그룹 나눔지, QT 5일치, 카드뉴스, 쇼츠 대본, 가정예배지, 설교 점검, 소그룹 리더가이드 등)에 정확히 부합하는 전용 결과물만을 생성하십시오. "
+            "사용자가 요청한 메뉴와 목적에 정확히 부합하는 전용 결과물만을 생성하십시오. "
             "인도자(리더/구역장/셀리더/부모)만 알아야 할 안내 팁이나 멘트는 반드시 '[인도자 팁 / 가이드]: ...' 형식으로 작성하십시오. "
             "100% 완성된 한국어 사역 문서 본문만 바로 출력하십시오."
         )
@@ -483,7 +477,6 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
                 "hashtags": ["#주일설교", "#말씀묵상", "#은혜", "#기독교", "#크리스천", "#쇼츠", "#기도", "#축복"]
             }
 
-    # 1. 참고 성구 및 예화 전용 반환
     if "참고" in prompt or "예화" in prompt or "성구" in prompt:
         return f"""[참고 성구 및 신학적 예화 자료집: {title}]
 
@@ -497,7 +490,7 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 
 2. 💡 일상 및 현대적 공감 실화 예화 2가지
 • '스탠리 존스(E. Stanley Jones) 선교사의 선교적 헌신'
-  - 아시아의 어두운 땅을 밟으며 그리스도를 선포했던 존스 선교사는, 가장 절망적인 현장 속에서 복음의 능력이 영혼을 살려내는 능력을 삶으로 입증했습니다.
+  - 아시아의 어두운 땅을 밟으며 그리스도를 선포했던 존스 선교사는, 가장 절망적인 현장 속에서 복음의 능력이 어떻게 영혼을 살려내는지를 삶으로 입증했습니다.
 • '어느 어머니의 낡은 성경책 유산'
   - 물질적 유산 대신 평생 눈물로 기도하며 손때 묻힌 성경을 물려받은 아들이 훗날 열방의 선교사로 헌신하게 된 감동 실화입니다.
 
@@ -507,16 +500,14 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 • 찰스 스펄전 (Charles Spurgeon)
   - "만약 당신에게 복음을 전하고자 하는 열망이 없다면, 당신 자신이 먼저 구원받았는지 진지하게 돌아보아야 합니다." """
 
-    # 2. 설교 요약
     if "요약" in prompt or "명제" in prompt:
         return analyze_expository_sermon(title, scripture, full_text)
 
-    # 3. 소그룹 리더 가이드
     if "소그룹 리더" in prompt or "심화 가이드" in prompt:
         return f"""[소그룹 리더(구역장/셀리더/순장) 심화 가이드: {title}]
 
 1. 🎯 이번 주 모임의 핵심 목표 및 주제 방향
-- [인도자 팁 / 가이드]: 성도들이 {scripture} 말씀을 통해 개인적 위로를 넘어 세상 속에서 선교적 사명을 감당하도록 이끕니다.
+- [인도자 팁 / 가이드]: 성도들이 {scripture} 말씀을 통해 개인의 영적 회복을 넘어 열방과 이웃을 향한 선교적 사명감을 품도록 인도합니다.
 
 2. 📖 본문 배경 및 신학적 핵심 해설 (리더용 심화 자료)
 - [인도자 팁 / 가이드]: 본문은 하나님의 영과 말씀이 영원히 함께하신다는 구속사적 언약을 다룹니다.
@@ -532,7 +523,6 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 - 2. 복음이 필요한 미전도 종족과 선교사님들의 사역을 위해
 - 3. 믿음의 다음 세대가 복음의 주역으로 세워지도록"""
 
-    # 4. 소그룹 나눔지
     if "소그룹" in prompt:
         return f"""[소그룹 나눔지: {title}] (본문: {scripture})
 
@@ -542,7 +532,7 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 
 2. 말씀 속으로
 - [인도자 팁 / 가이드]: 본문 {scripture} 말씀을 다 함께 교독한 후 나눔을 시작합니다.
-- 1. 오늘 말씀에서 내 마음에 가장 깊이 와닿은 성구와 메시지는 무엇인가요?
+- 1. 오늘 말씀에서 '내 영과 내 말'이 영원히 떠나지 않는다는 언약은 나에게 어떤 확신을 주나요?
 - 2. 설교를 통해 깨닫게 된 참된 예배와 삶의 현장은 어떤 연관이 있나요?
 
 3. 삶 속으로
@@ -553,11 +543,10 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 4. 마침 합심 기도문
 - 살아계신 하나님, 오늘 나눈 {title} 말씀을 마음에 새깁니다. 세상 속에서 주의 증인으로 당당히 살아가게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
 
-    # 5. QT 5일치
     if "QT" in prompt or "묵상" in prompt:
         return f"""[주간 QT 5일치: {title}] (본문: {scripture})
 
-📅 월요일: 언약의 품으로 나아가기
+📅 월요일: 영원히 떠나지 않는 언약
 - 📖 본문 구절: {scripture}
 - 💡 말씀 묵상: 하나님은 우리 입에 두신 말씀과 성령이 영원토록 함께하리라 약속하십니다.
 - 🎯 삶의 적용: 오늘 하루 언약의 말씀을 입술로 선포하며 승리하십시오.
@@ -587,7 +576,6 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 - 🎯 삶의 적용: 두려움을 떨쳐버리고 담대히 주님의 사랑을 실천하십시오.
 - 🙏 오늘의 기도: 성령의 인도하심을 따라 땅끝까지 복음의 증인 되게 하소서."""
 
-    # 6. 가정예배지
     if "가정예배" in prompt:
         return f"""[가정예배 순서지: {title}] (본문: {scripture})
 
@@ -611,7 +599,6 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 5. 가정을 축복하는 마무리 기도문
 - 하나님 아버지, 우리 가족 모두가 주님의 말씀 안에 하나 되게 하시고 열방을 축복하는 믿음의 통로로 사용하여 주옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
 
-    # 7. 설교 점검 리포트
     if "점검" in prompt or "피드백" in prompt:
         return f"""[설교 전문 피드백 리포트: {title}]
 
@@ -1121,7 +1108,7 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
         "prayer": prayer_text
     }
 
-# --- 고품격 PPTX 생성기 (2~9번 화이트 배경 / 1,10번 딤 이미지 배경) ---
+# --- 10장 고품격 PPTX 생성기: 2~9번 화이트 배경 / 1,10번 풍경 딤 이미지 배경 ---
 def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str, full_sermon: str = "") -> io.BytesIO:
     try:
         prs = Presentation()
@@ -1146,7 +1133,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         def set_pure_light_slide(slide):
             fill = slide.background.fill
             fill.solid()
-            fill.fore_color.rgb = RGBColor(248, 250, 252)
+            fill.fore_color.rgb = RGBColor(248, 250, 252) # Soft Crisp White
 
         parsed = parse_sermon_content(title, scripture, summary_content, full_sermon)
         prop_text = parsed["prop"]
@@ -1154,7 +1141,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         app_text = parsed["app"]
         prayer_text = parsed["prayer"]
 
-        # [Slide 1: 표지]
+        # [Slide 1: 표지 - 풍경 딤 배경 + 앰버골드 타이포]
         s1 = prs.slides.add_slide(blank_layout)
         set_image_dim_slide(s1, CARD_BACKGROUNDS[0])
         tb1 = s1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.8))
@@ -1163,7 +1150,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p1.font.size, p1.font.bold = Pt(38), True
         p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
 
-        # [Slide 2: 들어가며]
+        # [Slide 2: 들어가며 - 화이트 배경 + 딥 로얄 블루 제목 + 짙은 차콜 본문]
         s2 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s2)
         tb2 = s2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1179,7 +1166,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p2_body.font.size = Pt(20)
         p2_body.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 3: 설교의 전체 흐름]
+        # [Slide 3: 설교의 전체 흐름 - 화이트 배경 + 4단 타일]
         s3 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s3)
         tb3_h = s3.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
@@ -1201,7 +1188,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             p_c.font.size, p_c.font.bold = Pt(20), True
             p_c.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 4: 본문 핵심 성구]
+        # [Slide 4: 본문 핵심 성구 - 화이트 배경 + 블루 카드박스]
         s4 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s4)
         
@@ -1221,7 +1208,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p4_b.font.size = Pt(20)
         p4_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 5: 제1대지]
+        # [Slide 5: 제1대지 - 화이트 배경]
         s5 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s5)
         tb5 = s5.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1236,7 +1223,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p5_b.font.size = Pt(20)
         p5_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 6: 제2대지]
+        # [Slide 6: 제2대지 - 화이트 배경]
         s6 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s6)
         tb6 = s6.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1251,7 +1238,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p6_b.font.size = Pt(20)
         p6_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 7: 제3대지]
+        # [Slide 7: 제3대지 - 화이트 배경]
         s7 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s7)
         tb7 = s7.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1266,7 +1253,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p7_b.font.size = Pt(20)
         p7_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 8: 핵심 묵상/영적 원리]
+        # [Slide 8: 핵심 묵상 - 화이트 배경]
         s8 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s8)
         tb8 = s8.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1281,7 +1268,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p8_b.font.size = Pt(20)
         p8_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 9: 삶의 적용]
+        # [Slide 9: 삶의 적용 - 화이트 배경]
         s9 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s9)
         tb9 = s9.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1296,7 +1283,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p9_b.font.size = Pt(19)
         p9_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 10: 결단 및 마침 기도]
+        # [Slide 10: 결단 및 기도 - 풍경 딤 배경]
         s10 = prs.slides.add_slide(blank_layout)
         set_image_dim_slide(s10, CARD_BACKGROUNDS[0])
         tb10 = s10.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.2))
@@ -1821,12 +1808,15 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 church_input = st.text_input("교회명", value=st.session_state.get("cn_church_name", "화광교회"), placeholder="교회 이름", key="cn_church_input")
                 st.session_state.cn_church_name = church_input
 
+            # --- 카드 장수 자유 선택 슬라이더 (7~10장) 추가 ---
+            card_count_choice = st.slider("카드뉴스 총 장수 선택", min_value=7, max_value=10, value=7, step=1, key="cn_count_slider")
+
             st.write("---")
 
-            if "card_list" not in st.session_state or not st.session_state.card_list:
-                if st.button("🎨 카드뉴스 자동 생성하기", type="primary", key="btn_gen_cardnews_init"):
-                    with st.spinner("설교 메시지로 카드뉴스 구성 중..."):
-                        prompt = f"설교 제목: {st.session_state.sermon_title}\n성경 본문: {st.session_state.sermon_scripture}\n설교문: {st.session_state.full_sermon[:3500]}\n정확히 7장의 카드뉴스 JSON 출력 (100% 한국어): {{\"cards\": [{{\"card_number\": 1, \"headline\": \"제목\", \"body_text\": \"문구\"}}]}}"
+            if "card_list" not in st.session_state or not st.session_state.card_list or len(st.session_state.card_list) != card_count_choice:
+                if st.button(f"🎨 카드뉴스 {card_count_choice}장 자동 생성하기", type="primary", key="btn_gen_cardnews_init"):
+                    with st.spinner(f"설교 메시지로 {card_count_choice}장 카드뉴스 구성 중..."):
+                        prompt = f"설교 제목: {st.session_state.sermon_title}\n성경 본문: {st.session_state.sermon_scripture}\n설교문: {st.session_state.full_sermon[:3500]}\n정확히 {card_count_choice}장의 카드뉴스 JSON 출력 (100% 한국어): {{\"cards\": [{{\"card_number\": 1, \"headline\": \"제목\", \"body_text\": \"문구\"}}]}}"
                         res = get_ai_response(prompt, is_json=True)
                         if res and "cards" in res:
                             st.session_state.card_list = res["cards"]
@@ -2168,7 +2158,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
             )
 
         ai_t1, ai_t2 = st.columns([2, 1])
-        with ai_t1: ai_sermon_topic = st.text_input("설교 주제 / 강조 포인트 (선택)", value="고난 속에서도 흔들리지 않는 하나님의 원대한 사랑과 구원의 확신", key="sel_ai_topic")
+        with ai_t1: ai_sermon_topic = st.text_input("설교 주제 / 강조 포인트 (선택)", value="고난 속에서도 흔들리지 않는 하나님의 영원한 사랑과 구원의 확신", key="sel_ai_topic")
         with ai_t2: sermon_style = st.selectbox("설교 형태", ["3대지 본문중심 강해설교", "구속사적 복음설교", "원어 주해 중심 강해설교"], key="sel_ai_style")
 
         full_scripture_str = f"{sel_book} {sel_chap_verse}"
