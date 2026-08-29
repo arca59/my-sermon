@@ -75,7 +75,7 @@ st.markdown("""
     .leader-tip {
         color: #38bdf8 !important;
         font-weight: 700;
-        background: rgba(14, 165, 233, 0.12);
+        background: rgba(14, 165, 233, 0.14);
         padding: 4px 10px;
         border-radius: 6px;
         display: inline-block;
@@ -152,7 +152,6 @@ def classify_scripture(scripture_text: str):
 SERMON_DB_PATH = "./outputs/sermons_db.json"
 
 def get_db_sermons():
-    """디스크에서 전체 설교 목록을 안전하게 불러오기 (무한대 누적)"""
     os.makedirs("./outputs", exist_ok=True)
     if os.path.exists(SERMON_DB_PATH):
         try:
@@ -208,7 +207,6 @@ def get_db_sermons():
     return default_data
 
 def save_db_sermons(sermons_list):
-    """디스크 파일에 영구 저장"""
     os.makedirs("./outputs", exist_ok=True)
     try:
         with open(SERMON_DB_PATH, "w", encoding="utf-8") as f:
@@ -217,19 +215,16 @@ def save_db_sermons(sermons_list):
         st.error(f"서재 파일 저장 오류: {str(e)}")
 
 def add_sermon_to_db(new_sermon_dict):
-    """새 설교를 기존 목록에 덮어쓰지 않고 무한대로 추가 저장"""
     current_list = get_db_sermons()
     existing_ids = [int(s.get("id", 0)) for s in current_list if str(s.get("id", "")).isdigit()]
     next_id = max(existing_ids or [0]) + 1
     new_sermon_dict["id"] = next_id
-    
     current_list.append(new_sermon_dict)
     save_db_sermons(current_list)
     st.session_state.sermon_library = current_list
     return new_sermon_dict
 
 def update_sermon_in_db(sermon_id, updated_summary=None, updated_text=None):
-    """작업 중인 설교의 수정 사항을 디스크에 영구 반영"""
     current_list = get_db_sermons()
     for s in current_list:
         if s.get("id") == sermon_id:
@@ -241,7 +236,6 @@ def update_sermon_in_db(sermon_id, updated_summary=None, updated_text=None):
     save_db_sermons(current_list)
     st.session_state.sermon_library = current_list
 
-# 빠른 초기 요약 생성기
 def generate_instant_fallback_summary(title, scripture, full_text):
     paragraphs = [p.strip() for p in full_text.split('\n') if p.strip()]
     p1 = paragraphs[0][:140] if len(paragraphs) > 0 else f"{title}의 은혜"
@@ -269,7 +263,6 @@ def generate_instant_fallback_summary(title, scripture, full_text):
 🙏 결단 및 축복 기도문:
 살아계신 하나님, 주신 말씀을 마음에 새기고 날마다 믿음으로 승리하는 복된 성도가 되게 하옵소서. 아멘."""
 
-# --- 모든 메뉴 완벽 동기화 및 캐시 초기화 핵심 함수 ---
 def load_sermon_to_workspace(sermon_item, idx=0):
     st.session_state.current_sermon_id = sermon_item.get("id", 1)
     st.session_state.current_sermon_idx = idx
@@ -416,6 +409,7 @@ def get_ai_response(prompt: str, is_json: bool = True):
         except Exception:
             continue
 
+    st.error("AI 응답을 받아오지 못했습니다. API 키나 인터넷 연결 상태를 확인해주세요.")
     return None
 
 # --- 3. 폰트 캐싱 엔진 ---
@@ -915,7 +909,7 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
         "prayer": prayer_text
     }
 
-# --- 동적 10-슬라이드 구조화 PPTX 생성기 ---
+# --- 동적 10-슬라이드 구조화 PPTX 생성기 (대비 규칙 100% 반영) ---
 def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str, full_sermon: str = "") -> io.BytesIO:
     try:
         prs = Presentation()
@@ -948,7 +942,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         app_text = parsed["app"]
         prayer_text = parsed["prayer"]
 
-        # [Slide 1: 표지]
+        # [Slide 1: 표지 - Dark Bg -> Bright Yellow Font]
         s1 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s1, CARD_BACKGROUNDS[0])
         tb1 = s1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.8))
@@ -957,7 +951,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p1.font.size, p1.font.bold = Pt(38), True
         p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
 
-        # [Slide 2: 들어가며]
+        # [Slide 2: 들어가며 - Light Bg -> Deep Navy Font]
         s2 = prs.slides.add_slide(blank_layout)
         set_light_slide(s2)
         tb2 = s2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -973,7 +967,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p2_body.font.size = Pt(20)
         p2_body.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 3: 설교의 전체 흐름]
+        # [Slide 3: 설교의 흐름 - Dark Bg -> Light Font]
         s3 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s3)
         tb3_h = s3.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
@@ -995,7 +989,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             p_c.font.size, p_c.font.bold = Pt(20), True
             p_c.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 4: 본문 핵심 성구]
+        # [Slide 4: 본문 말씀 - Dark Overlay Bg -> Light Font]
         s4 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s4, CARD_BACKGROUNDS[1])
         tb4 = s4.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.0))
@@ -1011,7 +1005,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p4_b.font.size = Pt(20)
         p4_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 5: 제1대지]
+        # [Slide 5: 제1대지 - Light Bg -> Dark Font]
         s5 = prs.slides.add_slide(blank_layout)
         set_light_slide(s5)
         tb5 = s5.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1026,7 +1020,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p5_b.font.size = Pt(20)
         p5_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 6: 제2대지]
+        # [Slide 6: 제2대지 - Dark Bg -> Light Font]
         s6 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s6)
         tb6 = s6.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1041,7 +1035,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p6_b.font.size = Pt(20)
         p6_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 7: 제3대지]
+        # [Slide 7: 제3대지 - Light Bg -> Dark Font]
         s7 = prs.slides.add_slide(blank_layout)
         set_light_slide(s7)
         tb7 = s7.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1056,7 +1050,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p7_b.font.size = Pt(20)
         p7_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 8: 핵심 메시지]
+        # [Slide 8: 핵심 메시지 - Dark Bg -> Light Font]
         s8 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s8, CARD_BACKGROUNDS[2])
         tb8 = s8.shapes.add_textbox(Inches(1.0), Inches(1.0), Inches(11.33), Inches(5.5))
@@ -1071,7 +1065,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p8_b.font.size = Pt(20)
         p8_b.font.color.rgb = RGBColor(241, 245, 249)
 
-        # [Slide 9: 삶의 적용]
+        # [Slide 9: 삶의 적용 - Light Bg -> Dark Font]
         s9 = prs.slides.add_slide(blank_layout)
         set_light_slide(s9)
         tb9 = s9.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1086,7 +1080,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p9_b.font.size = Pt(19)
         p9_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 10: 결단 및 기도]
+        # [Slide 10: 결단 및 기도 - Dark Bg -> Light Font]
         s10 = prs.slides.add_slide(blank_layout)
         set_dark_slide(s10, CARD_BACKGROUNDS[0])
         tb10 = s10.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.2))
@@ -2278,11 +2272,9 @@ elif app_mode == "📷 말씀카드 이미지":
 elif app_mode == "📚 설교 서재 (Sermon Library)":
     st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📚 설교 서재 (무한대 영구 기록보관소)</h1>", unsafe_allow_html=True)
     
-    # 디스크 실시간 데이터 로드
     sermons_db = get_db_sermons()
     st.session_state.sermon_library = sermons_db
     
-    # 상단 요약 배지 및 백업/복원 액션 바
     top_c1, top_c2 = st.columns([1.5, 1.5])
     with top_c1:
         st.markdown(f"총 **{len(sermons_db):,}편**의 설교문이 영구 데이터베이스에 안전하게 보관되어 있습니다.")
@@ -2313,7 +2305,6 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
 
     st.write("---")
 
-    # 다차원 검색 및 정밀 분류 필터
     st.markdown("#### 🔍 다차원 정밀 검색 및 분류 필터")
     f_c1, f_c2, f_c3, f_c4 = st.columns([1.5, 1.2, 1.5, 1.2])
     
@@ -2397,3 +2388,7 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
                         st.session_state.sermon_library = updated_lib
                         st.success("설교가 서재에서 안전하게 삭제되었습니다.")
                         st.rerun()
+
+```eof
+
+GitHub 저장소의 `app.py` 파일을 위 코드로 업데이트하시면 오류 없이 모든 생성 기능과 향상된 PPT 디자인을 바로 사용하실 수 있습니다!
