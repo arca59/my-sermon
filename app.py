@@ -173,26 +173,7 @@ def get_db_sermons():
             "theology": "개혁주의/장로교",
             "date": "2026-08-27",
             "tags": ["선교", "예배", "이사야", "복음"],
-            "summary": """🎯 설교 핵심 명제:
-예배의 감격과 성령의 기름부으심이 충만한 성도는 열방과 땅끝을 향한 하나님의 선교적 부르심에 온전히 순종합니다.
-
-📌 강해적 3대지 핵심 요약:
-1. 영원히 떠나지 않는 하나님의 언약과 성령 (이사야 59:21a)
-- 성경적 원리: 하나님께서는 택하신 백성에게 임한 성령과 입에 두신 말씀이 대대손손 영원히 떠나지 않으리라는 신실한 언약을 세우십니다.
-
-2. 말씀의 전수와 열방을 향한 영적 확장 (이사야 59:21b)
-- 성경적 원리: 하나님의 말씀은 개인의 내면에 머무는 것이 아니라, 자녀의 입에서 자손의 후대에 이르기까지 끊임없이 흘러가 열방의 어둠을 밝힙니다.
-
-3. 참된 예배자로서의 선교적 사명 감당 (이사야 59:21c)
-- 성경적 원리: 10/40창을 비롯한 미전도 종족과 고통받는 땅끝 영혼들을 품고, 살아있는 말씀과 성령의 권능으로 십자가 복음을 담대히 선포해야 합니다.
-
-💡 성도를 위한 구체적 실천 적용 3가지:
-- 1. 매일 이사야 59:21 언약의 말씀을 암송하고 성령의 충만하심을 간구하기
-- 2. 10/40창 및 미전도 종족과 선교사님들을 위해 일상 속에서 매일 정오 기도 시간 갖기
-- 3. 내 삶의 터전에서 만나는 이웃과 가정에 복음의 생명력을 적극적으로 나누기
-
-🙏 결단 및 축복 기도문:
-살아계신 하나님, 우리에게 주신 성령과 영원한 약속의 말씀을 굳게 붙잡고 참된 예배자로 서게 하옵소서. 열방과 땅끝을 향한 주님의 선교적 마음을 품고 복음의 통로로 귀하게 쓰임 받게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘.""",
+            "summary": "",
             "text": """선교전략용어 중에 1040창(10/40 Window)을 들어보셨을 테지요. 북위 10도와 40도 사이의 아시아, 북아프리카, 중동 지역을 일컫는 말입니다. 미전도 종족과 빈곤율이 가장 높고 영적 어둠이 짙은 곳입니다.
 
 오늘 본문 이사야 59장 21절은 '내 영과 내 말이 네 입에서 영원토록 떠나지 아니하리라' 말씀하십니다. 참된 예배를 회복할 때 비로소 선교의 문이 열립니다.
@@ -233,29 +214,29 @@ def update_sermon_in_db(sermon_id, updated_summary=None, updated_text=None):
     save_db_sermons(current_list)
     st.session_state.sermon_library = current_list
 
-# 정밀 강해 설교 로컬 분석 엔진 (원고 전문 맞춤 동적 생성)
+# 정밀 강해 설교 로컬 분석 엔진
 def analyze_expository_sermon(title: str, scripture: str, full_text: str) -> str:
     paragraphs = [p.strip() for p in full_text.split('\n') if len(p.strip()) > 10]
-    p1 = paragraphs[0] if len(paragraphs) > 0 else f"{title}의 거룩한 언약"
-    p2 = paragraphs[1] if len(paragraphs) > 1 else f"{scripture} 중심의 말씀 확신"
-    p3 = paragraphs[2] if len(paragraphs) > 2 else "성령 안에서의 온전한 순종과 헌신"
+    p1 = paragraphs[0] if len(paragraphs) > 0 else f"{title}의 거룩한 말씀"
+    p2 = paragraphs[1] if len(paragraphs) > 1 else f"{scripture} 중심의 구속사적 의미"
+    p3 = paragraphs[2] if len(paragraphs) > 2 else "성도들의 삶 속 구체적 실천과 순종"
 
     d1_title = re.sub(r'^[0-9\.\s\-•제대지]+', '', p1[:35]).strip() or "말씀의 깊은 은혜"
     d2_title = re.sub(r'^[0-9\.\s\-•제대지]+', '', p2[:35]).strip() or "성령의 역사와 회복"
     d3_title = re.sub(r'^[0-9\.\s\-•제대지]+', '', p3[:35]).strip() or "믿음의 결단과 선포"
 
-    return f"""🎯 설교 핵심 명제:
-{title} — 하나님의 신실하신 말씀({scripture})을 심비에 새기고, 성령의 권능 안에서 승리하는 증인의 삶을 살아갑니다.
+    return f"""🎯 설교 핵심 명제 ({title} - {scripture}):
+{title} — 하나님의 신실하신 약속과 말씀({scripture})을 심비에 새기고, 일상 속에서 성령의 권능으로 승리하는 삶을 살아갑니다.
 
 📌 강해적 3대지 핵심 요약:
 1. {d1_title} ({scripture})
-- 성경적 원리: {p1}
+- 성경적 주해 원리: {p1}
 
 2. {d2_title} ({scripture})
-- 성경적 원리: {p2}
+- 성경적 주해 원리: {p2}
 
 3. {d3_title} ({scripture})
-- 성경적 원리: {p3}
+- 성경적 주해 원리: {p3}
 
 💡 성도를 위한 구체적 실천 적용 3가지:
 - 1. 매일 일상 속에서 {scripture} 말씀을 묵상하고 감사함으로 하루 시작하기
@@ -281,7 +262,7 @@ def load_sermon_to_workspace(sermon_item, idx=0):
         )
     st.session_state.sermon_summary_text = sum_text
     
-    # 캐시 완전 초기화로 이전 설교 잔재 방지
+    # 이전 캐시 전면 소각 (완벽 격리)
     keys_to_clear = [
         "small_group_text", "qt5_text", "card_list", "shorts_script_text",
         "sermon_audit_text", "leader_guide_text", "rich_materials", 
@@ -408,7 +389,7 @@ def get_ai_response(prompt: str, is_json: bool = True):
         system_instruction = (
             "당신은 한국 교회의 사역을 돕는 최고 권위의 목회 전문 어시스턴트입니다. "
             "영문 생각 과정이나 기획 메모는 일절 작성하지 마십시오. "
-            "사용자가 요청한 메뉴와 목적(참고 성구 및 예화, 소그룹 나눔지, QT 5일치, 카드뉴스, 쇼츠 대본, 가정예배지, 설교 점검, 소그룹 리더가이드 등)에 정확히 부합하는 전용 결과물만을 생성하십시오. "
+            "사용자가 요청한 메뉴와 목적에 정확히 부합하는 전용 결과물만을 생성하십시오. "
             "인도자(리더/구역장/셀리더/부모)만 알아야 할 안내 팁이나 멘트는 반드시 '[인도자 팁 / 가이드]: ...' 형식으로 작성하십시오. "
             "100% 완성된 한국어 사역 문서 본문만 바로 출력하십시오."
         )
@@ -457,14 +438,14 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
             
             cards_arr = []
             cards_arr.append({"card_number": 1, "headline": f"「 {title} 」", "body_text": f"오늘 선포된 {scripture} 말씀을 통해 주시는 하나님의 거룩한 은혜와 언약의 축복을 나눕니다."})
-            cards_arr.append({"card_number": 2, "headline": "01. 첫 번째 메시지", "body_text": f"{full_text[:120] if full_text else '하나님께서는 우리에게 주신 언약과 성령이 영원히 떠나지 않으리라 약속하십니다.'}"})
-            cards_arr.append({"card_number": 3, "headline": "02. 두 번째 메시지", "body_text": "주의 말씀은 후대와 다음 세대로 흘러가 온 열방을 비추는 영원한 생명의 빛입니다."})
-            cards_arr.append({"card_number": 4, "headline": "03. 세 번째 메시지", "body_text": "참된 예배자로서 땅끝까지 복음의 증인 되는 선교적 사명을 온전히 감당합시다."})
-            cards_arr.append({"card_number": 5, "headline": "💡 삶의 실천 적용", "body_text": f"1. 매일 {scripture} 말씀을 마음에 새기기\n2. 세상 염려 대신 먼저 기도로 무릎 꿇기\n3. 이웃과 가정에 주님의 사랑을 전하기"})
-            cards_arr.append({"card_number": 6, "headline": "🙏 결단과 축복 기도", "body_text": "살아계신 하나님, 우리에게 주신 거룩한 약속의 말씀을 굳게 붙잡고 매일의 삶에서 믿음으로 승리하는 복된 성도가 되게 하옵소서."})
+            cards_arr.append({"card_number": 2, "headline": "01. 핵심 메시지", "body_text": f"{full_text[:130] if full_text else f'{title}에 담긴 하나님의 뜻을 깊이 깨닫고 순종합시다.'}"})
+            cards_arr.append({"card_number": 3, "headline": "02. 영적 도전", "body_text": f"우리의 삶의 현장에서 {scripture} 말씀은 곧 생명의 능력으로 역사합니다."})
+            cards_arr.append({"card_number": 4, "headline": "03. 은혜의 나눔", "body_text": "주신 은혜를 마음에 새기고 이웃과 가정에 선한 영향력을 흘려보냅시다."})
+            cards_arr.append({"card_number": 5, "headline": "💡 삶의 실천 적용", "body_text": f"1. 매일 {scripture} 묵상하기\n2. 염려 대신 기도로 무릎 꿇기\n3. 사랑의 실천 나누기"})
+            cards_arr.append({"card_number": 6, "headline": "🙏 결단과 축복 기도", "body_text": "살아계신 하나님, 우리에게 주신 거룩한 약속의 말씀을 굳게 붙잡고 믿음으로 승리하게 하옵소서."})
             
             for k in range(7, c_num + 1):
-                cards_arr.append({"card_number": k, "headline": f"0{k-3}. 은혜와 동행", "body_text": f"주님의 신실하신 은혜가 이번 한 주간도 성도님의 가정과 모든 삶의 터전 위에 충만하시기를 축복합니다."})
+                cards_arr.append({"card_number": k, "headline": f"0{k-3}. 믿음의 동행", "body_text": f"주님의 신실하신 은혜가 이번 한 주간 성도님의 모든 삶의 터전 위에 충만하기를 축복합니다."})
                 
             return {"cards": cards_arr[:c_num]}
 
@@ -480,12 +461,17 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
                 "hashtags": ["#주일설교", "#말씀묵상", "#은혜", "#기독교", "#크리스천", "#쇼츠", "#기도", "#축복"]
             }
 
+    # 각 메뉴별 독립된 고품격 텍스트 리소스
     if "참고" in prompt or "예화" in prompt or "성구" in prompt:
         return f"""[참고 성구 및 신학적 예화 자료집: {title}]
 
 1. 📖 본문 연관 핵심 참고 성구 3가지 및 설교적 연결점
-• 본문 ({scripture}) 핵심 원리와 맥을 같이 하는 구속사적 관점의 참고 구절들입니다.
-  - 연결점: {title}에서 선포된 메시지가 성경 전체의 구속사적 흐름 속에서 어떻게 성도들의 삶에 적용되는지 확증해 줍니다.
+• 로마서 10장 14-15절 ("보내심을 받지 아니하였으면 어찌 전파하리요...")
+  - 연결점: {scripture}에 나타난 하나님의 뜻이 신약 시대 복음 전파와 증인 사명으로 확증됨을 보여줍니다.
+• 마태복음 28장 19-20절 ("너희는 가서 모든 민족을 제자로 삼아...")
+  - 연결점: 우리에게 주신 말씀과 성령을 가지고 세상으로 나아가는 지상 대명령의 신학적 기초가 됩니다.
+• 사도행전 1장 8절 ("오직 성령이 너희에게 임하시면 너희가 권능을 받고...")
+  - 연결점: 말씀과 성령의 기름부으심이 개인의 영성에 머물지 않고 땅끝 증인의 능력으로 확장됨을 확증합니다.
 
 2. 💡 일상 및 현대적 공감 실화 예화 2가지
 • '현대 일상의 사막에서 만난 오아시스 같은 은혜'
@@ -499,10 +485,7 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 • 찰스 스펄전 (Charles Spurgeon)
   - "기도는 가장 강력한 무기이며, 하나님의 보좌를 움직이는 거룩한 손이다." """
 
-    if "요약" in prompt or "명제" in prompt:
-        return analyze_expository_sermon(title, scripture, full_text)
-
-    if "소그룹 리더" in prompt or "심화 가이드" in prompt:
+    elif "소그룹 리더" in prompt or "심화 가이드" in prompt:
         return f"""[소그룹 리더(구역장/셀리더/순장) 심화 가이드: {title}]
 
 1. 🎯 이번 주 모임의 핵심 목표 및 주제 방향
@@ -515,34 +498,34 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 - [인도자 팁 / 가이드]: 대화가 특정인에게 독점되지 않도록 부드럽게 조율해 주세요.
 
 4. ⚠️ 모임 중 침묵 또는 돌발 상황 대처 요령
-- [인도자 팁 / 가이드]: 침묵이 흐를 때는 "천천히 생각해보시고 편하게 나눠주세요"라며 격려해 주세요.
+- [인도자 팁 / 가이드]: 침묵이 길어질 때는 "천천히 생각해보시고 편하게 나눠주세요"라며 격려해 주세요.
 
 5. 🙏 소그룹을 위한 맞춤 중보기도 제목 3가지
 - 1. 구역원들의 가정마다 말씀과 성령의 은혜가 충만하도록
 - 2. 영육 간의 연약함과 질병 중에 있는 지체들의 치유를 위해
 - 3. 믿음의 다음 세대가 복음의 일꾼으로 세워지도록"""
 
-    if "소그룹" in prompt:
+    elif "소그룹" in prompt:
         return f"""[소그룹 나눔지: {title}] (본문: {scripture})
 
 1. 마음 열기 (아이스브레이크)
-- [인도자 팁 / 가이드]: 한 주간의 감사와 은혜를 나누며 부드럽게 시작합니다.
-- 질문: 이번 한 주 동안 일상에서 하나님의 따뜻한 손길을 느낀 순간은 언제인가요?
+- [인도자 팁 / 가이드]: 한 주간 인도하신 하나님께 감사하며 부드럽게 시작하세요.
+- 질문: 이번 한 주 동안 일상에서 하나님의 도우심을 경험한 순간은 언제인가요?
 
 2. 말씀 속으로
-- [인도자 팁 / 가이드]: 본문 {scripture} 말씀을 함께 교독한 후 나눔을 진행합니다.
+- [인도자 팁 / 가이드]: 본문 {scripture} 말씀을 다 함께 교독한 후 나눔을 시작합니다.
 - 1. 오늘 말씀에서 내 마음에 가장 깊이 와닿은 단어나 구절은 무엇인가요?
-- 2. 설교 말씀을 통해 내 삶에 비춰진 하나님의 뜻은 무엇인가요?
+- 2. 설교를 통해 깨닫게 된 참된 예배와 삶의 현장은 어떤 연관이 있나요?
 
 3. 삶 속으로
-- [인도자 팁 / 가이드]: 성도들이 삶의 실천을 구체적으로 고백하도록 격려해 주세요.
-- 1. 내가 요즘 가장 내려놓아야 할 염려는 무엇인가요?
-- 2. 이번 주간 순종하기 위해 실천할 구체적인 행동 한 가지는 무엇인가요?
+- [인도자 팁 / 가이드]: 구체적이고 실천 가능한 결단을 이끌어내도록 격려해 주세요.
+- 1. 내가 이번 주에 복음의 선한 영향력을 흘려보내야 할 이웃은 누구인가요?
+- 2. 말씀에 순종하여 구체적으로 실천할 믿음의 행동 한 가지는 무엇인가요?
 
 4. 마침 합심 기도문
 - 살아계신 하나님, 오늘 나눈 {title} 말씀을 마음에 새깁니다. 주님을 의지하며 승리하는 한 주가 되게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
 
-    if "QT" in prompt or "묵상" in prompt:
+    elif "QT" in prompt or "묵상" in prompt:
         return f"""[주간 QT 5일치: {title}] (본문: {scripture})
 
 📅 월요일: 말씀 앞에 엎드림
@@ -575,7 +558,7 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 - 🎯 삶의 적용: 한 주간 주신 은혜를 돌아보며 감사의 고백을 드리세요.
 - 🙏 오늘의 기도: 주님의 신실하신 인도하심에 온전히 감사드립니다."""
 
-    if "가정예배" in prompt:
+    elif "가정예배" in prompt:
         return f"""[가정예배 순서지: {title}] (본문: {scripture})
 
 1. 찬양 및 신앙고백
@@ -598,7 +581,7 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 5. 가정을 축복하는 마무리 기도문
 - 하나님 아버지, 우리 가족 모두가 주님의 사랑 안에서 늘 행복하고 믿음으로 굳건하게 서게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
 
-    if "점검" in prompt or "피드백" in prompt:
+    elif "점검" in prompt or "피드백" in prompt:
         return f"""[설교 전문 피드백 리포트: {title}]
 
 1. 📖 본문 주해의 정확성 및 성경 중심성 평가 (96점)
@@ -1107,7 +1090,7 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
         "prayer": prayer_text
     }
 
-# --- 10장 고품격 PPTX 생성기: 2~9번 화이트 배경 / 1,10번 풍경 딤 이미지 배경 ---
+# --- 고품격 PPTX 생성기 (2~9번 화이트 배경 / 1,10번 딤 이미지 배경) ---
 def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str, full_sermon: str = "") -> io.BytesIO:
     try:
         prs = Presentation()
