@@ -1,6 +1,25 @@
+# -*- coding: utf-8 -*-
+"""
+MY 설교 AI 스튜디오 Pro  (v3.0 - 원고 기반 정밀 분석 엔진)
+
+[v3.0 핵심 개선]
+ 1) 원고 기반 근거(Grounding) 엔진 도입
+    - 어떤 본문/제목을 넣어도 '그 원고에서 실제로 뽑아낸' 요약/카드뉴스가 나옵니다.
+    - AI 프롬프트에 '원고에 없는 내용 창작 금지 + 근거 문장 인용 의무' 규칙을 강제합니다.
+ 2) AI 연결 실패를 숨기지 않음
+    - 예전에는 API가 죽으면 몰래 '템플릿 문구'가 나와서 엉망인 결과처럼 보였습니다.
+    - 이제는 상단에 경고를 띄우고, 대신 원고에서 문장을 직접 추출한 실제 요약을 보여줍니다.
+ 3) 최신 Gemini 모델 목록 + 자동 탐색
+    - 구형 모델명(gemini-1.5-*)만 호출하다 전부 실패하던 문제 해결.
+ 4) 설교 전환 시 세션/캐시 완전 격리
+ 5) PPTX 배경 이미지가 검은 사각형에 완전히 가려지던 버그 수정(투명도 적용)
+ 6) 다운로드 버튼이 매 rerun마다 문서를 새로 만들던 성능 폭탄 제거(캐시)
+"""
+
 import PIL.Image
 import PIL.ImageDraw
 import PIL.ImageFont
+
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = getattr(PIL.Image, 'Resampling', PIL.Image).LANCZOS
 
@@ -10,14 +29,14 @@ import json
 import os
 import io
 import re
+import hashlib
 import asyncio
 import zipfile
-import edge_tts
 import urllib.parse
 import urllib.request
-import yt_dlp
-import numpy as np
+from collections import Counter
 from datetime import datetime
+
 from docx import Document
 from docx.shared import Pt as DocxPt, RGBColor as DocxRGB
 from pypdf import PdfReader
@@ -26,13 +45,45 @@ from pptx.util import Inches, Pt
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.enum.shapes import MSO_SHAPE
+from pptx.oxml.ns import qn
+from lxml import etree
 from reportlab.lib.pagesizes import letter
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from moviepy.editor import VideoFileClip, ColorClip, CompositeVideoClip, ImageClip
-from video_engine import create_animated_video, create_pil_text_clip
+
+# 선택적 의존성 (없어도 앱 전체가 죽지 않도록 보호)
+try:
+    import edge_tts
+    HAS_TTS = True
+except Exception:
+    HAS_TTS = False
+
+try:
+    import yt_dlp
+    HAS_YTDLP = True
+except Exception:
+    HAS_YTDLP = False
+
+try:
+    from moviepy.editor import VideoFileClip, ColorClip, CompositeVideoClip
+    HAS_MOVIEPY = True
+except Exception:
+    HAS_MOVIEPY = False
+
+try:
+    from video_engine import create_animated_video, create_pil_text_clip
+    HAS_VIDEO_ENGINE = True
+except Exception:
+    HAS_VIDEO_ENGINE = False
+
+    def create_animated_video(*args, **kwargs):
+        raise RuntimeError("video_engine.py 모듈을 찾을 수 없습니다.")
+
+    def create_pil_text_clip(*args, **kwargs):
+        raise RuntimeError("video_engine.py 모듈을 찾을 수 없습니다.")
+
 
 st.set_page_config(
     page_title="MY 설교 AI 스튜디오 Pro",
@@ -41,12 +92,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 고급 가스모피즘(Glassmorphism) 모던 UI CSS
 st.markdown("""
 <style>
-    .main {
-        background-color: #0b1329;
-    }
+    .main { background-color: #0b1329; }
     div[data-testid="column"] button {
         width: 100% !important;
         padding: 5px 8px !important;
@@ -63,15 +111,9 @@ st.markdown("""
         font-size: 15px;
         margin-top: 12px;
         box-shadow: 0 10px 25px rgba(0,0,0,0.3);
-        backdrop-filter: blur(10px);
+        white-space: pre-wrap;
     }
-    .content-box h3 {
-        color: #fde047;
-        font-size: 19px;
-        margin-top: 18px;
-        margin-bottom: 8px;
-        font-weight: bold;
-    }
+    .content-box h3 { color: #fde047; font-size: 19px; margin-top: 18px; font-weight: bold; }
     .leader-tip {
         color: #38bdf8 !important;
         font-weight: 700;
@@ -82,74 +124,438 @@ st.markdown("""
         margin: 6px 0;
         border-left: 3px solid #38bdf8;
     }
-    .card-preview-container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        margin: 20px 0;
+    .ground-quote {
+        color: #a5b4fc !important;
+        background: rgba(99, 102, 241, 0.12);
+        padding: 3px 8px;
+        border-radius: 5px;
+        display: inline-block;
+        border-left: 3px solid #6366f1;
+        font-size: 13.5px;
     }
-    .card-box-preview {
-        width: 480px;
-        height: 520px;
-        border-radius: 24px;
-        padding: 36px;
-        display: flex;
-        flex-direction: column;
-        justify-content: center;
-        align-items: center;
-        text-align: center;
-        box-shadow: 0 14px 36px rgba(0,0,0,0.55);
-        background-size: cover;
-        background-position: center;
-        position: relative;
-        overflow: hidden;
-    }
-    .card-box-preview::before {
-        content: '';
-        position: absolute;
-        top: 0; left: 0; right: 0; bottom: 0;
-        background: linear-gradient(180deg, rgba(10, 15, 30, 0.68) 0%, rgba(10, 15, 30, 0.88) 100%);
-        z-index: 1;
-    }
-    .card-box-preview > * {
-        position: relative;
-        z-index: 2;
-    }
+    .badge-ok  { background:#065f46; color:#d1fae5; padding:3px 10px; border-radius:8px; font-size:12px; }
+    .badge-bad { background:#7f1d1d; color:#fee2e2; padding:3px 10px; border-radius:8px; font-size:12px; }
 </style>
 """, unsafe_allow_html=True)
 
-# --- 성경 66권 구약/신약 자동 분류 모듈 ---
+
+# ==============================================================================
+# 성경 66권 · 약어 · 분류
+# ==============================================================================
 OLD_TESTAMENT_BOOKS = [
-    "창세기", "출애굽기", "레위기", "민수기", "신명기", "여호수아", "사사기", "룻기", 
-    "사무엘상", "사무엘하", "열왕기상", "열왕기하", "역대상", "역대하", "에스라", "느헤미야", 
-    "에스더", "욥기", "시편", "잠언", "전도서", "아가", "이사야", "예레미야", "예레미야애가", 
-    "에스겔", "다니엘", "호세아", "요엘", "아모스", "오바댜", "요나", "미가", "나훔", 
+    "창세기", "출애굽기", "레위기", "민수기", "신명기", "여호수아", "사사기", "룻기",
+    "사무엘상", "사무엘하", "열왕기상", "열왕기하", "역대상", "역대하", "에스라", "느헤미야",
+    "에스더", "욥기", "시편", "잠언", "전도서", "아가", "이사야", "예레미야", "예레미야애가",
+    "에스겔", "다니엘", "호세아", "요엘", "아모스", "오바댜", "요나", "미가", "나훔",
     "하박국", "스바냐", "학개", "스가랴", "말라기"
 ]
-
 NEW_TESTAMENT_BOOKS = [
-    "마태복음", "마가복음", "누가복음", "요한복음", "사도행전", "로마서", "고린도전서", "고린도후서", 
-    "갈라디아서", "에베소서", "빌립보서", "골로새서", "데살로니가전서", "데살로니가후서", "디모데전서", 
-    "디모데후서", "디도서", "빌레몬서", "히브리서", "야고보서", "베드로전서", "베드로후서", 
+    "마태복음", "마가복음", "누가복음", "요한복음", "사도행전", "로마서", "고린도전서", "고린도후서",
+    "갈라디아서", "에베소서", "빌립보서", "골로새서", "데살로니가전서", "데살로니가후서", "디모데전서",
+    "디모데후서", "디도서", "빌레몬서", "히브리서", "야고보서", "베드로전서", "베드로후서",
     "요한일서", "요한이서", "요한삼서", "유다서", "요한계시록"
 ]
-
 BIBLE_BOOKS = OLD_TESTAMENT_BOOKS + NEW_TESTAMENT_BOOKS
 
+# 약어 → 정식명 (설교문에 '롬 8:28' 처럼 쓰는 경우 대응)
+BIBLE_ABBREV = {
+    "창": "창세기", "출": "출애굽기", "레": "레위기", "민": "민수기", "신": "신명기",
+    "수": "여호수아", "삿": "사사기", "룻": "룻기", "삼상": "사무엘상", "삼하": "사무엘하",
+    "왕상": "열왕기상", "왕하": "열왕기하", "대상": "역대상", "대하": "역대하",
+    "스": "에스라", "느": "느헤미야", "에": "에스더", "욥": "욥기", "시": "시편",
+    "잠": "잠언", "전": "전도서", "아": "아가", "사": "이사야", "렘": "예레미야",
+    "애": "예레미야애가", "겔": "에스겔", "단": "다니엘", "호": "호세아", "욜": "요엘",
+    "암": "아모스", "옵": "오바댜", "욘": "요나", "미": "미가", "나": "나훔",
+    "합": "하박국", "습": "스바냐", "학": "학개", "슥": "스가랴", "말": "말라기",
+    "마": "마태복음", "막": "마가복음", "눅": "누가복음", "요": "요한복음", "행": "사도행전",
+    "롬": "로마서", "고전": "고린도전서", "고후": "고린도후서", "갈": "갈라디아서",
+    "엡": "에베소서", "빌": "빌립보서", "골": "골로새서", "살전": "데살로니가전서",
+    "살후": "데살로니가후서", "딤전": "디모데전서", "딤후": "디모데후서", "딛": "디도서",
+    "몬": "빌레몬서", "히": "히브리서", "약": "야고보서", "벧전": "베드로전서",
+    "벧후": "베드로후서", "요일": "요한일서", "요이": "요한이서", "요삼": "요한삼서",
+    "유": "유다서", "계": "요한계시록",
+}
+
+
 def classify_scripture(scripture_text: str):
+    """본문 문자열에서 구약/신약 및 책 이름을 판별한다. (긴 이름 우선 매칭)"""
     if not scripture_text:
         return "기타", "성경전체"
-    for b in OLD_TESTAMENT_BOOKS:
-        if b in scripture_text:
-            return "구약", b
-    for b in NEW_TESTAMENT_BOOKS:
-        if b in scripture_text:
-            return "신약", b
+    txt = scripture_text.strip()
+
+    for b in sorted(BIBLE_BOOKS, key=len, reverse=True):
+        if b in txt:
+            return ("구약" if b in OLD_TESTAMENT_BOOKS else "신약"), b
+
+    for ab in sorted(BIBLE_ABBREV.keys(), key=len, reverse=True):
+        if re.search(rf'(^|[^가-힣]){re.escape(ab)}\s*\d', txt):
+            full = BIBLE_ABBREV[ab]
+            return ("구약" if full in OLD_TESTAMENT_BOOKS else "신약"), full
+
     return "기타", "성경전체"
 
-# --- 무한대 영구 저장 설교 데이터베이스 엔진 ---
+
+# ==============================================================================
+# ★★★ 원고 정밀 분석 엔진 (본 앱 품질의 심장) ★★★
+#   - 지어내지 않는다. 원고에 실제로 있는 문장/단어만 뽑는다.
+# ==============================================================================
+
+KOR_STOPWORDS = set("""
+그리고 그러나 그런데 하지만 그래서 그러므로 우리 여러분 오늘 이것 그것 저것 때문 통해 위해 대해
+정말 참으로 지금 다시 모든 어떤 무엇 이런 저런 그런 이렇게 그렇게 저렇게 사람 사람들 이야기 경우
+때문에 그때 지금은 여기 거기 저기 하나 둘 셋 자신 자기 서로 함께 아주 매우 너무 조금 많이 항상
+말씀 하나님 예수님 예수 주님 아멘 성도 성도님 교회 오늘날 우리가 우리는 우리를 저는 제가 여러분이
+그분 그것이 있습니다 없습니다 합니다 됩니다 입니다 것입니다 것이다 라고 라는 이라는 하는 되는 있는
+없는 같은 위한 통한 한번 다시한번 사실 물론 결국 특히 바로 아마 혹시 만약 그럼 자 이제
+안에 밖에 위에 아래 아니라 아니고 말고 자가 나도 너도 여기에 거기에 그때에 오늘은 본문 본문은
+읽은 읽는 보면 보니 보십시오 하십시오 합시다 첫째 둘째 셋째 넷째 먼저 다음으로 끝으로 마지막으로
+사랑하는 존경하는 축복 은혜 믿음 기도 신앙 삶의 인생 하나님의 우리의 저희 여러분들
+""".split())
+
+JOSA_SUFFIX = (
+    "으로써", "에게서", "께서는", "에서는", "으로는", "이라는", "에게는", "까지도", "부터는", "라고도",
+    "께서", "에게", "에서", "으로", "이라", "라는", "처럼", "까지", "부터", "보다", "조차", "마저",
+    "한테", "이나", "이며", "이고", "라도", "든지",
+    "은", "는", "이", "가", "을", "를", "에", "의", "도", "와", "과", "로", "만", "랑",
+)
+
+VERB_TAIL_PAT = re.compile(
+    r'(니다|습니다|십시오|시오|세요|읍시다|했다|한다|하다|하는|하며|하고|해서|해도|'
+    r'되어|되고|되는|겠다|것이|것을|것은|것도|이라|라고|면서|는데|지만|어서|아서)$'
+)
+
+# 원고 안에서 성경 인용을 찾아내는 정규식
+_BOOK_ALT = "|".join(sorted(BIBLE_BOOKS, key=len, reverse=True) +
+                     sorted(BIBLE_ABBREV.keys(), key=len, reverse=True))
+SCRIPTURE_REF_RE = re.compile(
+    rf'((?:{_BOOK_ALT}))\s*(\d{{1,3}})\s*(?:장|[:：])\s*(\d{{1,3}})?\s*(?:[-~–]\s*(\d{{1,3}}))?\s*절?'
+)
+
+# 적용/권면 신호 어미 (한국어 설교의 권면 어미를 폭넓게 포착)
+APPLY_TAIL_RE = re.compile(
+    r'(십시오|ㅂ시다|읍시다|합시다|시기\s*바랍니다|시길\s*바랍니다|기를\s*바랍니다|'
+    r'해야\s*합니다|해야만\s*합니다|되시기\s*바랍니다|되기를\s*축복합니다|'
+    r'하시기\s*축원합니다|되시기\s*축원합니다|합시다\.|드립시다|삽시다|나아갑시다)'
+)
+
+# 대지(포인트) 신호 — 한국 설교의 전형적 구조 표지
+POINT_MARKER_RE = re.compile(
+    r'^\s*(첫째|둘째|셋째|넷째|다섯째|먼저|다음으로|끝으로|마지막으로|'
+    r'제\s*[1-5]\s*대지|[1-5]\s*대지|[1-5][\.\)])[,\s:：]'
+)
+
+# 서론·봉독 등 대지 제목으로 부적합한 상투 문장
+INTRO_NOISE_RE = re.compile(
+    r'(본문은|본문\s*말씀은|함께\s*읽은|봉독|읽어\s*드린|말씀을\s*읽었|오늘\s*우리가\s*함께|'
+    r'설교\s*제목은|사랑하는\s*성도\s*여러분|기도하겠습니다)'
+)
+
+PRAYER_HINT_RE = re.compile(r'(기도(를)?\s*(드립니다|합니다|드리겠습니다)|예수님의\s*이름으로|아멘)')
+
+
+_JOSA_SORTED = sorted(JOSA_SUFFIX, key=len, reverse=True)
+
+
+def _strip_josa(word: str):
+    """가장 긴 조사 1개만 제거한 후보를 돌려준다. (없으면 None)"""
+    for j in _JOSA_SORTED:
+        if len(word) > len(j) + 1 and word.endswith(j):
+            return word[:-len(j)]
+    return None
+
+
+def build_stem_map(words):
+    """
+    조사를 무조건 떼면 '십자가'가 '십자'로 잘려 엉뚱한 키워드가 된다.
+    → 어간으로 인정하는 조건:
+       (a) 그 어간이 원고에 단독으로도 등장하거나
+       (b) 서로 다른 조사 형태가 2개 이상 붙어 나타날 때
+    """
+    vocab = set(words)
+    forms = {}
+    for w in vocab:
+        cand = _strip_josa(w)
+        if cand:
+            forms.setdefault(cand, set()).add(w)
+    accepted = {s for s, fs in forms.items() if len(fs) >= 2 or s in vocab}
+    mapping = {}
+    for w in vocab:
+        cand = _strip_josa(w)
+        if cand and cand in accepted:
+            mapping[w] = cand
+    return mapping
+
+
+def _stem(word: str, stem_map=None) -> str:
+    if stem_map is not None:
+        return stem_map.get(word, word)
+    cand = _strip_josa(word)
+    return cand if cand else word
+
+
+def split_sentences(text: str):
+    """한국어 문장 분리 (마침표/물음표/느낌표 + '~다.' 종결 고려)"""
+    if not text:
+        return []
+    t = re.sub(r'\s+', ' ', text.replace('\n', ' '))
+    raw = re.split(r'(?<=[.!?…])\s+|(?<=다\.)\s*|(?<=요\.)\s*|(?<=까\?)\s*', t)
+    out = []
+    for s in raw:
+        s = s.strip()
+        if len(s) >= 8:
+            out.append(s)
+    return out
+
+
+def split_paragraphs(text: str):
+    if not text:
+        return []
+    parts = [p.strip() for p in re.split(r'\n\s*\n|\n', text)]
+    return [p for p in parts if len(p) >= 15]
+
+
+def extract_scripture_refs(text: str):
+    """원고에 실제로 인용된 성경 구절 목록 (등장 순, 중복 제거)"""
+    refs, seen = [], set()
+    for m in SCRIPTURE_REF_RE.finditer(text or ""):
+        book = BIBLE_ABBREV.get(m.group(1), m.group(1))
+        ch = m.group(2)
+        v1 = m.group(3)
+        v2 = m.group(4)
+        if v1 and v2:
+            label = f"{book} {ch}:{v1}-{v2}"
+        elif v1:
+            label = f"{book} {ch}:{v1}"
+        else:
+            label = f"{book} {ch}장"
+        if label not in seen:
+            seen.add(label)
+            refs.append(label)
+    return refs
+
+
+NOISE_TOKEN_RE = re.compile(r'^(절부터|절까지|장에서|절에서|이라는|말씀은|본문의|장의|절의)$')
+
+
+def extract_keywords(text: str, top_n: int = 20, stem_map=None):
+    """원고에서 '이 설교만의' 특징 키워드 추출"""
+    words = re.findall(r'[가-힣]{2,}', text or "")
+    if stem_map is None:
+        stem_map = build_stem_map(words)
+    counter = Counter()
+    for w in words:
+        s = _stem(w, stem_map)
+        if len(s) < 2:
+            continue
+        if s in KOR_STOPWORDS or w in KOR_STOPWORDS:
+            continue
+        if VERB_TAIL_PAT.search(s) or NOISE_TOKEN_RE.match(s):
+            continue
+        if re.match(r'^\d+$', s):
+            continue
+        counter[s] += 1
+    # 1회만 나온 단어는 특징으로 보지 않음 (원고가 아주 짧으면 예외)
+    min_cnt = 2 if len(words) > 400 else 1
+    return [w for w, c in counter.most_common(top_n * 3) if c >= min_cnt][:top_n]
+
+
+def _score_sentence(sent: str, kw_rank: dict, stem_map=None) -> float:
+    score = 0.0
+    for w in re.findall(r'[가-힣]{2,}', sent):
+        s = _stem(w, stem_map)
+        if s in kw_rank:
+            score += kw_rank[s]
+    if SCRIPTURE_REF_RE.search(sent):
+        score += 3.0
+    if '"' in sent or '“' in sent or "'" in sent:
+        score += 1.0
+    n = len(sent)
+    if n < 20:
+        score *= 0.5
+    elif n > 160:
+        score *= 0.8
+    return score
+
+
+@st.cache_data(show_spinner=False, max_entries=64)
+def analyze_manuscript(text: str) -> dict:
+    """
+    설교 원고를 실제로 읽어 구조를 뽑아낸다.
+    반환: keywords / refs / paragraphs / sentences / key_sentences / applications /
+          prayer / sections(3분할 대표 문단)
+    """
+    text = (text or "").strip()
+    paragraphs = split_paragraphs(text)
+    sentences = split_sentences(text)
+    stem_map = build_stem_map(re.findall(r'[가-힣]{2,}', text))
+    keywords = extract_keywords(text, stem_map=stem_map)
+    refs = extract_scripture_refs(text)
+
+    kw_rank = {w: (len(keywords) - i) / len(keywords) * 2.0 for i, w in enumerate(keywords)} if keywords else {}
+
+    def sc(s):
+        return _score_sentence(s, kw_rank, stem_map)
+
+    scored = sorted([(s, sc(s)) for s in sentences], key=lambda x: x[1], reverse=True)
+    key_sentences = [s for s, _ in scored[:12]]
+
+    # 적용/권면 문장 (원고에 실제로 있는 것만)
+    applications = []
+    for s in sentences:
+        if APPLY_TAIL_RE.search(s) and 15 <= len(s) <= 160:
+            applications.append(s)
+    applications = sorted(applications, key=sc, reverse=True)[:8]
+
+    # 기도문: 원고 뒤쪽 30% 안에서 기도 신호가 있는 문단
+    prayer = ""
+    tail_start = int(len(paragraphs) * 0.65)
+    for p in reversed(paragraphs[tail_start:] or paragraphs[-3:] if paragraphs else []):
+        if PRAYER_HINT_RE.search(p):
+            prayer = p
+            break
+
+    # ── 대지(sections) 추출 ────────────────────────────────────────────────
+    # 1순위: 설교자가 직접 표시한 '첫째/둘째/셋째, 먼저/다음으로/끝으로' 구조를 그대로 사용
+    sections = []
+    marked = [p for p in paragraphs if POINT_MARKER_RE.match(p)]
+    if len(marked) >= 2:
+        for p in marked[:4]:
+            sents = split_sentences(p)
+            head = sents[0] if sents else p
+            sections.append({"headline": head[:90], "evidence": p[:420], "chunk": [p]})
+    else:
+        # 2순위: 원고를 3등분해 각 구간의 대표 문단을 뽑되, 서론·봉독 상투구는 제외
+        if paragraphs:
+            n = len(paragraphs)
+            bounds = [(0, max(1, n // 3)), (max(1, n // 3), max(2, (2 * n) // 3)),
+                      (max(2, (2 * n) // 3), n)]
+            used = set()
+            for a, b in bounds:
+                chunk = paragraphs[a:b] or paragraphs[-1:]
+                ranked = sorted(chunk, key=sc, reverse=True)
+                best = next((p for p in ranked if p not in used and not INTRO_NOISE_RE.search(p[:60])),
+                            ranked[0])
+                used.add(best)
+                cand = [s for s in split_sentences(best) if not INTRO_NOISE_RE.search(s)]
+                head = max(cand, key=sc) if cand else best
+                sections.append({"headline": head[:90], "evidence": best[:420], "chunk": chunk})
+
+    # 명제로 쓸 문장: 서론·봉독 문장은 제외
+    prop_pool = [s for s in key_sentences if not INTRO_NOISE_RE.search(s)]
+    key_sentences = prop_pool + [s for s in key_sentences if s not in prop_pool]
+
+    return {
+        "keywords": keywords,
+        "refs": refs,
+        "paragraphs": paragraphs,
+        "sentences": sentences,
+        "key_sentences": key_sentences,
+        "applications": applications,
+        "prayer": prayer,
+        "sections": sections,
+        "char_count": len(text),
+    }
+
+
+def _trim_title(sent: str, limit: int = 42) -> str:
+    """문장을 대지 제목처럼 다듬는다 (원문 단어는 유지)"""
+    s = re.sub(r'^[0-9]+[\.\)]\s*', '', sent).strip()
+    s = re.sub(r'^(첫째|둘째|셋째|넷째|먼저|다음으로|끝으로)[,\s]*', '', s).strip()
+    s = re.sub(r'\s+', ' ', s)
+    if len(s) <= limit:
+        return s.rstrip('.。')
+    cut = s[:limit]
+    if ' ' in cut:
+        cut = cut[:cut.rfind(' ')]
+    return cut + "…"
+
+
+def build_local_summary(title: str, scripture: str, full_text: str) -> str:
+    """
+    AI 미연결/실패 시에도 '원고에서 실제로 뽑아낸' 요약을 만든다.
+    (예전처럼 아무 설교에나 붙는 템플릿 문구를 쓰지 않는다.)
+    """
+    a = analyze_manuscript(full_text)
+    if a["char_count"] < 80:
+        return ("⚠️ 설교 원고가 비어 있거나 너무 짧습니다.\n"
+                "[📤 새 설교 등록/원고작성] 메뉴에서 설교문 전문을 먼저 등록해 주세요.")
+
+    kw = a["keywords"][:8]
+    refs = a["refs"][:8]
+    secs = a["sections"]
+    apps = a["applications"]
+
+    # 명제는 대지 제목과 중복되지 않는 문장으로 고른다
+    sec_heads = {s["headline"] for s in secs}
+    prop_src = next((s for s in a["key_sentences"] if s[:90] not in sec_heads),
+                    (a["key_sentences"][0] if a["key_sentences"]
+                     else (a["paragraphs"][0] if a["paragraphs"] else title)))
+
+    lines = []
+    lines.append(f"🧭 [원고 자동 추출 요약]  ·  {title}  ·  {scripture}")
+    lines.append(f"※ AI 서버 연결 없이, 업로드하신 설교 원고 본문에서 직접 추출한 결과입니다. (원고 {a['char_count']:,}자 분석)")
+    lines.append("")
+    lines.append("🎯 설교 핵심 명제")
+    lines.append(f"{prop_src}")
+    lines.append("")
+    lines.append(f"🔑 이 설교의 핵심 키워드: {', '.join(kw) if kw else '(추출 불가)'}")
+    if refs:
+        lines.append(f"📖 원고에 인용된 성경 구절: {', '.join(refs)}")
+    lines.append("")
+    lines.append("📌 원고 흐름에 따른 3대지")
+    for i, sec in enumerate(secs[:3], start=1):
+        lines.append(f"{i}. {_trim_title(sec['headline'])}")
+        lines.append(f"   ▸ 원고 근거: \"{sec['evidence'][:220]}{'…' if len(sec['evidence']) > 220 else ''}\"")
+        lines.append("")
+
+    lines.append("💡 원고에서 뽑은 실천 적용")
+    if apps:
+        for i, s in enumerate(apps[:3], start=1):
+            lines.append(f"- {i}. {s}")
+    else:
+        lines.append("- (원고에 직접적인 권면·적용 문장이 없어 추출하지 못했습니다. AI 요약 버튼을 눌러주세요.)")
+    lines.append("")
+
+    lines.append("🙏 마침 기도")
+    if a["prayer"]:
+        lines.append(a["prayer"][:400])
+    else:
+        lines.append(f"(원고에 기도문 단락이 없습니다. 본문 {scripture}과 위 적용을 근거로 기도문을 작성해 주세요.)")
+
+    return "\n".join(lines)
+
+
+# 기존 함수명 호환 유지
+def analyze_expository_sermon(title: str, scripture: str, full_text: str) -> str:
+    return build_local_summary(title, scripture, full_text)
+
+
+def build_sermon_context(text: str, max_chars: int = 9000) -> str:
+    """
+    긴 원고를 프롬프트에 넣을 때 앞부분만 잘라내면 결론/적용이 통째로 날아간다.
+    앞 45% / 중간 25% / 뒤 30% 를 균형 있게 샘플링해서 전체 흐름을 살린다.
+    """
+    text = (text or "").strip()
+    if len(text) <= max_chars:
+        return text
+    head_n = int(max_chars * 0.45)
+    mid_n = int(max_chars * 0.25)
+    tail_n = max_chars - head_n - mid_n
+    mid_start = (len(text) - mid_n) // 2
+    return (
+        text[:head_n]
+        + "\n\n…(중략)…\n\n"
+        + text[mid_start:mid_start + mid_n]
+        + "\n\n…(중략)…\n\n"
+        + text[-tail_n:]
+    )
+
+
+# ==============================================================================
+# 영구 저장 설교 DB
+# ==============================================================================
 SERMON_DB_PATH = "./outputs/sermons_db.json"
+
 
 def get_db_sermons():
     os.makedirs("./outputs", exist_ok=True)
@@ -161,28 +567,26 @@ def get_db_sermons():
                     return data
         except Exception:
             pass
+    default_data = [{
+        "id": 1,
+        "title": "예배와 선교",
+        "scripture": "이사야 59:21",
+        "testament": "구약",
+        "book": "이사야",
+        "topic": "예배와 선교",
+        "theology": "개혁주의/장로교",
+        "date": "2026-08-27",
+        "tags": ["선교", "예배", "이사야", "복음"],
+        "summary": "",
+        "text": """선교전략 용어 중에 1040창(10/40 Window)을 들어보셨을 것입니다. 북위 10도와 40도 사이의 아시아, 북아프리카, 중동 지역을 일컫는 말입니다. 미전도 종족과 빈곤율이 가장 높고 영적 어둠이 짙은 곳입니다.
 
-    default_data = [
-        {
-            "id": 1,
-            "title": "예배와 선교",
-            "scripture": "이사야 59:21",
-            "testament": "구약",
-            "book": "이사야",
-            "topic": "예배와 선교",
-            "theology": "개혁주의/장로교",
-            "date": "2026-08-27",
-            "tags": ["선교", "예배", "이사야", "복음"],
-            "summary": "",
-            "text": """선교전략용어 중에 1040창(10/40 Window)을 들어보셨을 테지요. 북위 10도와 40도 사이의 아시아, 북아프리카, 중동 지역을 일컫는 말입니다. 미전도 종족과 빈곤율이 가장 높고 영적 어둠이 짙은 곳입니다.
-
-오늘 본문 이사야 59장 21절은 '내 영과 내 말이 네 입에서 영원토록 떠나지 아니하리라' 말씀하십니다. 참된 예배를 회복할 때 비로소 선교의 문이 열립니다.
+오늘 본문 이사야 59장 21절은 "내 영과 내 말이 네 입에서 영원토록 떠나지 아니하리라" 말씀하십니다. 참된 예배를 회복할 때 비로소 선교의 문이 열립니다.
 
 우리가 말씀과 성령으로 충만하여 대대손손 복음의 유산을 전수하고 땅끝까지 증인 되는 삶을 살아갑시다."""
-        }
-    ]
+    }]
     save_db_sermons(default_data)
     return default_data
+
 
 def save_db_sermons(sermons_list):
     os.makedirs("./outputs", exist_ok=True)
@@ -192,15 +596,16 @@ def save_db_sermons(sermons_list):
     except Exception as e:
         st.error(f"서재 파일 저장 오류: {str(e)}")
 
+
 def add_sermon_to_db(new_sermon_dict):
     current_list = get_db_sermons()
     existing_ids = [int(s.get("id", 0)) for s in current_list if str(s.get("id", "")).isdigit()]
-    next_id = max(existing_ids or [0]) + 1
-    new_sermon_dict["id"] = next_id
+    new_sermon_dict["id"] = max(existing_ids or [0]) + 1
     current_list.append(new_sermon_dict)
     save_db_sermons(current_list)
     st.session_state.sermon_library = current_list
     return new_sermon_dict
+
 
 def update_sermon_in_db(sermon_id, updated_summary=None, updated_text=None):
     current_list = get_db_sermons()
@@ -214,71 +619,55 @@ def update_sermon_in_db(sermon_id, updated_summary=None, updated_text=None):
     save_db_sermons(current_list)
     st.session_state.sermon_library = current_list
 
-# 정밀 강해 설교 로컬 분석 엔진
-def analyze_expository_sermon(title: str, scripture: str, full_text: str) -> str:
-    paragraphs = [p.strip() for p in full_text.split('\n') if len(p.strip()) > 10]
-    p1 = paragraphs[0] if len(paragraphs) > 0 else f"{title}의 거룩한 말씀"
-    p2 = paragraphs[1] if len(paragraphs) > 1 else f"{scripture} 중심의 구속사적 의미"
-    p3 = paragraphs[2] if len(paragraphs) > 2 else "성도들의 삶 속 구체적 실천과 순종"
 
-    d1_title = re.sub(r'^[0-9\.\s\-•제대지]+', '', p1[:35]).strip() or "말씀의 깊은 은혜"
-    d2_title = re.sub(r'^[0-9\.\s\-•제대지]+', '', p2[:35]).strip() or "성령의 역사와 회복"
-    d3_title = re.sub(r'^[0-9\.\s\-•제대지]+', '', p3[:35]).strip() or "믿음의 결단과 선포"
+# ------------------------------------------------------------------------------
+# 설교 전환 시 세션 완전 격리
+# ------------------------------------------------------------------------------
+DERIVED_KEYS = [
+    "small_group_text", "qt5_text", "card_list", "shorts_script_text",
+    "sermon_audit_text", "leader_guide_text", "rich_materials",
+    "praise_list", "shorts_rec", "yt_extracted_result",
+    "rendered_shorts_out", "vo_audio_path", "verse_card_img",
+    "cn_card_idx", "cn_edit_mode", "cn_church_name",
+    "temp_generated_sermon", "temp_ai_title", "temp_ai_scrip",
+    "ai_fallback_used", "ai_last_error",
+]
+DERIVED_PREFIXES = (
+    "family_worship_", "edit_mode_", "show_copy_", "cn_h_", "cn_b_",
+    "edit_sum_area", "edit_grp_area", "edit_qt_area", "edit_sh_area",
+    "edit_audit_area", "edit_ldr_area", "edit_fam_", "vc_text_in",
+)
 
-    return f"""🎯 설교 핵심 명제 ({title} - {scripture}):
-{title} — 하나님의 신실하신 약속과 말씀({scripture})을 심비에 새기고, 일상 속에서 성령의 권능으로 승리하는 삶을 살아갑니다.
-
-📌 강해적 3대지 핵심 요약:
-1. {d1_title} ({scripture})
-- 성경적 주해 원리: {p1}
-
-2. {d2_title} ({scripture})
-- 성경적 주해 원리: {p2}
-
-3. {d3_title} ({scripture})
-- 성경적 주해 원리: {p3}
-
-💡 성도를 위한 구체적 실천 적용 3가지:
-- 1. 매일 일상 속에서 {scripture} 말씀을 묵상하고 감사함으로 하루 시작하기
-- 2. 삶의 위기와 영적 메마름 속에서 세상 방법 대신 말씀과 기도로 먼저 피하기
-- 3. 가정과 일터에서 만나는 이웃들에게 복음의 선한 영향력을 기쁨으로 나누기
-
-🙏 결단 및 축복 기도문:
-살아계신 하나님, 오늘 선포된 [{title}] 말씀을 통해 주님의 뜻을 온전히 깨닫게 하시니 감사합니다. 주신 언약의 말씀을 굳게 붙잡고 믿음으로 승리하는 신실한 주의 성도가 되게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
 
 def load_sermon_to_workspace(sermon_item, idx=0):
+    """서재/등록에서 설교를 불러올 때, 이전 설교의 결과물 캐시를 100% 소각한다."""
+    for k in DERIVED_KEYS:
+        st.session_state.pop(k, None)
+    for k in list(st.session_state.keys()):
+        if any(k.startswith(p) for p in DERIVED_PREFIXES):
+            st.session_state.pop(k, None)
+
     st.session_state.current_sermon_id = sermon_item.get("id", 1)
     st.session_state.current_sermon_idx = idx
     st.session_state.sermon_title = sermon_item.get("title", "")
     st.session_state.sermon_scripture = sermon_item.get("scripture", "")
     st.session_state.full_sermon = sermon_item.get("text", "")
-    
+
     sum_text = sermon_item.get("summary", "")
     if not sum_text or len(sum_text.strip()) < 50:
-        sum_text = analyze_expository_sermon(
+        sum_text = build_local_summary(
             st.session_state.sermon_title,
             st.session_state.sermon_scripture,
             st.session_state.full_sermon
         )
     st.session_state.sermon_summary_text = sum_text
-    
-    # 이전 캐시 전면 소각 (완벽 격리)
-    keys_to_clear = [
-        "small_group_text", "qt5_text", "card_list", "shorts_script_text",
-        "sermon_audit_text", "leader_guide_text", "rich_materials", 
-        "praise_list", "shorts_rec", "yt_extracted_result", 
-        "rendered_shorts_out", "vo_audio_path", "verse_card_img"
-    ]
-    for k in keys_to_clear:
-        if k in st.session_state:
-            del st.session_state[k]
-            
-    for k in list(st.session_state.keys()):
-        if k.startswith("family_worship_"):
-            del st.session_state[k]
+    st.session_state.dash_active_view = "설교 요약"
 
-# --- 1. 개인 보안 접속 인증 ---
-USER_PIN = st.secrets.get("APP_PIN", "7777")
+
+# ==============================================================================
+# 보안 접속
+# ==============================================================================
+USER_PIN = st.secrets.get("APP_PIN", "7777") if hasattr(st, "secrets") else "7777"
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
 
@@ -293,16 +682,19 @@ if not st.session_state.authenticated:
             st.error("PIN 코드가 올바르지 않습니다.")
     st.stop()
 
-# --- 2. API 키 다중 탐색 & 강력한 AI 엔진 ---
+
+# ==============================================================================
+# AI 엔진 (모델 최신화 + 근거 강제 프롬프트 + 실패 투명화)
+# ==============================================================================
 def get_resolved_api_key():
-    sb_k = st.session_state.get("sidebar_api_key_input", "").strip()
-    if sb_k:
-        return sb_k
+    sb_k = st.session_state.get("sidebar_api_key_input", "")
+    if sb_k and sb_k.strip():
+        return sb_k.strip()
     for sec_name in ["GEMINI_API_KEY", "GOOGLE_API_KEY", "API_KEY"]:
         try:
-            val = st.secrets.get(sec_name, "").strip()
-            if val:
-                return val
+            val = st.secrets.get(sec_name, "")
+            if val and str(val).strip():
+                return str(val).strip()
         except Exception:
             pass
     for env_name in ["GEMINI_API_KEY", "GOOGLE_API_KEY"]:
@@ -311,50 +703,117 @@ def get_resolved_api_key():
             return env_val
     return ""
 
-CURRENT_RESOLVED_KEY = get_resolved_api_key()
 
-with st.sidebar.expander("⚙️ AI 연결 설정 (클릭하여 열기)", expanded=False):
-    sidebar_key = st.text_input(
-        "🔑 Gemini API Key", 
-        value=CURRENT_RESOLVED_KEY, 
-        type="password", 
-        key="sidebar_api_key_input",
-        help="Google AI Studio에서 발급받은 API 키를 입력하세요."
-    )
-    if sidebar_key.strip():
-        CURRENT_RESOLVED_KEY = sidebar_key.strip()
+# 2026년 기준 사용 가능한 모델 우선순위 (구형 1.5 계열은 마지막 예비용)
+PREFERRED_MODELS = [
+    "gemini-2.5-flash",
+    "gemini-flash-latest",
+    "gemini-2.0-flash",
+    "gemini-2.5-pro",
+    "gemini-pro-latest",
+    "gemini-2.0-flash-001",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
+]
+
+
+@st.cache_data(show_spinner=False, ttl=1800)
+def discover_available_models(key_fingerprint: str):
+    """계정에서 실제로 호출 가능한 모델을 조회해 우선순위와 교차한다."""
+    try:
+        names = []
+        for m in genai.list_models():
+            methods = getattr(m, "supported_generation_methods", []) or []
+            if "generateContent" in methods:
+                names.append(m.name.replace("models/", ""))
+        if not names:
+            return PREFERRED_MODELS
+        ordered = [m for m in PREFERRED_MODELS if m in names]
+        extras = [n for n in names if n.startswith("gemini") and n not in ordered
+                  and "vision" not in n and "embedding" not in n]
+        return (ordered + extras)[:8] or PREFERRED_MODELS
+    except Exception:
+        return PREFERRED_MODELS
+
+
+SYSTEM_INSTRUCTION = (
+    "당신은 한국 교회 강단 사역을 돕는 최고 수준의 설교 분석 전문가입니다.\n"
+    "반드시 지킬 것:\n"
+    "1) 사용자가 제공한 <설교원고> 안에 실제로 존재하는 내용만 사용합니다. "
+    "원고에 없는 예화·인물·통계·성경구절을 절대 새로 만들어내지 않습니다.\n"
+    "2) 어떤 설교에나 붙일 수 있는 상투적 표현(예: '말씀의 깊은 은혜', '믿음의 결단', "
+    "'주님의 신실하신 은혜가 충만하기를')만으로 항목을 채우지 않습니다. "
+    "반드시 이 원고에만 등장하는 고유한 단어·지명·인물·숫자·예화를 포함시킵니다.\n"
+    "3) 영어 사고 과정, 기획 메모, 인사말, 서두 설명 없이 요청된 결과물 본문만 출력합니다.\n"
+    "4) 인도자(리더/구역장/셀리더/부모)용 안내는 '[인도자 팁 / 가이드]: ...' 형식으로 씁니다.\n"
+    "5) 100% 한국어로 작성합니다."
+)
+
+
+def build_grounded_prompt(task_block: str, ctx_chars: int = 9000, extra: str = "") -> str:
+    """모든 생성 작업에 공통으로 붙는 '근거 강제' 프롬프트 골격"""
+    title = st.session_state.get("sermon_title", "")
+    scripture = st.session_state.get("sermon_scripture", "")
+    raw = st.session_state.get("full_sermon", "")
+    a = analyze_manuscript(raw)
+    body = build_sermon_context(raw, ctx_chars)
+
+    kw = ", ".join(a["keywords"][:15]) or "(없음)"
+    refs = ", ".join(a["refs"][:15]) or "(원고 내 명시적 인용 없음)"
+
+    return f"""[작업 대상 설교]
+제목: {title}
+설교 본문(대표 성구): {scripture}
+
+[이 원고에서 자동 추출된 고유 키워드]
+{kw}
+
+[이 원고에 실제로 인용된 성경 구절]
+{refs}
+
+<설교원고>
+{body}
+</설교원고>
+
+[절대 준수 규칙]
+- 위 <설교원고>에 실제로 나오는 내용만 근거로 삼습니다. 원고에 없는 예화/인물/사건/통계/성구를 지어내지 마십시오.
+- 위 '고유 키워드' 중 최소 5개 이상을 결과물에 자연스럽게 반영하십시오.
+- 모든 항목은 이 설교에만 해당되어야 합니다. 다른 설교에도 그대로 쓸 수 있는 일반론 문장은 금지입니다.
+- 대표 성구는 {scripture} 입니다. 원고에 인용되지 않은 다른 성경 구절을 임의로 끌어오지 마십시오.
+- 100% 한국어. 영어 메모·머리말·마무리 인사 금지. 아래 형식 그대로만 출력.
+
+{task_block}
+{extra}"""
+
 
 def clean_korean_output(text: str) -> str:
     if not text:
         return ""
     lines = text.split("\n")
-    cleaned_lines = []
+    cleaned = []
     for line in lines:
-        stripped = line.strip()
-        if not stripped:
-            cleaned_lines.append("")
+        s = line.strip()
+        if not s:
+            cleaned.append("")
             continue
-        if re.match(r'^(Reliable|100%|Check|Ensure|Draft|Concept|Focus|Selection|Idea|Question|Application|Target|Passage|Summary|Matches|Follows)', stripped, re.IGNORECASE):
+        # 순수 영어 메모 줄만 제거 (한글이 섞인 줄은 절대 건드리지 않음)
+        k = len(re.findall(r'[가-힣]', s))
+        e = len(re.findall(r'[a-zA-Z]', s))
+        if k == 0 and e > 20:
             continue
-        if stripped.startswith("* Check") or stripped.startswith("* Ensure") or stripped.startswith("* Focus:"):
+        if re.match(r'^(Okay|Sure|Certainly|Here is|Here\'s|I will|Let me|Note:)\b', s, re.IGNORECASE):
             continue
-        k_chars = len(re.findall(r'[가-힣]', stripped))
-        e_chars = len(re.findall(r'[a-zA-Z]', stripped))
-        if e_chars > 20 and k_chars == 0:
-            continue
-        line = re.sub(r'\([A-Za-z0-9\s,\.\?\!\'\":;\-\/]{5,}\)', '', line)
-        cleaned_lines.append(line)
-    result = "\n".join(cleaned_lines).strip()
-    result = re.sub(r'\n{3,}', '\n\n', result)
+        cleaned.append(line.rstrip())
+    result = re.sub(r'\n{3,}', '\n\n', "\n".join(cleaned).strip())
     return result if result else text
 
-def extract_json_from_text(text: str):
+
+def extract_json_from_text(text):
     if not text:
         return None
     raw = str(text).strip()
     raw = re.sub(r"^`{1,3}[a-zA-Z0-9_-]*\s*", "", raw)
-    raw = re.sub(r"\s*`{1,3}$", "", raw)
-    raw = raw.strip()
+    raw = re.sub(r"\s*`{1,3}$", "", raw).strip()
     try:
         return json.loads(raw)
     except Exception:
@@ -366,281 +825,378 @@ def extract_json_from_text(text: str):
                 pass
     return None
 
-FAST_MODELS = [
-    "gemini-1.5-flash",
-    "gemini-2.0-flash",
-    "gemini-1.5-pro",
-    "models/gemini-1.5-flash",
-    "models/gemini-2.0-flash",
-    "gemini-pro"
-]
 
-def get_ai_response(prompt: str, is_json: bool = True):
+def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35,
+                    kind: str = "summary", card_count: int = 7):
+    """
+    AI 호출. 실패하면 조용히 템플릿을 뱉지 않고,
+    세션에 실패 사유를 기록한 뒤 '원고 기반' 대체 결과를 돌려준다.
+    """
+    st.session_state.ai_fallback_used = False
+    st.session_state.ai_last_error = ""
+
     active_key = get_resolved_api_key()
-    
-    if active_key:
+    if not active_key:
+        st.session_state.ai_fallback_used = True
+        st.session_state.ai_last_error = "Gemini API 키가 설정되지 않았습니다. (사이드바 ⚙️ AI 연결 설정)"
+        return grounded_fallback(kind, is_json, card_count)
+
+    try:
+        genai.configure(api_key=active_key)
+        os.environ["GOOGLE_API_KEY"] = active_key
+        os.environ["GEMINI_API_KEY"] = active_key
+    except Exception as e:
+        st.session_state.ai_fallback_used = True
+        st.session_state.ai_last_error = f"API 키 설정 오류: {e}"
+        return grounded_fallback(kind, is_json, card_count)
+
+    fingerprint = hashlib.sha256(active_key.encode()).hexdigest()[:16]
+    models = discover_available_models(fingerprint)
+
+    errors = []
+    for model_name in models:
         try:
-            genai.configure(api_key=active_key)
-            os.environ["GOOGLE_API_KEY"] = active_key
-            os.environ["GEMINI_API_KEY"] = active_key
-        except Exception:
-            pass
-
-        system_instruction = (
-            "당신은 한국 교회의 사역을 돕는 최고 권위의 목회 전문 어시스턴트입니다. "
-            "영문 생각 과정이나 기획 메모는 일절 작성하지 마십시오. "
-            "사용자가 요청한 메뉴와 목적에 정확히 부합하는 전용 결과물만을 생성하십시오. "
-            "인도자(리더/구역장/셀리더/부모)만 알아야 할 안내 팁이나 멘트는 반드시 '[인도자 팁 / 가이드]: ...' 형식으로 작성하십시오. "
-            "100% 완성된 한국어 사역 문서 본문만 바로 출력하십시오."
-        )
-
-        for model_name in FAST_MODELS:
             try:
-                try:
-                    model = genai.GenerativeModel(model_name, system_instruction=system_instruction)
-                except Exception:
-                    model = genai.GenerativeModel(model_name)
-                
-                if is_json:
-                    try:
-                        res = model.generate_content(
-                            prompt,
-                            generation_config={"response_mime_type": "application/json", "temperature": 0.2}
-                        )
-                        parsed_json = extract_json_from_text(res.text)
-                        if parsed_json:
-                            return parsed_json
-                    except Exception:
-                        res = model.generate_content(prompt, generation_config={"temperature": 0.3})
-                        parsed_json = extract_json_from_text(res.text)
-                        if parsed_json:
-                            return parsed_json
-                else:
-                    res = model.generate_content(prompt, generation_config={"temperature": 0.3})
-                    if res and res.text:
-                        cleaned = clean_korean_output(res.text)
-                        if cleaned and len(cleaned.strip()) > 30:
-                            return cleaned
+                model = genai.GenerativeModel(model_name, system_instruction=SYSTEM_INSTRUCTION)
             except Exception:
-                continue
+                model = genai.GenerativeModel(model_name)
 
-    return generate_fallback_sermon_resource(prompt, is_json)
+            if is_json:
+                cfg = {"response_mime_type": "application/json", "temperature": temperature}
+                try:
+                    res = model.generate_content(prompt, generation_config=cfg)
+                except Exception:
+                    res = model.generate_content(prompt, generation_config={"temperature": temperature})
+                parsed = extract_json_from_text(getattr(res, "text", ""))
+                if parsed:
+                    st.session_state.ai_model_used = model_name
+                    return parsed
+                errors.append(f"{model_name}: JSON 파싱 실패")
+            else:
+                res = model.generate_content(
+                    prompt,
+                    generation_config={"temperature": temperature, "max_output_tokens": 8192}
+                )
+                txt = getattr(res, "text", "") or ""
+                cleaned = clean_korean_output(txt)
+                if cleaned and len(cleaned.strip()) > 60:
+                    st.session_state.ai_model_used = model_name
+                    return cleaned
+                errors.append(f"{model_name}: 응답이 너무 짧음")
+        except Exception as e:
+            errors.append(f"{model_name}: {str(e)[:120]}")
+            continue
 
-def generate_fallback_sermon_resource(prompt: str, is_json: bool):
+    st.session_state.ai_fallback_used = True
+    st.session_state.ai_last_error = " / ".join(errors[:3]) or "알 수 없는 오류"
+    return grounded_fallback(kind, is_json, card_count)
+
+
+# ------------------------------------------------------------------------------
+# 원고 기반 대체 생성기 (AI 실패 시에도 '이 설교의' 내용이 나오도록)
+# ------------------------------------------------------------------------------
+def grounded_fallback(kind: str, is_json: bool, card_count: int = 7):
     title = st.session_state.get("sermon_title", "은혜의 말씀")
     scripture = st.session_state.get("sermon_scripture", "본문 말씀")
-    full_text = st.session_state.get("full_sermon", "")
-    
+    raw = st.session_state.get("full_sermon", "")
+    a = analyze_manuscript(raw)
+    keys = a["keywords"]
+    sents = a["key_sentences"]
+    secs = a["sections"]
+    apps = a["applications"]
+
+    def pick(i, default=""):
+        return sents[i] if len(sents) > i else default
+
     if is_json:
-        if "cards" in prompt or "카드뉴스" in prompt:
-            match_count = re.search(r'정확히\s*(\d+)장', prompt)
-            c_num = int(match_count.group(1)) if match_count else 7
-            
-            cards_arr = []
-            cards_arr.append({"card_number": 1, "headline": f"「 {title} 」", "body_text": f"오늘 선포된 {scripture} 말씀을 통해 주시는 하나님의 거룩한 은혜와 언약의 축복을 나눕니다."})
-            cards_arr.append({"card_number": 2, "headline": "01. 핵심 메시지", "body_text": f"{full_text[:130] if full_text else f'{title}에 담긴 하나님의 뜻을 깊이 깨닫고 순종합시다.'}"})
-            cards_arr.append({"card_number": 3, "headline": "02. 영적 도전", "body_text": f"우리의 삶의 현장에서 {scripture} 말씀은 곧 생명의 능력으로 역사합니다."})
-            cards_arr.append({"card_number": 4, "headline": "03. 은혜의 나눔", "body_text": "주신 은혜를 마음에 새기고 이웃과 가정에 선한 영향력을 흘려보냅시다."})
-            cards_arr.append({"card_number": 5, "headline": "💡 삶의 실천 적용", "body_text": f"1. 매일 {scripture} 묵상하기\n2. 염려 대신 기도로 무릎 꿇기\n3. 사랑의 실천 나누기"})
-            cards_arr.append({"card_number": 6, "headline": "🙏 결단과 축복 기도", "body_text": "살아계신 하나님, 우리에게 주신 거룩한 약속의 말씀을 굳게 붙잡고 믿음으로 승리하게 하옵소서."})
-            
-            for k in range(7, c_num + 1):
-                cards_arr.append({"card_number": k, "headline": f"0{k-3}. 믿음의 동행", "body_text": f"주님의 신실하신 은혜가 이번 한 주간 성도님의 모든 삶의 터전 위에 충만하기를 축복합니다."})
-                
-            return {"cards": cards_arr[:c_num]}
+        if kind == "cards":
+            n = max(3, int(card_count))
+            cards = [{
+                "card_number": 1,
+                "headline": f"「 {title} 」",
+                "body_text": f"{scripture}\n\n{pick(0, title)}"
+            }]
+            for i, sec in enumerate(secs[:3], start=2):
+                cards.append({
+                    "card_number": i,
+                    "headline": f"0{i-1}. {_trim_title(sec['headline'], 28)}",
+                    "body_text": sec["evidence"][:180]
+                })
+            idx = len(cards) + 1
+            for s in sents[3:3 + max(0, n - len(cards) - 2)]:
+                cards.append({"card_number": idx, "headline": f"0{idx-1}. 원고 속 핵심 문장",
+                              "body_text": s[:180]})
+                idx += 1
+            if apps:
+                cards.append({
+                    "card_number": idx,
+                    "headline": "💡 삶의 적용",
+                    "body_text": "\n".join(f"{k}. {s[:90]}" for k, s in enumerate(apps[:3], start=1))
+                })
+                idx += 1
+            cards.append({
+                "card_number": idx,
+                "headline": "🙏 함께 드리는 기도",
+                "body_text": (a["prayer"][:180] if a["prayer"]
+                              else f"{scripture} 말씀을 붙들고 {', '.join(keys[:3])}의 은혜 안에서 살게 하옵소서.")
+            })
+            for c in cards:
+                pass
+            cards = cards[:n]
+            for i, c in enumerate(cards, start=1):
+                c["card_number"] = i
+            while len(cards) < n:
+                extra_i = len(cards) + 1
+                src = sents[(extra_i + 3) % max(1, len(sents))] if sents else title
+                cards.append({"card_number": extra_i, "headline": f"0{extra_i-1}. 말씀 되새김",
+                              "body_text": src[:180]})
+            return {"cards": cards}
 
-        elif "hymns" in prompt or "찬양" in prompt:
+        if kind == "praise":
+            topic = ", ".join(keys[:3]) or title
             return {
-                "hymns": ["새찬송가 304장 - 그 크신 하나님의 사랑", "새찬송가 384장 - 나의 갈 길 다 가도록", "새찬송가 370장 - 주 안에 있는 나에게", "새찬송가 438장 - 내 영혼이 은총 입어", "새찬송가 310장 - 아 하나님의 은혜로"],
-                "gospel_songs": ["하나님의 은혜", "광야를 지나며", "누군가 널 위해 기도하네", "은혜 아니면", "주가 일하시네"],
-                "ccm": ["원하고 바라고 기도합니다", "꽃들도", "시간을 뚫고", "은혜", "선한 능력으로"]
+                "hymns": [f"(AI 미연결) '{topic}' 주제 찬송 검색 필요 - 새찬송가 색인 참조"],
+                "gospel_songs": [f"(AI 미연결) '{topic}' 주제 복음성가 검색 필요"],
+                "ccm": [f"(AI 미연결) '{topic}' 주제 CCM 검색 필요"],
             }
-        elif "titles" in prompt or "쇼츠" in prompt:
+
+        if kind == "shorts_meta":
+            base = [s for s in sents[:5]] or [title]
             return {
-                "titles": [f"1. {title} - 지금 당신에게 필요한 단 하나의 말씀", f"2. 왜 하나님은 {scripture}에서 이렇게 말씀하셨을까?", f"3. 마음이 무너질 때 꼭 기억해야 할 하나님의 약속", f"4. 60초 만에 회복되는 놀라운 은혜의 비결", f"5. 지금 이 순간, 주의 은혜 아래로 피하십시오"],
-                "hashtags": ["#주일설교", "#말씀묵상", "#은혜", "#기독교", "#크리스천", "#쇼츠", "#기도", "#축복"]
+                "titles": [f"{i+1}. {_trim_title(s, 34)}" for i, s in enumerate(base)],
+                "hashtags": ["#주일설교", "#말씀묵상"] + [f"#{k}" for k in keys[:5]],
             }
+        return {}
 
-    # 각 메뉴별 독립된 고품격 텍스트 리소스
-    if "참고" in prompt or "예화" in prompt or "성구" in prompt:
-        return f"""[참고 성구 및 신학적 예화 자료집: {title}]
+    # ---- 텍스트 계열 ----
+    kw_line = ", ".join(keys[:8]) or "(추출 불가)"
+    warn = ("⚠️ AI 서버에 연결되지 않아, 업로드하신 설교 원고에서 직접 추출한 결과를 표시합니다.\n"
+            "   사이드바 [⚙️ AI 연결 설정]에서 Gemini API 키를 확인해 주세요.\n")
 
-1. 📖 본문 연관 핵심 참고 성구 3가지 및 설교적 연결점
-• 로마서 10장 14-15절 ("보내심을 받지 아니하였으면 어찌 전파하리요...")
-  - 연결점: {scripture}에 나타난 하나님의 뜻이 신약 시대 복음 전파와 증인 사명으로 확증됨을 보여줍니다.
-• 마태복음 28장 19-20절 ("너희는 가서 모든 민족을 제자로 삼아...")
-  - 연결점: 우리에게 주신 말씀과 성령을 가지고 세상으로 나아가는 지상 대명령의 신학적 기초가 됩니다.
-• 사도행전 1장 8절 ("오직 성령이 너희에게 임하시면 너희가 권능을 받고...")
-  - 연결점: 말씀과 성령의 기름부으심이 개인의 영성에 머물지 않고 땅끝 증인의 능력으로 확장됨을 확증합니다.
+    if kind == "rich":
+        body = [warn, f"[원고 기반 자료 추출: {title} / {scripture}]", "",
+                f"🔑 핵심 키워드: {kw_line}",
+                f"📖 원고에 인용된 성구: {', '.join(a['refs'][:10]) or '(없음)'}", "",
+                "📝 원고에서 뽑은 인용 가치 있는 문장"]
+        for i, s in enumerate(sents[:6], start=1):
+            body.append(f"- {i}. {s}")
+        return "\n".join(body)
 
-2. 💡 일상 및 현대적 공감 실화 예화 2가지
-• '현대 일상의 사막에서 만난 오아시스 같은 은혜'
-  - 바쁘고 지친 현대 성도가 삶의 현장에서 말씀을 붙잡고 기도로 일어선 감동적인 실화입니다.
-• '어느 아버지의 낡은 성경책과 유산'
-  - 물질적 유산보다 기도의 무릎과 말씀을 남겨준 신앙의 전수 이야기입니다.
+    if kind == "leader":
+        out = [warn, f"[소그룹 리더 가이드(원고 추출): {title} / {scripture}]", "",
+               "1. 🎯 이번 주 모임의 핵심 방향",
+               f"- [인도자 팁 / 가이드]: 원고의 중심 문장 — \"{pick(0, title)}\"", "",
+               "2. 📖 원고 흐름 요약(리더 숙지용)"]
+        for i, sec in enumerate(secs[:3], start=1):
+            out.append(f"- {i}. {_trim_title(sec['headline'])}")
+            out.append(f"  ▸ 근거: \"{sec['evidence'][:160]}…\"")
+        out += ["", "3. 💬 나눔으로 이어갈 원고 속 권면"]
+        for s in (apps[:3] or ["(원고에 권면 문장이 없습니다)"]):
+            out.append(f"- {s}")
+        return "\n".join(out)
 
-3. 🏛️ 교회사 및 기독교 고전 사상가 명언 2가지
-• 어거스틴 (Augustine)
-  - "주님, 주는 우리를 향해 지으셨으므로 우리 마음이 주님 안에서 평안을 얻기까지는 평안하지 아니하나이다."
-• 찰스 스펄전 (Charles Spurgeon)
-  - "기도는 가장 강력한 무기이며, 하나님의 보좌를 움직이는 거룩한 손이다." """
+    if kind == "smallgroup":
+        out = [warn, f"[소그룹 나눔지(원고 추출): {title} / {scripture}]", "",
+               "1. 마음 열기",
+               f"- [인도자 팁 / 가이드]: 이번 설교의 키워드 '{keys[0] if keys else title}'로 시작하세요.",
+               "", "2. 말씀 속으로"]
+        for i, sec in enumerate(secs[:3], start=1):
+            out.append(f"- {i}. \"{_trim_title(sec['headline'], 60)}\" 이 대목에서 마음에 남은 것은 무엇인가요?")
+        out += ["", "3. 삶 속으로"]
+        for i, s in enumerate(apps[:2] or [f"{scripture} 말씀을 이번 주 어디에 적용하시겠습니까?"], start=1):
+            out.append(f"- {i}. \"{s}\" — 나에게는 어떻게 적용됩니까?")
+        out += ["", "4. 마침 기도", a["prayer"][:300] if a["prayer"] else f"{title} 말씀대로 살게 하옵소서. 아멘."]
+        return "\n".join(out)
 
-    elif "소그룹 리더" in prompt or "심화 가이드" in prompt:
-        return f"""[소그룹 리더(구역장/셀리더/순장) 심화 가이드: {title}]
+    if kind == "qt":
+        days = ["월요일", "화요일", "수요일", "목요일", "금요일"]
+        out = [warn, f"[주간 QT 5일치(원고 추출): {title} / {scripture}]", ""]
+        pool = sents if sents else [title] * 5
+        for i, d in enumerate(days):
+            src = pool[i % len(pool)]
+            ref = a["refs"][i % len(a["refs"])] if a["refs"] else scripture
+            out += [f"📅 {d}",
+                    f"- 📖 본문 구절: {ref}",
+                    f"- 💡 말씀 묵상: {src}",
+                    f"- 🎯 삶의 적용: {(apps[i % len(apps)] if apps else '오늘 이 말씀을 한 가지 행동으로 옮겨 보십시오.')}",
+                    f"- 🙏 오늘의 기도: 주님, 이 말씀을 붙들게 하옵소서.", ""]
+        return "\n".join(out)
 
-1. 🎯 이번 주 모임의 핵심 목표 및 주제 방향
-- [인도자 팁 / 가이드]: 성도들이 {scripture} 말씀을 통해 개인의 영적 회복을 경험하고 삶의 현장에서 순종하도록 돕습니다.
+    if kind == "family":
+        out = [warn, f"[가정예배 순서지(원고 추출): {title} / {scripture}]", "",
+               "1. 찬양 및 신앙고백",
+               "- [인도자 팁 / 가이드]: 가족이 함께 아는 찬송으로 시작하세요.", "",
+               "2. 함께 읽는 말씀", f"- 본문: {scripture}", "",
+               "3. 3분 가족 메시지(원고 근거)"]
+        for sec in secs[:2]:
+            out.append(f"- {_trim_title(sec['headline'], 60)}")
+        out += ["", "4. 나눔 질문",
+                f"- 1. 오늘 말씀에서 '{keys[0] if keys else '은혜'}'는 우리 가정에 어떤 의미일까요?",
+                "- 2. 이번 주 우리 가족이 실천할 한 가지는 무엇인가요?", "",
+                "5. 마무리 기도", a["prayer"][:250] if a["prayer"] else "우리 가정을 지켜주옵소서. 아멘."]
+        return "\n".join(out)
 
-2. 📖 본문 배경 및 신학적 핵심 해설 (리더용 심화 자료)
-- [인도자 팁 / 가이드]: 본문의 역사적 배경과 신학적 의미를 리더가 먼저 숙지하고 나눔을 이끌어 주세요.
+    if kind == "audit":
+        out = [warn, f"[원고 구조 자동 점검: {title} / {scripture}]", "",
+               f"- 원고 분량: {a['char_count']:,}자 (약 {max(1, a['char_count']//350)}분 분량 추정)",
+               f"- 문단 수: {len(a['paragraphs'])} / 문장 수: {len(a['sentences'])}",
+               f"- 인용 성구: {len(a['refs'])}개 — {', '.join(a['refs'][:8]) or '없음'}",
+               f"- 권면·적용 문장: {len(a['applications'])}개",
+               f"- 핵심 키워드: {kw_line}", "",
+               "🔎 구조 관찰"]
+        if len(a['refs']) < 2:
+            out.append("- 본문 인용이 적습니다. 대지마다 근거 구절을 명시하면 강해적 설득력이 올라갑니다.")
+        if len(a['applications']) < 3:
+            out.append("- 구체적 적용 문장이 부족합니다. '이번 주에 ~하십시오' 형태의 실행 문장을 보강해 보십시오.")
+        if not a['prayer']:
+            out.append("- 마무리 기도 단락이 확인되지 않습니다.")
+        if len(out) == 8:
+            out.append("- 구조상 큰 결손은 발견되지 않았습니다.")
+        return "\n".join(out)
 
-3. 💬 나눔 질문별 성도들의 예상 답변 및 리더 피드백 팁
-- [인도자 팁 / 가이드]: 대화가 특정인에게 독점되지 않도록 부드럽게 조율해 주세요.
+    if kind == "shorts_script":
+        pool = sents or [title]
+        out = [warn, f"[쇼츠 대본(원고 추출): {title} / {scripture}]", ""]
+        labels = ["🎬 1) 감동·위로형", "💡 2) 질문·호기심형", "🔥 3) 결단 선포형"]
+        for i, lab in enumerate(labels):
+            hook = pool[i % len(pool)]
+            mid = pool[(i + 3) % len(pool)]
+            end = (apps[i % len(apps)] if apps else f"{scripture} 말씀을 오늘 붙드십시오.")
+            out += [lab,
+                    f"- 후킹(0~5초): {hook[:60]}",
+                    f"- 본론(5~45초): {mid}",
+                    f"- 결단(45~60초): {end}",
+                    f"- 자막 키워드: {', '.join(keys[i*2:i*2+5]) or ', '.join(keys[:5])}", ""]
+        return "\n".join(out)
 
-4. ⚠️ 모임 중 침묵 또는 돌발 상황 대처 요령
-- [인도자 팁 / 가이드]: 침묵이 길어질 때는 "천천히 생각해보시고 편하게 나눠주세요"라며 격려해 주세요.
+    if kind == "sermon_write":
+        return ("⚠️ 강해설교문 자동 작성은 AI 전용 기능입니다.\n"
+                "사이드바 [⚙️ AI 연결 설정]에서 Gemini API 키를 등록한 뒤 다시 시도해 주세요.\n"
+                f"(사유: {st.session_state.get('ai_last_error', '연결 실패')})")
 
-5. 🙏 소그룹을 위한 맞춤 중보기도 제목 3가지
-- 1. 구역원들의 가정마다 말씀과 성령의 은혜가 충만하도록
-- 2. 영육 간의 연약함과 질병 중에 있는 지체들의 치유를 위해
-- 3. 믿음의 다음 세대가 복음의 일꾼으로 세워지도록"""
+    return build_local_summary(title, scripture, raw)
 
-    elif "소그룹" in prompt:
-        return f"""[소그룹 나눔지: {title}] (본문: {scripture})
 
-1. 마음 열기 (아이스브레이크)
-- [인도자 팁 / 가이드]: 한 주간 인도하신 하나님께 감사하며 부드럽게 시작하세요.
-- 질문: 이번 한 주 동안 일상에서 하나님의 도우심을 경험한 순간은 언제인가요?
+# ==============================================================================
+# 폰트 (캐싱)
+# ==============================================================================
+# 시스템에 설치돼 있을 만한 한글 폰트 경로 (우선순위 순)
+SYSTEM_FONTS_REGULAR = [
+    "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
+    "/usr/share/fonts/opentype/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/nanum/NanumGothic.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "C:/Windows/Fonts/malgun.ttf",
+    "/System/Library/Fonts/AppleSDGothicNeo.ttc",
+]
+SYSTEM_FONTS_BOLD = [
+    "/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf",
+    "/usr/share/fonts/opentype/nanum/NanumGothicBold.ttf",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    "C:/Windows/Fonts/malgunbd.ttf",
+] + SYSTEM_FONTS_REGULAR
 
-2. 말씀 속으로
-- [인도자 팁 / 가이드]: 본문 {scripture} 말씀을 다 함께 교독한 후 나눔을 시작합니다.
-- 1. 오늘 말씀에서 내 마음에 가장 깊이 와닿은 단어나 구절은 무엇인가요?
-- 2. 설교를 통해 깨닫게 된 참된 예배와 삶의 현장은 어떤 연관이 있나요?
+# 폰트가 없을 때 내려받을 미러 (User-Agent 없으면 403 이 나므로 반드시 헤더를 붙인다)
+FONT_MIRRORS = {
+    "regular": [
+        "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanumgothic/NanumGothic-Regular.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Regular.ttf",
+        "https://cdn.jsdelivr.net/gh/projectnoonnu/noonfonts@master/NanumGothic.ttf",
+    ],
+    "bold": [
+        "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanumgothic/NanumGothic-Bold.ttf",
+        "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Bold.ttf",
+    ],
+}
+FONT_DIR = "./fonts"
 
-3. 삶 속으로
-- [인도자 팁 / 가이드]: 구체적이고 실천 가능한 결단을 이끌어내도록 격려해 주세요.
-- 1. 내가 이번 주에 복음의 선한 영향력을 흘려보내야 할 이웃은 누구인가요?
-- 2. 말씀에 순종하여 구체적으로 실천할 믿음의 행동 한 가지는 무엇인가요?
 
-4. 마침 합심 기도문
-- 살아계신 하나님, 오늘 나눈 {title} 말씀을 마음에 새깁니다. 주님을 의지하며 승리하는 한 주가 되게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
+def _download_font(kind: str, dest: str) -> bool:
+    for url in FONT_MIRRORS.get(kind, []):
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = r.read()
+            if len(data) > 200000:                       # 정상 TTF 인지 최소 검증
+                os.makedirs(FONT_DIR, exist_ok=True)
+                with open(dest, "wb") as f:
+                    f.write(data)
+                return True
+        except Exception:
+            continue
+    return False
 
-    elif "QT" in prompt or "묵상" in prompt:
-        return f"""[주간 QT 5일치: {title}] (본문: {scripture})
 
-📅 월요일: 말씀 앞에 엎드림
-- 📖 본문 구절: {scripture}
-- 💡 말씀 묵상: 하나님은 우리를 향한 신실한 언약과 사랑을 베푸십니다.
-- 🎯 삶의 적용: 오늘 하루 세상 소리보다 주의 말씀에 먼저 귀를 기울이십시오.
-- 🙏 오늘의 기도: 주의 음성에 순종하는 마음을 주옵소서.
+@st.cache_resource(show_spinner=False)
+def ensure_korean_fonts():
+    """(regular_path, bold_path) 반환. 확보 실패 시 (None, None)."""
+    reg = next((p for p in SYSTEM_FONTS_REGULAR if os.path.exists(p)), None)
+    bold = next((p for p in SYSTEM_FONTS_BOLD if os.path.exists(p)), None)
 
-📅 화요일: 폭풍 속의 참된 피난처
-- 📖 본문 구절: {scripture}
-- 💡 말씀 묵상: 거친 풍랑 속에서도 참된 안식은 주님의 품 안에 있습니다.
-- 🎯 삶의 적용: 염려가 찾아올 때 즉시 기도의 자리로 나아갑니다.
-- 🙏 오늘의 기도: 오직 주님만을 유일한 피난처 삼게 하옵소서.
+    if not reg:
+        cand = os.path.join(FONT_DIR, "NanumGothic-Regular.ttf")
+        if os.path.exists(cand) or _download_font("regular", cand):
+            reg = cand
+    if not bold:
+        cand = os.path.join(FONT_DIR, "NanumGothic-Bold.ttf")
+        if os.path.exists(cand) or _download_font("bold", cand):
+            bold = cand
+    return reg, (bold or reg)
 
-📅 수요일: 기도의 응답을 확신하라
-- 📖 본문 구절: {scripture}
-- 💡 말씀 묵상: 간절히 부르짖는 성도의 기도를 주님은 결코 외면하지 않으십니다.
-- 🎯 삶의 적용: 기도의 제목을 적고 응답하셨음을 믿음으로 선포하십시오.
-- 🙏 오늘의 기도: 낙심하지 않고 믿음의 기도를 드리게 하옵소서.
-
-📅 목요일: 은혜의 선한 증인
-- 📖 본문 구절: {scripture}
-- 💡 말씀 묵상: 우리가 경험한 은혜는 이웃과 가정으로 흘러가야 합니다.
-- 🎯 삶의 적용: 주위의 지체들에게 따뜻한 위로와 사랑을 전하십시오.
-- 🙏 오늘의 기도: 나의 삶이 복음의 향기를 품게 하옵소서.
-
-📅 금요일: 믿음의 전진과 승리
-- 📖 본문 구절: {scripture}
-- 💡 말씀 묵상: 주님께서 우리의 앞길을 인도하시며 영원한 승리를 주십니다.
-- 🎯 삶의 적용: 한 주간 주신 은혜를 돌아보며 감사의 고백을 드리세요.
-- 🙏 오늘의 기도: 주님의 신실하신 인도하심에 온전히 감사드립니다."""
-
-    elif "가정예배" in prompt:
-        return f"""[가정예배 순서지: {title}] (본문: {scripture})
-
-1. 찬양 및 신앙고백
-- [인도자 팁 / 가이드]: 온 가족이 함께 밝은 목소리로 찬송을 부릅니다.
-- 찬양: '그 크신 하나님의 사랑'
-
-2. 함께 읽는 성경 말씀
-- [인도자 팁 / 가이드]: 가족들이 돌아가며 {scripture} 구절을 교독합니다.
-- 본문 말씀: {scripture}
-
-3. 가족 3분 메시지
-- [인도자 팁 / 가이드]: 자녀들의 눈높이에 맞추어 오늘 말씀을 쉽게 설명해 주세요.
-- 하나님은 언제나 우리 가정의 가장 든든한 울타리와 피난처가 되어 주십니다.
-
-4. 온 가족 나눔 질문 2가지
-- [인도자 팁 / 가이드]: 자녀들의 이야기를 끝까지 경청하고 칭찬해 주세요.
-- 1. 이번 주에 가장 감사했던 일은 무엇인가요?
-- 2. 하나님께 바라는 기도의 제목을 서로 나누어 봅시다.
-
-5. 가정을 축복하는 마무리 기도문
-- 하나님 아버지, 우리 가족 모두가 주님의 사랑 안에서 늘 행복하고 믿음으로 굳건하게 서게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
-
-    elif "점검" in prompt or "피드백" in prompt:
-        return f"""[설교 전문 피드백 리포트: {title}]
-
-1. 📖 본문 주해의 정확성 및 성경 중심성 평가 (96점)
-- 본문 {scripture}의 구속사적 맥락을 정확하게 짚어내어 성경 중심적인 설교로 훌륭하게 정립되었습니다.
-
-2. 🏗️ 논리적 대지 전개 및 설교 구조 분석 (95점)
-- 3대지의 흐름이 매우 유기적이며 청중의 마음을 움직이는 설득력이 뛰어납니다.
-
-3. 💡 청중 공감 예화 및 삶의 적용 적절성 (95점)
-- 성도들의 일상 속에서 즉시 실천할 수 있는 구체적이고 현실적인 적용이 돋보입니다.
-
-4. 🎙️ 스피치 전달력 및 표현 개선 제안
-- 선포의 순간에 핵심 메시지를 1~2초간 멈춤(Pause) 기법으로 강조하면 더욱 극적인 효과를 줍니다.
-
-5. 📊 종합 총평 및 핵심 권고사항
-- 성도들에게 깊은 위로와 도전, 그리고 실천적 결단을 안겨주는 매우 탁월한 강단 선포 원고입니다."""
-
-    return analyze_expository_sermon(title, scripture, full_text)
-
-# --- 3. 폰트 캐싱 엔진 ---
-PDF_FONT_NAME = "Helvetica"
 
 @st.cache_resource(show_spinner=False)
 def init_korean_font():
-    paths = [
-        "/usr/share/fonts/truetype/nanum/NanumGothic.ttf",
-        "/usr/share/fonts/truetype/nanum/NanumBarunGothic.ttf",
-        "/usr/share/fonts/opentype/nanum/NanumGothic.ttf",
-        "/usr/share/fonts/nanum/NanumGothic.ttf",
-        "C:/Windows/Fonts/malgun.ttf",
-        "/System/Library/Fonts/AppleSDGothicNeo.ttc",
-        "./NanumGothic.ttf"
-    ]
-    for p in paths:
-        if os.path.exists(p):
-            try:
-                pdfmetrics.registerFont(TTFont("NanumKorean", p))
-                return "NanumKorean"
-            except Exception:
-                pass
+    """
+    reportlab(PDF)용 한글 폰트 등록.
+    reportlab은 .ttc(폰트 컬렉션)나 CFF 계열을 제대로 못 읽는 경우가 많아
+    반드시 순수 .ttf 를 우선 시도하고, 없으면 NanumGothic 을 내려받는다.
+    """
+    reg, _ = ensure_korean_fonts()
 
-    local_f = "./NanumGothic.ttf"
-    if not os.path.exists(local_f):
+    tries = []
+    for p in SYSTEM_FONTS_REGULAR:
+        if os.path.exists(p) and p.lower().endswith(".ttf"):
+            tries.append((p, None))
+
+    dl = os.path.join(FONT_DIR, "NanumGothic-Regular.ttf")
+    if os.path.exists(dl) or _download_font("regular", dl):
+        tries.append((dl, None))
+
+    if reg and reg.lower().endswith((".ttc", ".otc")):
+        tries.append((reg, 0))          # 컬렉션은 첫 번째 서브폰트로 시도
+
+    for path, sub in tries:
         try:
-            url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
-            urllib.request.urlretrieve(url, local_f)
-        except Exception:
-            pass
-    if os.path.exists(local_f):
-        try:
-            pdfmetrics.registerFont(TTFont("NanumKorean", local_f))
+            if sub is None:
+                pdfmetrics.registerFont(TTFont("NanumKorean", path))
+            else:
+                pdfmetrics.registerFont(TTFont("NanumKorean", path, subfontIndex=sub))
             return "NanumKorean"
         except Exception:
-            pass
+            continue
     return "Helvetica"
 
-PDF_FONT_NAME = init_korean_font()
 
-# --- 4. 풍경 배경 캐싱 ---
+PDF_FONT_NAME = init_korean_font()
+KOREAN_FONT_OK = (PDF_FONT_NAME != "Helvetica")
+
+
+@st.cache_resource(show_spinner=False)
+def get_pil_font(size: int):
+    _, bold = ensure_korean_fonts()
+    if bold:
+        try:
+            return PIL.ImageFont.truetype(bold, size)
+        except Exception:
+            pass
+    return PIL.ImageFont.load_default()
+
+
+# ==============================================================================
+# 배경 이미지
+# ==============================================================================
 CARD_BACKGROUNDS = [
     "https://images.unsplash.com/photo-1506744038136-46273834b3fb?w=1080&q=80",
     "https://images.unsplash.com/photo-1518495973542-4542c06a5843?w=1080&q=80",
@@ -649,45 +1205,84 @@ CARD_BACKGROUNDS = [
     "https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=1080&q=80",
     "https://images.unsplash.com/photo-1519681393784-d120267933ba?w=1080&q=80",
     "https://images.unsplash.com/photo-1495616811223-4d98c6e9c869?w=1080&q=80",
-    "https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=1080&q=80"
+    "https://images.unsplash.com/photo-1470252649378-9c29740c9fa8?w=1080&q=80",
 ]
+
 
 @st.cache_data(show_spinner=False, ttl=86400)
 def fetch_image_bytes(url: str):
     try:
         req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=1.5) as response:
+        with urllib.request.urlopen(req, timeout=4) as response:
             return response.read()
     except Exception:
         return None
 
-def wrap_korean_text(text: str, font, max_width: int, draw: PIL.ImageDraw.ImageDraw) -> str:
+
+EMOJI_RE = re.compile(
+    "[\U0001F000-\U0001FAFF\U00002600-\U000027BF\U0001F1E6-\U0001F1FF⬀-⯿️‍]+"
+)
+
+
+def strip_emoji(text: str) -> str:
+    """한글 폰트에는 이모지 글리프가 없어 □(두부)로 찍히므로 이미지에서는 제거한다."""
+    return re.sub(r'\s{2,}', ' ', EMOJI_RE.sub('', text or "")).strip()
+
+
+def wrap_korean_text(text: str, font, max_width: int, draw) -> str:
     if not text:
         return ""
-    wrapped_lines = []
-    paragraphs = str(text).split('\n')
-    for p in paragraphs:
+    wrapped = []
+    for p in str(text).split('\n'):
         words = p.split(' ')
-        curr_line = ""
+        curr = ""
         for w in words:
-            test_line = f"{curr_line} {w}".strip()
-            bbox = draw.textbbox((0, 0), test_line, font=font)
-            line_w = bbox[2] - bbox[0]
-            if line_w > max_width and curr_line:
-                wrapped_lines.append(curr_line)
-                curr_line = w
+            test = f"{curr} {w}".strip()
+            bbox = draw.textbbox((0, 0), test, font=font)
+            if (bbox[2] - bbox[0]) > max_width and curr:
+                wrapped.append(curr)
+                curr = w
             else:
-                curr_line = test_line
-        if curr_line:
-            wrapped_lines.append(curr_line)
-    return "\n".join(wrapped_lines)
+                curr = test
+        wrapped.append(curr)
+    return "\n".join(wrapped)
 
-def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
+
+# ==============================================================================
+# PPTX 투명도 헬퍼 (배경 이미지가 검게 덮이던 버그 수정)
+# ==============================================================================
+def set_shape_fill_alpha(shape, alpha: float):
+    """alpha 0.0(투명) ~ 1.0(불투명)"""
+    try:
+        spPr = shape.fill._xPr
+        solid = spPr.find(qn('a:solidFill'))
+        if solid is None:
+            return
+        clr = solid.find(qn('a:srgbClr'))
+        if clr is None:
+            return
+        for old in clr.findall(qn('a:alpha')):
+            clr.remove(old)
+        el = etree.SubElement(clr, qn('a:alpha'))
+        el.set('val', str(int(max(0.0, min(1.0, alpha)) * 100000)))
+    except Exception:
+        pass
+
+
+# ==============================================================================
+# 카드 이미지 생성 (캐싱)
+# ==============================================================================
+@st.cache_data(show_spinner=False, max_entries=64)
+def generate_single_card_png_bytes(card_json: str, idx: int, scripture_str: str, church_name: str) -> bytes:
+    card_item = json.loads(card_json)
     bg_url = CARD_BACKGROUNDS[idx % len(CARD_BACKGROUNDS)]
     img_b = fetch_image_bytes(bg_url)
-    
+
     if img_b:
-        base_img = PIL.Image.open(io.BytesIO(img_b)).convert("RGBA").resize((1080, 1080))
+        try:
+            base_img = PIL.Image.open(io.BytesIO(img_b)).convert("RGBA").resize((1080, 1080))
+        except Exception:
+            base_img = PIL.Image.new("RGBA", (1080, 1080), (15, 23, 42, 255))
     else:
         base_img = PIL.Image.new("RGBA", (1080, 1080), (15, 23, 42, 255))
 
@@ -695,206 +1290,64 @@ def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
     combined = PIL.Image.alpha_composite(base_img, overlay)
     draw = PIL.ImageDraw.Draw(combined)
 
-    font_b = None
-    for f_p in ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgun.ttf"]:
-        if os.path.exists(f_p):
-            try: font_b = PIL.ImageFont.truetype(f_p, 44); break
-            except Exception: pass
-    if not font_b: font_b = PIL.ImageFont.load_default()
+    M = 100                       # 좌우 여백
+    MAXW = 1080 - M * 2
+    head_txt = strip_emoji(str(card_item.get("headline", "")))
+    body_txt = strip_emoji(str(card_item.get("body_text", "")))
 
-    font_t = None
-    for f_p in ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgun.ttf"]:
-        if os.path.exists(f_p):
-            try: font_t = PIL.ImageFont.truetype(f_p, 30); break
-            except Exception: pass
-    if not font_t: font_t = PIL.ImageFont.load_default()
+    # 글자 수에 따라 폰트 크기를 자동 조절해 넘침/여백을 줄인다
+    h_size = 52 if len(head_txt) <= 18 else (46 if len(head_txt) <= 28 else 38)
+    b_size = 34 if len(body_txt) <= 90 else (30 if len(body_txt) <= 160 else 26)
+    font_b, font_t, font_s = get_pil_font(h_size), get_pil_font(b_size), get_pil_font(26)
 
-    draw.text((100, 90), f"CARD {card_item.get('card_number', idx+1)}", fill=(99, 102, 241, 255), font=font_t)
-    
-    headline_raw = card_item.get("headline", "")
-    headline_wrapped = wrap_korean_text(headline_raw, font_b, 880, draw)
-    draw.multiline_text((100, 170), headline_wrapped, fill=(253, 224, 71, 255), font=font_b, spacing=12)
+    head = wrap_korean_text(head_txt, font_b, MAXW, draw)
+    body = wrap_korean_text(body_txt, font_t, MAXW, draw)
 
-    body_raw = card_item.get("body_text", "")
-    body_wrapped = wrap_korean_text(body_raw, font_t, 880, draw)
-    draw.multiline_text((100, 380), body_wrapped, fill=(241, 245, 249, 255), font=font_t, spacing=16)
+    hb = draw.multiline_textbbox((0, 0), head, font=font_b, spacing=14) if head else (0, 0, 0, 0)
+    bb = draw.multiline_textbbox((0, 0), body, font=font_t, spacing=18) if body else (0, 0, 0, 0)
+    h_h, b_h = hb[3] - hb[1], bb[3] - bb[1]
+    gap = 46 if head and body else 0
+    block = h_h + gap + b_h
+
+    # 상단 배지/하단 출처 영역을 뺀 공간의 세로 중앙에 배치
+    top_limit, bottom_limit = 200, 860
+    y = max(top_limit, top_limit + ((bottom_limit - top_limit) - block) // 2)
+
+    draw.text((M, 86), f"CARD {card_item.get('card_number', idx + 1)}",
+              fill=(129, 140, 248, 255), font=font_s)
+    draw.line([(M, 132), (M + 70, 132)], fill=(253, 224, 71, 255), width=4)
+
+    if head:
+        draw.multiline_text((M, y), head, fill=(253, 224, 71, 255), font=font_b, spacing=14)
+    if body:
+        draw.multiline_text((M, y + h_h + gap), body, fill=(241, 245, 249, 255), font=font_t, spacing=18)
 
     if scripture_str:
-        draw.text((100, 910), f"「 {scripture_str} 」", fill=(253, 224, 71, 255), font=font_t)
+        draw.text((M, 906), f"「 {scripture_str} 」", fill=(253, 224, 71, 255), font=get_pil_font(30))
     if church_name:
-        draw.text((100, 965), church_name, fill=(147, 197, 253, 255), font=font_t)
+        draw.text((M, 960), church_name, fill=(147, 197, 253, 255), font=font_s)
 
-    out_buf = io.BytesIO()
-    combined.convert("RGB").save(out_buf, format="PNG")
-    out_buf.seek(0)
-    return out_buf
+    out = io.BytesIO()
+    combined.convert("RGB").save(out, format="PNG")
+    return out.getvalue()
 
-def generate_cardnews_zip(cards, scripture_str="", church_name=""):
-    zip_buf = io.BytesIO()
-    with zipfile.ZipFile(zip_buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def generate_cardnews_zip_bytes(cards_json: str, scripture_str: str, church_name: str) -> bytes:
+    cards = json.loads(cards_json)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
         for i, card in enumerate(cards):
-            png_buf = generate_single_card_png(card, i, scripture_str, church_name)
-            zf.writestr(f"cardnews_{i+1}.png", png_buf.getvalue())
-    zip_buf.seek(0)
-    return zip_buf
+            png = generate_single_card_png_bytes(json.dumps(card, ensure_ascii=False), i, scripture_str, church_name)
+            zf.writestr(f"cardnews_{i+1:02d}.png", png)
+    return buf.getvalue()
 
-def extract_youtube_to_shorts(yt_url: str, start_sec: int, duration_sec: int, title: str, subtitle_text: str, church_name: str = ""):
-    out_dir = "./outputs"
-    os.makedirs(out_dir, exist_ok=True)
-    src_video = os.path.join(out_dir, "yt_raw_source.mp4")
-    
-    clean_input = yt_url.strip()
-    vid_match = re.search(r'(?:v=|\/live\/|\/shorts\/|youtu\.be\/)([a-zA-Z0-9_-]{11})', clean_input)
-    video_id = vid_match.group(1) if vid_match else None
-    clean_url = f"https://www.youtube.com/watch?v={video_id}" if video_id else clean_input
 
-    download_success = False
-
-    cobalt_endpoints = [
-        "https://api.cobalt.tools/api/json",
-        "https://co.wuk.sh/api/json",
-        "https://cobalt-api.koyeb.app/api/json"
-    ]
-    for ep in cobalt_endpoints:
-        try:
-            payload = json.dumps({"url": clean_url, "videoQuality": "720"}).encode('utf-8')
-            req = urllib.request.Request(
-                ep,
-                data=payload,
-                headers={
-                    "Accept": "application/json",
-                    "Content-Type": "application/json",
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
-                }
-            )
-            with urllib.request.urlopen(req, timeout=8) as resp:
-                resp_bytes = resp.read()
-                try:
-                    res_json = json.loads(resp_bytes.decode('utf-8'))
-                    dl_link = res_json.get("url")
-                    if dl_link:
-                        urllib.request.urlretrieve(dl_link, src_video)
-                        if os.path.exists(src_video) and os.path.getsize(src_video) > 100000:
-                            download_success = True
-                            break
-                except Exception:
-                    continue
-        except Exception:
-            continue
-
-    if not download_success:
-        client_strategies = [['ios'], ['android_creator'], ['mweb'], ['tv_embedded']]
-        for clients in client_strategies:
-            if os.path.exists(src_video):
-                try: os.remove(src_video)
-                except Exception: pass
-
-            ydl_opts = {
-                'format': 'best[ext=mp4]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best',
-                'outtmpl': src_video,
-                'overwrites': True,
-                'quiet': True,
-                'no_warnings': True,
-                'nocheckcertificate': True,
-                'geo_bypass': True,
-                'http_headers': {
-                    'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X)',
-                },
-                'extractor_args': {
-                    'youtube': {
-                        'player_client': clients
-                    }
-                }
-            }
-
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([clean_url])
-                if os.path.exists(src_video) and os.path.getsize(src_video) > 100000:
-                    download_success = True
-                    break
-            except Exception:
-                continue
-
-    if not download_success or not os.path.exists(src_video):
-        raise Exception("클라우드 차단으로 자동 우회 다운로드가 어려울 경우, [🎨 AI 나레이션 & 템플릿 숏츠 제작] 탭에서 설교 동영상을 직접 업로드하여 9:16 숏츠를 바로 렌더링하실 수 있습니다.")
-
-    raw_clip = VideoFileClip(src_video)
-    max_dur = raw_clip.duration
-    start_sec = max(0, min(start_sec, int(max_dur) - 5))
-    end_sec = min(start_sec + duration_sec, int(max_dur))
-    
-    sub_clip = raw_clip.subclip(start_sec, end_sec)
-    w, h = sub_clip.size
-    
-    target_w = int(h * (9 / 16))
-    if w > target_w:
-        x_center = w / 2
-        cropped = sub_clip.crop(x1=x_center - target_w/2, y1=0, x2=x_center + target_w/2, y2=h)
-    else:
-        cropped = sub_clip
-        
-    final_video_clip = cropped.resize((1080, 1920))
-    clip_dur = final_video_clip.duration
-    
-    overlays = [final_video_clip]
-    top_bar = ColorClip(size=(1080, 240), color=(0,0,0), duration=clip_dur).set_opacity(0.45).set_position(('center', 100))
-    overlays.append(top_bar)
-    
-    title_clip = (
-        create_pil_text_clip(
-            title,
-            fontsize=48,
-            color="#FDE047",
-            stroke_color="black",
-            stroke_width=2,
-            size=(920, None),
-            duration=clip_dur
-        )
-        .set_position(("center", 140))
-    )
-    overlays.append(title_clip)
-    
-    if subtitle_text:
-        sub_clip_txt = (
-            create_pil_text_clip(
-                subtitle_text,
-                fontsize=40,
-                color="white",
-                stroke_color="black",
-                stroke_width=2,
-                size=(900, None),
-                duration=clip_dur
-            )
-            .set_position(("center", 1400))
-        )
-        overlays.append(sub_clip_txt)
-        
-    if church_name:
-        church_clip = (
-            create_pil_text_clip(
-                church_name,
-                fontsize=28,
-                color="#93C5FD",
-                stroke_color="black",
-                stroke_width=1,
-                size=(800, None),
-                duration=clip_dur
-            )
-            .set_position(("center", 1780))
-        )
-        overlays.append(church_clip)
-        
-    comp = CompositeVideoClip(overlays)
-    out_file = os.path.join(out_dir, f"yt_shorts_extracted_{int(datetime.now().timestamp())}.mp4")
-    comp.write_videofile(out_file, fps=24, codec="libx264", audio_codec="aac", threads=4, preset="ultrafast")
-    
-    raw_clip.close()
-    sub_clip.close()
-    comp.close()
-    return out_file
-
-def create_docx(title: str, content: str) -> io.BytesIO:
+# ==============================================================================
+# 문서 내보내기 (전부 캐싱 — 매 rerun 재생성 방지)
+# ==============================================================================
+@st.cache_data(show_spinner=False, max_entries=48)
+def create_docx_bytes(title: str, content: str) -> bytes:
     try:
         doc = Document()
         tp = doc.add_paragraph()
@@ -902,434 +1355,311 @@ def create_docx(title: str, content: str) -> io.BytesIO:
         run.font.size, run.font.bold = DocxPt(18), True
         run.font.color.rgb = DocxRGB(30, 58, 138)
         doc.add_paragraph(f"작성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오\n")
-        for line in content.split("\n"):
-            if line.strip(): doc.add_paragraph(line.strip())
+        for line in (content or "").split("\n"):
+            doc.add_paragraph(line.strip())
         bio = io.BytesIO()
         doc.save(bio)
-        bio.seek(0)
-        return bio
+        return bio.getvalue()
     except Exception:
-        return io.BytesIO(content.encode("utf-8"))
+        return (content or "").encode("utf-8")
 
-def create_pdf(title: str, content: str) -> io.BytesIO:
+
+@st.cache_data(show_spinner=False, max_entries=48)
+def create_pdf_bytes(title: str, content: str) -> bytes:
     try:
         font_to_use = init_korean_font()
         bio = io.BytesIO()
-        doc = SimpleDocTemplate(
-            bio,
-            pagesize=letter,
-            rightMargin=36,
-            leftMargin=36,
-            topMargin=36,
-            bottomMargin=36
-        )
-        
-        t_style = ParagraphStyle(
-            name="K_Title",
-            fontName=font_to_use,
-            fontSize=15,
-            leading=20,
-            textColor="#1e3a8a",
-            spaceAfter=8
-        )
-        m_style = ParagraphStyle(
-            name="K_Meta",
-            fontName=font_to_use,
-            fontSize=8,
-            leading=12,
-            textColor="#64748b",
-            spaceAfter=12
-        )
-        b_style = ParagraphStyle(
-            name="K_Body",
-            fontName=font_to_use,
-            fontSize=9.5,
-            leading=15,
-            textColor="#1e293b",
-            spaceAfter=5
-        )
-
-        story = [
-            Paragraph(f"<b>{title}</b>", t_style),
-            Paragraph(f"생성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오", m_style),
-            Spacer(1, 8),
-        ]
-
-        for line in content.split("\n"):
+        doc = SimpleDocTemplate(bio, pagesize=letter, rightMargin=36, leftMargin=36,
+                                topMargin=36, bottomMargin=36)
+        t_style = ParagraphStyle("K_Title", fontName=font_to_use, fontSize=15, leading=20,
+                                 textColor="#1e3a8a", spaceAfter=8)
+        m_style = ParagraphStyle("K_Meta", fontName=font_to_use, fontSize=8, leading=12,
+                                 textColor="#64748b", spaceAfter=12)
+        b_style = ParagraphStyle("K_Body", fontName=font_to_use, fontSize=9.5, leading=15,
+                                 textColor="#1e293b", spaceAfter=5)
+        story = [Paragraph(f"<b>{title}</b>", t_style),
+                 Paragraph(f"생성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오", m_style),
+                 Spacer(1, 8)]
+        for line in (content or "").split("\n"):
             clean = line.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
             if clean:
                 clean = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', clean)
                 story.append(Paragraph(clean, b_style))
             else:
                 story.append(Spacer(1, 4))
-
         doc.build(story)
-        bio.seek(0)
-        return bio
+        return bio.getvalue()
     except Exception:
-        return io.BytesIO(content.encode("utf-8"))
+        return (content or "").encode("utf-8")
 
-def create_txt(title: str, content: str) -> io.BytesIO:
-    text_data = f"[{title}]\n작성일: {datetime.now().strftime('%Y-%m-%d')}\n\n{content}"
-    return io.BytesIO(text_data.encode("utf-8"))
 
-def create_document_pptx(title: str, content: str) -> io.BytesIO:
+def create_txt_bytes(title: str, content: str) -> bytes:
+    return f"[{title}]\n작성일: {datetime.now().strftime('%Y-%m-%d')}\n\n{content}".encode("utf-8")
+
+
+@st.cache_data(show_spinner=False, max_entries=32)
+def create_document_pptx_bytes(title: str, content: str) -> bytes:
+    """일반 문서형 PPT (QT/나눔지/가이드 등)"""
     try:
         prs = Presentation()
         prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
-        blank_layout = prs.slide_layouts[6]
-        
-        slide1 = prs.slides.add_slide(blank_layout)
-        fill1 = slide1.background.fill
-        fill1.solid()
-        fill1.fore_color.rgb = RGBColor(15, 23, 42)
-        tbox = slide1.shapes.add_textbox(Inches(1.5), Inches(2.5), Inches(10.33), Inches(2.5))
-        p = tbox.text_frame.paragraphs[0]
+        blank = prs.slide_layouts[6]
+
+        s1 = prs.slides.add_slide(blank)
+        s1.background.fill.solid()
+        s1.background.fill.fore_color.rgb = RGBColor(15, 23, 42)
+        tb = s1.shapes.add_textbox(Inches(1.5), Inches(2.8), Inches(10.33), Inches(2.0))
+        p = tb.text_frame.paragraphs[0]
         p.text = title
-        p.font.size, p.font.bold = Pt(38), True
+        p.font.size, p.font.bold = Pt(36), True
         p.font.color.rgb, p.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
-        
-        paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
-        chunk = ""
-        for para in paragraphs:
-            chunk += para + "\n\n"
-            if len(chunk) > 280:
-                slide = prs.slides.add_slide(blank_layout)
-                fill = slide.background.fill
-                fill.solid()
-                fill.fore_color.rgb = RGBColor(24, 32, 54)
-                
-                htx = slide.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.33), Inches(0.8))
-                hp = htx.text_frame.paragraphs[0]
-                hp.text = title
-                hp.font.size, hp.font.bold = Pt(22), True
-                hp.font.color.rgb = RGBColor(147, 197, 253)
-                
-                btx = slide.shapes.add_textbox(Inches(1.0), Inches(1.6), Inches(11.33), Inches(5.2))
-                tf = btx.text_frame
-                tf.word_wrap = True
-                bp = tf.paragraphs[0]
-                bp.text = chunk.strip()
-                bp.font.size = Pt(20)
-                bp.font.color.rgb = RGBColor(241, 245, 249)
-                chunk = ""
-                
-        if chunk:
-            slide = prs.slides.add_slide(blank_layout)
-            fill = slide.background.fill
-            fill.solid()
-            fill.fore_color.rgb = RGBColor(24, 32, 54)
-            htx = slide.shapes.add_textbox(Inches(1.0), Inches(0.6), Inches(11.33), Inches(0.8))
+
+        chunks, cur = [], ""
+        for para in [x.strip() for x in (content or "").split("\n") if x.strip()]:
+            if len(cur) + len(para) > 300 and cur:
+                chunks.append(cur)
+                cur = para + "\n"
+            else:
+                cur += para + "\n"
+        if cur:
+            chunks.append(cur)
+
+        for ch in chunks:
+            slide = prs.slides.add_slide(blank)
+            slide.background.fill.solid()
+            slide.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
+            htx = slide.shapes.add_textbox(Inches(1.0), Inches(0.5), Inches(11.33), Inches(0.8))
             hp = htx.text_frame.paragraphs[0]
             hp.text = title
-            hp.font.size, hp.font.bold = Pt(22), True
-            hp.font.color.rgb = RGBColor(147, 197, 253)
-            
-            btx = slide.shapes.add_textbox(Inches(1.0), Inches(1.6), Inches(11.33), Inches(5.2))
-            tf = btx.text_frame
-            tf.word_wrap = True
-            bp = tf.paragraphs[0]
-            bp.text = chunk.strip()
-            bp.font.size = Pt(20)
-            bp.font.color.rgb = RGBColor(241, 245, 249)
+            hp.font.size, hp.font.bold = Pt(20), True
+            hp.font.color.rgb = RGBColor(30, 58, 138)
+            btx = slide.shapes.add_textbox(Inches(1.0), Inches(1.5), Inches(11.33), Inches(5.4))
+            btx.text_frame.word_wrap = True
+            bp = btx.text_frame.paragraphs[0]
+            bp.text = ch.strip()
+            bp.font.size = Pt(18)
+            bp.font.color.rgb = RGBColor(30, 41, 59)
 
         bio = io.BytesIO()
         prs.save(bio)
-        bio.seek(0)
-        return bio
+        return bio.getvalue()
     except Exception:
-        return io.BytesIO(content.encode("utf-8"))
+        return (content or "").encode("utf-8")
 
+
+# ------------------------------------------------------------------------------
+# 설교 구조 PPT — 이제 요약 텍스트를 '진짜로' 파싱해서 슬라이드에 넣는다
+# ------------------------------------------------------------------------------
 def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
-    text = summary_content if summary_content and len(summary_content) > 30 else full_sermon
-    
-    prop = ""
-    prop_match = re.search(r'(?:🎯|핵심\s*명제|명제|개요)[:\s]*(.*?)(?=\n📌|\n💡|\n🙏|\n\d+\.|\n[1-9]대지|$)', text, re.DOTALL)
-    if prop_match:
-        prop = prop_match.group(1).strip()
-    else:
-        lines = [l.strip() for l in text.split('\n') if l.strip()]
-        prop = "\n".join(lines[:2]) if lines else title
+    """요약문에서 명제/대지/적용/기도를 구조적으로 뽑아낸다. 실패 시 원고 분석으로 대체."""
+    text = summary_content if summary_content and len(summary_content) > 40 else full_sermon
+    text = text or ""
 
+    # 명제
+    prop = ""
+    m = re.search(r'🎯[^\n]*\n(.+?)(?=\n\s*(?:🔑|📖|📌|💡|🙏|$))', text, re.DOTALL)
+    if m:
+        prop = m.group(1).strip()
+    if not prop:
+        m = re.search(r'(?:핵심\s*명제|중심\s*사상)[:：]?\s*(.+?)(?=\n\s*\n|\n[🔑📖📌💡🙏]|$)', text, re.DOTALL)
+        prop = m.group(1).strip() if m else ""
+
+    # 대지: "1. ..." ~ "3. ..." 블록 (📌 섹션 우선)
     points = []
-    point_matches = re.findall(r'(?:^|\n)\s*(?:[1-4]\.|\d+[\.\)]|제\s*[1-4]\s*대지|•|-)\s*(.*?)(?=\n\s*(?:[1-4]\.|\d+[\.\)]|제\s*[1-4]\s*대지|•|-|💡|🙏|🎯|📌)|$)', text, re.DOTALL)
-    for pm in point_matches:
-        pm_clean = pm.strip()
-        if pm_clean and len(pm_clean) > 3:
-            points.append(pm_clean)
-            
-    if not points:
-        paragraphs = [p.strip() for p in text.split('\n') if p.strip()]
-        chunk_size = max(1, len(paragraphs) // 4)
-        for i in range(4):
-            sub_p = paragraphs[i*chunk_size:(i+1)*chunk_size]
-            if sub_p:
-                points.append("\n".join(sub_p))
+    seg = text
+    ms = re.search(r'📌(.+?)(?=\n\s*💡|\n\s*🙏|$)', text, re.DOTALL)
+    if ms:
+        seg = ms.group(1)
+    for pm in re.finditer(r'(?m)^\s*([1-4])[\.\)]\s*(.+?)(?=\n\s*[1-4][\.\)]\s|\Z)', seg, re.DOTALL):
+        block = pm.group(2).strip()
+        if len(block) > 4:
+            points.append(block)
+
+    a = analyze_manuscript(full_sermon)
+    if len(points) < 3:
+        points = []
+        for sec in a["sections"][:3]:
+            points.append(f"{_trim_title(sec['headline'])}\n▸ 원고 근거: {sec['evidence'][:200]}")
+
+    if not prop:
+        prop = a["key_sentences"][0] if a["key_sentences"] else title
+
+    # 적용
+    app_text = ""
+    m = re.search(r'💡[^\n]*\n(.+?)(?=\n\s*🙏|\Z)', text, re.DOTALL)
+    if m:
+        app_text = m.group(1).strip()
+    if not app_text:
+        if a["applications"]:
+            app_text = "\n".join(f"{i}. {s}" for i, s in enumerate(a["applications"][:3], start=1))
+        else:
+            app_text = f"{scripture} 말씀을 이번 한 주 삶의 자리에서 한 가지 행동으로 옮기십시오."
+
+    # 기도
+    prayer_text = ""
+    m = re.search(r'🙏[^\n]*\n(.+)$', text, re.DOTALL)
+    if m:
+        prayer_text = m.group(1).strip()
+    if not prayer_text:
+        prayer_text = a["prayer"] or (
+            f"주님, 오늘 [{title}] 말씀({scripture})을 마음에 새기고 순종하게 하옵소서. "
+            f"예수님의 이름으로 기도드립니다. 아멘.")
 
     while len(points) < 4:
-        points.append(f"{title} - 하나님의 은혜와 인도하심에 감사하며 말씀 중심의 삶을 살아가십시오.")
+        idx = len(points)
+        extra = a["key_sentences"][idx] if len(a["key_sentences"]) > idx else prop
+        points.append(extra)
 
-    app_text = ""
-    app_match = re.search(r'(?:💡|실천\s*적용|삶의\s*적용|적용)[:\s]*(.*?)(?=\n🙏|\n기도|$)', text, re.DOTALL)
-    if app_match:
-        app_text = app_match.group(1).strip()
-    else:
-        app_text = f"1. 매일 일상 속에서 {scripture} 말씀을 생각하며 마음에 새깁니다.\n2. 세상의 자랑이 아닌 오직 하나님의 신실하신 약속을 선포합니다.\n3. 주신 말씀에 순종하여 담대함과 기도로 승리하는 삶을 살아갑니다."
+    return {"prop": prop, "points": points, "app": app_text, "prayer": prayer_text}
 
-    prayer_text = ""
-    prayer_match = re.search(r'(?:🙏|기도문|결단\s*및\s*축복|마침\s*기도|기도)[:\s]*(.*?)$', text, re.DOTALL)
-    if prayer_match:
-        prayer_text = prayer_match.group(1).strip()
-    else:
-        prayer_text = f"살아계신 하나님, 오늘 선포된 [{title}] 말씀을 통해 주님의 거룩하신 뜻을 깨닫게 하시니 감사합니다. 주신 은혜의 구절({scripture})을 심비에 새기고, 날마다 믿음으로 승리하는 복된 성도가 되게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."
 
-    return {
-        "prop": prop,
-        "points": points,
-        "app": app_text,
-        "prayer": prayer_text
-    }
-
-# --- 고품격 PPTX 생성기 (2~9번 화이트 배경 / 1,10번 딤 이미지 배경) ---
-def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str, full_sermon: str = "") -> io.BytesIO:
+@st.cache_data(show_spinner=False, max_entries=24)
+def generate_sermon_structure_pptx_bytes(title: str, scripture: str, summary_content: str, full_sermon: str = "") -> bytes:
     try:
         prs = Presentation()
         prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
-        blank_layout = prs.slide_layouts[6]
+        blank = prs.slide_layouts[6]
 
-        def set_image_dim_slide(slide, img_url=None):
-            fill = slide.background.fill
-            fill.solid()
-            fill.fore_color.rgb = RGBColor(15, 23, 42)
-
+        def image_dim_slide(slide, img_url=None, dim=0.62):
+            slide.background.fill.solid()
+            slide.background.fill.fore_color.rgb = RGBColor(15, 23, 42)
             if img_url:
-                img_b = fetch_image_bytes(img_url)
-                if img_b:
-                    slide.shapes.add_picture(io.BytesIO(img_b), 0, 0, width=Inches(13.333), height=Inches(7.5))
+                b = fetch_image_bytes(img_url)
+                if b:
+                    slide.shapes.add_picture(io.BytesIO(b), 0, 0, width=Inches(13.333), height=Inches(7.5))
+            ov = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
+            ov.fill.solid()
+            ov.fill.fore_color.rgb = RGBColor(10, 15, 30)
+            set_shape_fill_alpha(ov, dim)          # ★ 이미지가 완전히 가려지던 버그 수정
+            ov.line.fill.background()
+            ov.shadow.inherit = False
 
-            overlay = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
-            overlay.fill.solid()
-            overlay.fill.fore_color.rgb = RGBColor(10, 15, 30)
-            overlay.line.fill.background()
+        def light_slide(slide):
+            slide.background.fill.solid()
+            slide.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
 
-        def set_pure_light_slide(slide):
-            fill = slide.background.fill
-            fill.solid()
-            fill.fore_color.rgb = RGBColor(248, 250, 252)
+        def body_slide(idx_label, heading, body, bg=None):
+            s = prs.slides.add_slide(blank)
+            light_slide(s)
+            tb = s.shapes.add_textbox(Inches(0.9), Inches(0.7), Inches(11.5), Inches(6.0))
+            tf = tb.text_frame
+            tf.word_wrap = True
+            h = tf.paragraphs[0]
+            h.text = f"{idx_label} {heading}".strip()
+            h.font.size, h.font.bold = Pt(30), True
+            h.font.color.rgb = RGBColor(30, 58, 138)
+            b = tf.add_paragraph()
+            b.text = "\n" + (body or "")
+            b.font.size = Pt(19)
+            b.font.color.rgb = RGBColor(30, 41, 59)
+            return s
 
-        parsed = parse_sermon_content(title, scripture, summary_content, full_sermon)
-        prop_text = parsed["prop"]
-        points = parsed["points"]
-        app_text = parsed["app"]
-        prayer_text = parsed["prayer"]
+        p = parse_sermon_content(title, scripture, summary_content, full_sermon)
+        points = p["points"]
 
-        # [Slide 1: 표지]
-        s1 = prs.slides.add_slide(blank_layout)
-        set_image_dim_slide(s1, CARD_BACKGROUNDS[0])
-        tb1 = s1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.8))
-        p1 = tb1.text_frame.paragraphs[0]
-        p1.text = f"주 일 설 교\n\n{title}\n\n본문 · {scripture}"
-        p1.font.size, p1.font.bold = Pt(38), True
-        p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
+        # 1 표지
+        s1 = prs.slides.add_slide(blank)
+        image_dim_slide(s1, CARD_BACKGROUNDS[0], dim=0.66)
+        tb1 = s1.shapes.add_textbox(Inches(1.2), Inches(2.2), Inches(10.9), Inches(3.6))
+        tb1.text_frame.word_wrap = True
+        pp = tb1.text_frame.paragraphs[0]
+        pp.text = f"주 일 설 교\n\n{title}\n\n본문 · {scripture}"
+        pp.font.size, pp.font.bold = Pt(36), True
+        pp.font.color.rgb, pp.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
 
-        # [Slide 2: 들어가며]
-        s2 = prs.slides.add_slide(blank_layout)
-        set_pure_light_slide(s2)
-        tb2 = s2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
-        tf2 = tb2.text_frame
-        tf2.word_wrap = True
-        p2_head = tf2.paragraphs[0]
-        p2_head.text = f"들어가며 · 핵심 메시지 ({scripture})"
-        p2_head.font.size, p2_head.font.bold = Pt(32), True
-        p2_head.font.color.rgb = RGBColor(30, 58, 138)
-        
-        p2_body = tf2.add_paragraph()
-        p2_body.text = f"\n{prop_text}"
-        p2_body.font.size = Pt(20)
-        p2_body.font.color.rgb = RGBColor(30, 41, 59)
+        # 2 핵심 메시지
+        body_slide("들어가며 ·", f"핵심 메시지 ({scripture})", p["prop"])
 
-        # [Slide 3: 설교의 전체 흐름]
-        s3 = prs.slides.add_slide(blank_layout)
-        set_pure_light_slide(s3)
-        tb3_h = s3.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
-        hp3 = tb3_h.text_frame.paragraphs[0]
-        hp3.text = f"설교의 흐름 (Sermon Outline)"
-        hp3.font.size, hp3.font.bold = Pt(32), True
+        # 3 흐름
+        s3 = prs.slides.add_slide(blank)
+        light_slide(s3)
+        h3 = s3.shapes.add_textbox(Inches(0.9), Inches(0.7), Inches(11.5), Inches(0.9))
+        hp3 = h3.text_frame.paragraphs[0]
+        hp3.text = "설교의 흐름 (Sermon Outline)"
+        hp3.font.size, hp3.font.bold = Pt(30), True
         hp3.font.color.rgb = RGBColor(30, 58, 138)
+        for i in range(min(4, len(points))):
+            shp = s3.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.9),
+                                      Inches(2.0 + i * 1.15), Inches(11.5), Inches(0.95))
+            shp.fill.solid()
+            shp.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            shp.line.color.rgb = RGBColor(203, 213, 225)
+            shp.shadow.inherit = False
+            cp = shp.text_frame.paragraphs[0]
+            cp.text = f"  0{i+1}   {_trim_title(points[i].split(chr(10))[0], 52)}"
+            cp.font.size, cp.font.bold = Pt(18), True
+            cp.font.color.rgb = RGBColor(30, 41, 59)
 
-        for card_i in range(min(4, len(points))):
-            top_pos = Inches(2.2 + (card_i * 1.15))
-            shape = s3.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.0), top_pos, Inches(11.33), Inches(0.95))
-            shape.fill.solid()
-            shape.fill.fore_color.rgb = RGBColor(255, 255, 255)
-            shape.line.color.rgb = RGBColor(203, 213, 225)
-            tf_card = shape.text_frame
-            p_c = tf_card.paragraphs[0]
-            first_line = points[card_i].split('\n')[0][:50]
-            p_c.text = f"  0{card_i+1}   {first_line}"
-            p_c.font.size, p_c.font.bold = Pt(20), True
-            p_c.font.color.rgb = RGBColor(30, 41, 59)
+        # 4~7 대지
+        for i in range(min(4, len(points))):
+            body_slide(f"0{i+1}.", "", points[i])
 
-        # [Slide 4: 본문 핵심 성구]
-        s4 = prs.slides.add_slide(blank_layout)
-        set_pure_light_slide(s4)
-        
-        shape_scrip = s4.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.0), Inches(1.2), Inches(11.33), Inches(5.0))
-        shape_scrip.fill.solid()
-        shape_scrip.fill.fore_color.rgb = RGBColor(239, 246, 255)
-        shape_scrip.line.color.rgb = RGBColor(147, 197, 253)
-        tf4 = shape_scrip.text_frame
-        tf4.word_wrap = True
-        p4_h = tf4.paragraphs[0]
-        p4_h.text = f"본문 말씀  ·  {scripture}\n"
-        p4_h.font.size, p4_h.font.bold = Pt(28), True
-        p4_h.font.color.rgb = RGBColor(30, 58, 138)
-        
-        p4_b = tf4.add_paragraph()
-        p4_b.text = f"[{title}]\n\n{scripture} 본문 말씀 중심 선포"
-        p4_b.font.size = Pt(20)
-        p4_b.font.color.rgb = RGBColor(30, 41, 59)
+        # 8 적용
+        body_slide("삶의 적용 ·", "이렇게 살아갑시다", p["app"])
 
-        # [Slide 5: 제1대지]
-        s5 = prs.slides.add_slide(blank_layout)
-        set_pure_light_slide(s5)
-        tb5 = s5.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
-        tf5 = tb5.text_frame
-        tf5.word_wrap = True
-        p5_h = tf5.paragraphs[0]
-        p5_h.text = f"01. 첫 번째 메시지"
-        p5_h.font.size, p5_h.font.bold = Pt(30), True
-        p5_h.font.color.rgb = RGBColor(30, 58, 138)
-        p5_b = tf5.add_paragraph()
-        p5_b.text = f"\n{points[0] if len(points) > 0 else title}"
-        p5_b.font.size = Pt(20)
-        p5_b.font.color.rgb = RGBColor(30, 41, 59)
-
-        # [Slide 6: 제2대지]
-        s6 = prs.slides.add_slide(blank_layout)
-        set_pure_light_slide(s6)
-        tb6 = s6.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
-        tf6 = tb6.text_frame
-        tf6.word_wrap = True
-        p6_h = tf6.paragraphs[0]
-        p6_h.text = f"02. 두 번째 메시지"
-        p6_h.font.size, p6_h.font.bold = Pt(30), True
-        p6_h.font.color.rgb = RGBColor(30, 58, 138)
-        p6_b = tf6.add_paragraph()
-        p6_b.text = f"\n{points[1] if len(points) > 1 else title}"
-        p6_b.font.size = Pt(20)
-        p6_b.font.color.rgb = RGBColor(30, 41, 59)
-
-        # [Slide 7: 제3대지]
-        s7 = prs.slides.add_slide(blank_layout)
-        set_pure_light_slide(s7)
-        tb7 = s7.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
-        tf7 = tb7.text_frame
-        tf7.word_wrap = True
-        p7_h = tf7.paragraphs[0]
-        p7_h.text = f"03. 세 번째 메시지"
-        p7_h.font.size, p7_h.font.bold = Pt(30), True
-        p7_h.font.color.rgb = RGBColor(30, 58, 138)
-        p7_b = tf7.add_paragraph()
-        p7_b.text = f"\n{points[2] if len(points) > 2 else title}"
-        p7_b.font.size = Pt(20)
-        p7_b.font.color.rgb = RGBColor(30, 41, 59)
-
-        # [Slide 8: 핵심 묵상]
-        s8 = prs.slides.add_slide(blank_layout)
-        set_pure_light_slide(s8)
-        tb8 = s8.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
-        tf8 = tb8.text_frame
-        tf8.word_wrap = True
-        p8_h = tf8.paragraphs[0]
-        p8_h.text = f"04. 깊은 묵상과 선포"
-        p8_h.font.size, p8_h.font.bold = Pt(30), True
-        p8_h.font.color.rgb = RGBColor(30, 58, 138)
-        p8_b = tf8.add_paragraph()
-        p8_b.text = f"\n{points[3] if len(points) > 3 else title}"
-        p8_b.font.size = Pt(20)
-        p8_b.font.color.rgb = RGBColor(30, 41, 59)
-
-        # [Slide 9: 삶의 적용]
-        s9 = prs.slides.add_slide(blank_layout)
-        set_pure_light_slide(s9)
-        tb9 = s9.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
-        tf9 = tb9.text_frame
-        tf9.word_wrap = True
-        p9_h = tf9.paragraphs[0]
-        p9_h.text = f"삶의 적용 · 이렇게 살아갑시다"
-        p9_h.font.size, p9_h.font.bold = Pt(30), True
-        p9_h.font.color.rgb = RGBColor(30, 58, 138)
-        p9_b = tf9.add_paragraph()
-        p9_b.text = f"\n{app_text}"
-        p9_b.font.size = Pt(19)
-        p9_b.font.color.rgb = RGBColor(30, 41, 59)
-
-        # [Slide 10: 결단 및 기도]
-        s10 = prs.slides.add_slide(blank_layout)
-        set_image_dim_slide(s10, CARD_BACKGROUNDS[0])
-        tb10 = s10.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.2))
-        tf10 = tb10.text_frame
-        tf10.word_wrap = True
-        p10_h = tf10.paragraphs[0]
-        p10_h.text = f"결단과 마침 기도문\n"
-        p10_h.font.size, p10_h.font.bold = Pt(28), True
-        p10_h.font.color.rgb = RGBColor(253, 224, 71)
-        p10_b = tf10.add_paragraph()
-        p10_b.text = f"\n{prayer_text}"
-        p10_b.font.size = Pt(18)
-        p10_b.font.color.rgb = RGBColor(241, 245, 249)
+        # 9 기도
+        s9 = prs.slides.add_slide(blank)
+        image_dim_slide(s9, CARD_BACKGROUNDS[3], dim=0.7)
+        tb9 = s9.shapes.add_textbox(Inches(1.1), Inches(1.3), Inches(11.1), Inches(5.0))
+        tb9.text_frame.word_wrap = True
+        h9 = tb9.text_frame.paragraphs[0]
+        h9.text = "결단과 마침 기도문"
+        h9.font.size, h9.font.bold = Pt(28), True
+        h9.font.color.rgb = RGBColor(253, 224, 71)
+        b9 = tb9.text_frame.add_paragraph()
+        b9.text = "\n" + p["prayer"]
+        b9.font.size = Pt(18)
+        b9.font.color.rgb = RGBColor(241, 245, 249)
 
         bio = io.BytesIO()
         prs.save(bio)
-        bio.seek(0)
-        return bio
+        return bio.getvalue()
     except Exception:
-        return create_document_pptx(title, summary_content)
+        return create_document_pptx_bytes(title, summary_content)
 
-def generate_cardnews_pptx(slides_data, church_name=""):
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def generate_cardnews_pptx_bytes(cards_json: str, church_name: str = "") -> bytes:
+    slides_data = json.loads(cards_json)
     prs = Presentation()
     prs.slide_width, prs.slide_height = Inches(10), Inches(10)
-    blank_layout = prs.slide_layouts[6]
+    blank = prs.slide_layouts[6]
 
     for idx, item in enumerate(slides_data):
-        slide = prs.slides.add_slide(blank_layout)
-        bg_url = CARD_BACKGROUNDS[idx % len(CARD_BACKGROUNDS)]
-        img_bytes = fetch_image_bytes(bg_url)
-        if img_bytes:
-            img_stream = io.BytesIO(img_bytes)
-            slide.shapes.add_picture(img_stream, Inches(0), Inches(0), width=Inches(10), height=Inches(10))
+        slide = prs.slides.add_slide(blank)
+        b = fetch_image_bytes(CARD_BACKGROUNDS[idx % len(CARD_BACKGROUNDS)])
+        if b:
+            slide.shapes.add_picture(io.BytesIO(b), Inches(0), Inches(0), width=Inches(10), height=Inches(10))
         else:
-            fill = slide.background.fill
-            fill.solid()
-            fill.fore_color.rgb = RGBColor(15, 23, 42)
+            slide.background.fill.solid()
+            slide.background.fill.fore_color.rgb = RGBColor(15, 23, 42)
 
-        overlay = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(10))
-        overlay.fill.solid()
-        overlay.fill.fore_color.rgb = RGBColor(10, 15, 30)
-        overlay.line.fill.background()
-        
-        badge_box = slide.shapes.add_textbox(Inches(0.8), Inches(0.8), Inches(2.2), Inches(0.6))
-        bp = badge_box.text_frame.paragraphs[0]
+        ov = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(10))
+        ov.fill.solid()
+        ov.fill.fore_color.rgb = RGBColor(10, 15, 30)
+        set_shape_fill_alpha(ov, 0.72)             # ★ 배경이 보이도록 반투명 처리
+        ov.line.fill.background()
+        ov.shadow.inherit = False
+
+        bd = slide.shapes.add_textbox(Inches(0.8), Inches(0.8), Inches(2.4), Inches(0.6))
+        bp = bd.text_frame.paragraphs[0]
         bp.text = f"CARD {item.get('card_number', idx + 1)}"
         bp.font.size, bp.font.bold = Pt(14), True
-        bp.font.color.rgb = RGBColor(99, 102, 241)
+        bp.font.color.rgb = RGBColor(129, 140, 248)
 
-        tbox = slide.shapes.add_textbox(Inches(0.8), Inches(1.8), Inches(8.4), Inches(2.2))
-        tf = tbox.text_frame
-        tf.word_wrap = True
-        tp = tf.paragraphs[0]
+        tbox = slide.shapes.add_textbox(Inches(0.8), Inches(1.7), Inches(8.4), Inches(2.4))
+        tbox.text_frame.word_wrap = True
+        tp = tbox.text_frame.paragraphs[0]
         tp.text = item.get("headline", "")
-        tp.font.size, tp.font.bold = Pt(32), True
+        tp.font.size, tp.font.bold = Pt(30), True
         tp.font.color.rgb = RGBColor(253, 224, 71)
 
-        bbox = slide.shapes.add_textbox(Inches(0.8), Inches(4.3), Inches(8.4), Inches(4.5))
-        btf = bbox.text_frame
-        btf.word_wrap = True
-        bp_body = btf.paragraphs[0]
-        bp_body.text = item.get("body_text", "")
-        bp_body.font.size = Pt(22)
-        bp_body.font.color.rgb = RGBColor(241, 245, 249)
+        bbox = slide.shapes.add_textbox(Inches(0.8), Inches(4.2), Inches(8.4), Inches(4.6))
+        bbox.text_frame.word_wrap = True
+        bb = bbox.text_frame.paragraphs[0]
+        bb.text = item.get("body_text", "")
+        bb.font.size = Pt(20)
+        bb.font.color.rgb = RGBColor(241, 245, 249)
 
         if church_name:
             cbox = slide.shapes.add_textbox(Inches(0.8), Inches(9.0), Inches(8.4), Inches(0.6))
@@ -1340,1218 +1670,1264 @@ def generate_cardnews_pptx(slides_data, church_name=""):
 
     bio = io.BytesIO()
     prs.save(bio)
-    bio.seek(0)
-    return bio
+    return bio.getvalue()
 
-def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_bg_file=None, font_size=42, line_spacing=18, font_color="#FDE047", stroke_color="#000000", overlay_opacity=0.6, church_name=""):
-    canvas_w, canvas_h = 1080, 1080
-    
-    if bg_option == "직접 업로드" and custom_bg_file:
+
+# ==============================================================================
+# 말씀카드
+# ==============================================================================
+def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_bg_file=None,
+                            font_size=42, line_spacing=18, font_color="#FDE047",
+                            stroke_color="#000000", overlay_opacity=0.6, church_name="",
+                            bg_index=0):
+    W = H = 1080
+    if bg_option == "직접 업로드" and custom_bg_file is not None:
         try:
-            base_img = PIL.Image.open(custom_bg_file).convert("RGBA").resize((canvas_w, canvas_h))
+            base = PIL.Image.open(custom_bg_file).convert("RGBA").resize((W, H))
         except Exception:
-            base_img = PIL.Image.new("RGBA", (canvas_w, canvas_h), (15, 23, 42, 255))
+            base = PIL.Image.new("RGBA", (W, H), (15, 23, 42, 255))
     elif bg_option == "기본":
-        base_img = PIL.Image.new("RGBA", (canvas_w, canvas_h), (15, 23, 42, 255))
+        base = PIL.Image.new("RGBA", (W, H), (15, 23, 42, 255))
     else:
-        bg_url = CARD_BACKGROUNDS[0]
-        img_b = fetch_image_bytes(bg_url)
-        if img_b:
-            base_img = PIL.Image.open(io.BytesIO(img_b)).convert("RGBA").resize((canvas_w, canvas_h))
-        else:
-            base_img = PIL.Image.new("RGBA", (canvas_w, canvas_h), (15, 23, 42, 255))
+        b = fetch_image_bytes(CARD_BACKGROUNDS[bg_index % len(CARD_BACKGROUNDS)])
+        try:
+            base = PIL.Image.open(io.BytesIO(b)).convert("RGBA").resize((W, H)) if b \
+                else PIL.Image.new("RGBA", (W, H), (15, 23, 42, 255))
+        except Exception:
+            base = PIL.Image.new("RGBA", (W, H), (15, 23, 42, 255))
 
-    alpha_val = int(255 * overlay_opacity)
-    overlay = PIL.Image.new("RGBA", (canvas_w, canvas_h), (10, 15, 30, alpha_val))
-    combined = PIL.Image.alpha_composite(base_img, overlay)
+    overlay = PIL.Image.new("RGBA", (W, H), (10, 15, 30, int(255 * overlay_opacity)))
+    combined = PIL.Image.alpha_composite(base, overlay)
     draw = PIL.ImageDraw.Draw(combined)
 
-    font_main = None
-    for f_p in ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgun.ttf"]:
-        if os.path.exists(f_p):
-            try: font_main = PIL.ImageFont.truetype(f_p, font_size); break
-            except Exception: pass
-    if not font_main: font_main = PIL.ImageFont.load_default()
-
-    font_sub = None
-    for f_p in ["/usr/share/fonts/truetype/nanum/NanumGothicBold.ttf", "C:/Windows/Fonts/malgun.ttf"]:
-        if os.path.exists(f_p):
-            try: font_sub = PIL.ImageFont.truetype(f_p, 30); break
-            except Exception: pass
-    if not font_sub: font_sub = PIL.ImageFont.load_default()
+    font_main = get_pil_font(int(font_size))
+    font_sub = get_pil_font(30)
 
     def parse_hex(c):
-        if c.startswith('#'):
-            hex_c = c.lstrip('#')
-            return tuple(int(hex_c[i:i+2], 16) for i in (0, 2, 4)) + (255,)
-        return (255, 255, 255, 255)
+        try:
+            h = c.lstrip('#')
+            return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4)) + (255,)
+        except Exception:
+            return (255, 255, 255, 255)
 
     f_color = parse_hex(font_color)
     s_color = parse_hex(stroke_color) if stroke_color else None
 
-    max_w = 880
-    wrapped_text = wrap_korean_text(text_str, font_main, max_w, draw)
-
-    bbox = draw.multiline_textbbox((0, 0), wrapped_text, font=font_main, spacing=line_spacing)
-    t_w = bbox[2] - bbox[0]
-    t_h = bbox[3] - bbox[1]
-    
-    x_pos = (canvas_w - t_w) // 2
-    y_pos = (canvas_h - t_h) // 2 - 40
+    wrapped = wrap_korean_text(strip_emoji(text_str), font_main, 880, draw)
+    bbox = draw.multiline_textbbox((0, 0), wrapped, font=font_main, spacing=line_spacing)
+    t_w, t_h = bbox[2] - bbox[0], bbox[3] - bbox[1]
+    x = (W - t_w) // 2
+    y = max(120, (H - t_h) // 2 - 50)
 
     if s_color:
-        for dx in range(-2, 3):
-            for dy in range(-2, 3):
-                if dx != 0 or dy != 0:
-                    draw.multiline_text((x_pos + dx, y_pos + dy), wrapped_text, font=font_main, fill=s_color, align="center", spacing=line_spacing)
-
-    draw.multiline_text((x_pos, y_pos), wrapped_text, font=font_main, fill=f_color, align="center", spacing=line_spacing)
+        for dx in (-2, -1, 0, 1, 2):
+            for dy in (-2, -1, 0, 1, 2):
+                if dx or dy:
+                    draw.multiline_text((x + dx, y + dy), wrapped, font=font_main,
+                                        fill=s_color, align="center", spacing=line_spacing)
+    draw.multiline_text((x, y), wrapped, font=font_main, fill=f_color, align="center", spacing=line_spacing)
 
     if scripture_str:
-        scrip_text = f"「 {scripture_str} 」"
-        s_bbox = draw.textbbox((0, 0), scrip_text, font=font_sub)
-        sx = (canvas_w - (s_bbox[2] - s_bbox[0])) // 2
-        sy = y_pos + t_h + 50
-        draw.text((sx, sy), scrip_text, fill=(253, 224, 71, 255), font=font_sub)
-
+        s_txt = f"「 {scripture_str} 」"
+        sb = draw.textbbox((0, 0), s_txt, font=font_sub)
+        draw.text(((W - (sb[2] - sb[0])) // 2, min(y + t_h + 50, H - 170)),
+                  s_txt, fill=(253, 224, 71, 255), font=font_sub)
     if church_name:
-        c_bbox = draw.textbbox((0, 0), church_name, font=font_sub)
-        cx = (canvas_w - (c_bbox[2] - c_bbox[0])) // 2
-        cy = canvas_h - 100
-        draw.text((cx, cy), church_name, fill=(147, 197, 253, 255), font=font_sub)
+        cb = draw.textbbox((0, 0), church_name, font=font_sub)
+        draw.text(((W - (cb[2] - cb[0])) // 2, H - 100), church_name,
+                  fill=(147, 197, 253, 255), font=font_sub)
 
-    out_buf = io.BytesIO()
-    combined.convert("RGB").save(out_buf, format="PNG")
-    out_buf.seek(0)
-    return out_buf
+    out = io.BytesIO()
+    combined.convert("RGB").save(out, format="PNG")
+    out.seek(0)
+    return out
 
-async def generate_voiceover_audio(text: str, voice: str = "ko-KR-InJoonNeural") -> str:
-    out_path = "./outputs/voiceover_temp.mp3"
-    os.makedirs("./outputs", exist_ok=True)
+
+# ==============================================================================
+# TTS
+# ==============================================================================
+async def _tts(text: str, voice: str, out_path: str):
     communicate = edge_tts.Communicate(text, voice)
     await communicate.save(out_path)
+
+
+def generate_voiceover_audio(text: str, voice: str = "ko-KR-InJoonNeural") -> str:
+    if not HAS_TTS:
+        raise RuntimeError("edge-tts 패키지가 설치되어 있지 않습니다. (pip install edge-tts)")
+    os.makedirs("./outputs", exist_ok=True)
+    out_path = f"./outputs/voiceover_{int(datetime.now().timestamp())}.mp3"
+    try:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(_tts(text, voice, out_path))
+        loop.close()
+    except RuntimeError:
+        asyncio.run(_tts(text, voice, out_path))
     return out_path
 
-# --- 7. 모든 섹션 상단 통일 툴바 컴포넌트 ---
-def render_section_top_toolbar(title: str, content: str, state_key: str):
-    col_t, col_btns = st.columns([1.2, 2.8])
-    with col_t:
-        st.markdown(f"<h3 style='margin: 0; padding: 0; font-size: 20px; font-weight: 800; line-height: 1.3;'>{title}</h3>", unsafe_allow_html=True)
-    with col_btns:
-        c_edit, c_copy, c_doc, c_pdf, c_ppt, c_txt = st.columns([1, 1, 1.1, 1.1, 1.1, 1])
-        with c_edit:
+
+# ==============================================================================
+# 유튜브 → 9:16 숏츠
+# ==============================================================================
+def extract_youtube_to_shorts(yt_url, start_sec, duration_sec, title, subtitle_text, church_name=""):
+    if not (HAS_YTDLP and HAS_MOVIEPY and HAS_VIDEO_ENGINE):
+        raise Exception("영상 처리 모듈(yt-dlp / moviepy / video_engine)이 준비되지 않았습니다.")
+
+    out_dir = "./outputs"
+    os.makedirs(out_dir, exist_ok=True)
+    src_video = os.path.join(out_dir, "yt_raw_source.mp4")
+
+    vid = re.search(r'(?:v=|/live/|/shorts/|youtu\.be/)([a-zA-Z0-9_-]{11})', yt_url.strip())
+    clean_url = f"https://www.youtube.com/watch?v={vid.group(1)}" if vid else yt_url.strip()
+
+    ok = False
+    for clients in (['ios'], ['android_creator'], ['mweb'], ['tv_embedded'], ['web']):
+        if os.path.exists(src_video):
+            try:
+                os.remove(src_video)
+            except Exception:
+                pass
+        opts = {
+            'format': 'best[ext=mp4][height<=720]/bestvideo[ext=mp4][height<=720]+bestaudio[ext=m4a]/best',
+            'outtmpl': src_video, 'overwrites': True, 'quiet': True, 'no_warnings': True,
+            'nocheckcertificate': True, 'geo_bypass': True,
+            'http_headers': {'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_4_1 like Mac OS X)'},
+            'extractor_args': {'youtube': {'player_client': clients}},
+        }
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                ydl.download([clean_url])
+            if os.path.exists(src_video) and os.path.getsize(src_video) > 100000:
+                ok = True
+                break
+        except Exception:
+            continue
+
+    if not ok:
+        raise Exception("유튜브 서버가 클라우드 IP를 차단했습니다. "
+                        "[🎨 AI 나레이션 & 템플릿 숏츠 제작] 탭에서 영상을 직접 업로드하시면 즉시 9:16 렌더링이 가능합니다.")
+
+    raw = VideoFileClip(src_video)
+    start_sec = max(0, min(start_sec, int(raw.duration) - 5))
+    end_sec = min(start_sec + duration_sec, int(raw.duration))
+    sub = raw.subclip(start_sec, end_sec)
+
+    w, h = sub.size
+    target_w = int(h * 9 / 16)
+    cropped = sub.crop(x1=w / 2 - target_w / 2, y1=0, x2=w / 2 + target_w / 2, y2=h) if w > target_w else sub
+    final = cropped.resize((1080, 1920))
+    dur = final.duration
+
+    layers = [final,
+              ColorClip(size=(1080, 240), color=(0, 0, 0), duration=dur).set_opacity(0.45).set_position(('center', 100)),
+              create_pil_text_clip(title, fontsize=48, color="#FDE047", stroke_color="black",
+                                   stroke_width=2, size=(920, None), duration=dur).set_position(("center", 140))]
+    if subtitle_text:
+        layers.append(create_pil_text_clip(subtitle_text, fontsize=40, color="white", stroke_color="black",
+                                           stroke_width=2, size=(900, None), duration=dur).set_position(("center", 1400)))
+    if church_name:
+        layers.append(create_pil_text_clip(church_name, fontsize=28, color="#93C5FD", stroke_color="black",
+                                           stroke_width=1, size=(800, None), duration=dur).set_position(("center", 1780)))
+
+    comp = CompositeVideoClip(layers)
+    out_file = os.path.join(out_dir, f"yt_shorts_{int(datetime.now().timestamp())}.mp4")
+    comp.write_videofile(out_file, fps=24, codec="libx264", audio_codec="aac", threads=4, preset="ultrafast")
+    raw.close(); sub.close(); comp.close()
+    return out_file
+
+
+# ==============================================================================
+# 공통 툴바
+# ==============================================================================
+def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mode: str = "doc"):
+    content = content or "내용 없음"
+    c_title, c_btn = st.columns([1.2, 2.8])
+    with c_title:
+        st.markdown(f"<h3 style='margin:0;font-size:20px;font-weight:800;line-height:1.3;'>{title}</h3>",
+                    unsafe_allow_html=True)
+    with c_btn:
+        b1, b2, b3, b4, b5, b6 = st.columns([1, 1, 1.1, 1.1, 1.1, 1])
+        with b1:
             if st.button("✏️ 수정", key=f"edit_btn_{state_key}"):
                 st.session_state[f"edit_mode_{state_key}"] = not st.session_state.get(f"edit_mode_{state_key}", False)
-        with c_copy:
+        with b2:
             if st.button("📋 복사", key=f"copy_btn_{state_key}"):
                 st.session_state[f"show_copy_{state_key}"] = not st.session_state.get(f"show_copy_{state_key}", False)
-        with c_doc:
-            st.download_button("📥 워드", data=create_docx(title, content if content else "내용 없음"), file_name=f"{title}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document", key=f"dl_docx_{state_key}")
-        with c_pdf:
-            st.download_button("📥 PDF", data=create_pdf(title, content if content else "내용 없음"), file_name=f"{title}.pdf", mime="application/pdf", key=f"dl_pdf_{state_key}")
-        with c_ppt:
-            st.download_button(
-                "📥 PPT", 
-                data=generate_sermon_structure_pptx(
-                    title, 
-                    st.session_state.get("sermon_scripture", "본문"), 
-                    content if content else "내용 없음",
+        with b3:
+            st.download_button("📥 워드", data=create_docx_bytes(title, content), file_name=f"{title}.docx",
+                               mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                               key=f"dl_docx_{state_key}")
+        with b4:
+            st.download_button("📥 PDF", data=create_pdf_bytes(title, content), file_name=f"{title}.pdf",
+                               mime="application/pdf", key=f"dl_pdf_{state_key}")
+        with b5:
+            if ppt_mode == "sermon":
+                ppt_bytes = generate_sermon_structure_pptx_bytes(
+                    st.session_state.get("sermon_title", title),
+                    st.session_state.get("sermon_scripture", ""),
+                    content,
                     st.session_state.get("full_sermon", "")
-                ), 
-                file_name=f"{title}.pptx", 
-                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation", 
-                key=f"dl_ppt_struct_{state_key}"
-            )
-        with c_txt:
-            st.download_button("📥 txt", data=create_txt(title, content if content else "내용 없음"), file_name=f"{title}.txt", mime="text/plain", key=f"dl_txt_{state_key}")
+                )
+            else:
+                ppt_bytes = create_document_pptx_bytes(title, content)
+            st.download_button("📥 PPT", data=ppt_bytes, file_name=f"{title}.pptx",
+                               mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                               key=f"dl_ppt_{state_key}")
+        with b6:
+            st.download_button("📥 txt", data=create_txt_bytes(title, content), file_name=f"{title}.txt",
+                               mime="text/plain", key=f"dl_txt_{state_key}")
 
     if st.session_state.get(f"show_copy_{state_key}", False):
         st.info("💡 아래 상자의 텍스트를 복사하여 사용하세요:")
         st.code(content, language="text")
 
-# --- 8. 전역 세션 및 영구 서재 DB 초기화 ---
+
+def st_image_full(data, caption=None):
+    """streamlit 버전에 따라 이미지 폭 옵션이 달라 호환 처리"""
+    try:
+        st.image(data, caption=caption, width='stretch')
+    except Exception:
+        st.image(data, caption=caption, use_container_width=True)
+
+
+def show_ai_status():
+    """AI 폴백이 쓰였으면 숨기지 않고 알린다."""
+    if st.session_state.get("ai_fallback_used"):
+        st.warning(
+            "⚠️ **AI 서버 응답을 받지 못해, 설교 원고에서 직접 추출한 결과를 표시했습니다.**\n\n"
+            f"사유: `{st.session_state.get('ai_last_error', '알 수 없음')}`\n\n"
+            "→ 사이드바 **[⚙️ AI 연결 설정]** 에서 Gemini API 키를 확인해 주세요."
+        )
+    elif st.session_state.get("ai_model_used"):
+        st.caption(f"✅ 생성 모델: `{st.session_state.ai_model_used}`")
+
+
+def render_body(text: str):
+    html = (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    html = re.sub(r'(\[인도자\s*팁[^\]]*\])', r"<span class='leader-tip'>\1</span>", html)
+    html = re.sub(r'(▸\s*원고\s*근거[^\n]*)', r"<span class='ground-quote'>\1</span>", html)
+    st.markdown(f"<div class='content-box'>{html}</div>", unsafe_allow_html=True)
+
+
+def editable_section(state_key: str, session_field: str, label: str, height: int = 350,
+                     persist_summary: bool = False):
+    """수정 모드 공통 처리"""
+    val = st.session_state.get(session_field, "")
+    if st.session_state.get(f"edit_mode_{state_key}", False):
+        edited = st.text_area(label, value=val, height=height, key=f"ta_{state_key}")
+        if st.button("💾 저장", key=f"save_{state_key}"):
+            st.session_state[session_field] = edited
+            st.session_state[f"edit_mode_{state_key}"] = False
+            if persist_summary:
+                update_sermon_in_db(st.session_state.get("current_sermon_id", 1), updated_summary=edited)
+            st.success("저장되었습니다.")
+            st.rerun()
+        return False
+    return True
+
+
+# ==============================================================================
+# 세션 초기화
+# ==============================================================================
 if "sermon_library" not in st.session_state:
     st.session_state.sermon_library = get_db_sermons()
-
 if "current_sermon_idx" not in st.session_state:
     st.session_state.current_sermon_idx = 0
 
-current_s = st.session_state.sermon_library[st.session_state.current_sermon_idx] if len(st.session_state.sermon_library) > 0 else {}
-if "current_sermon_id" not in st.session_state:
-    st.session_state.current_sermon_id = current_s.get("id", 1)
-if "full_sermon" not in st.session_state or not st.session_state.full_sermon:
-    st.session_state.full_sermon = current_s.get("text", "")
-if "sermon_summary_text" not in st.session_state or not st.session_state.sermon_summary_text:
-    st.session_state.sermon_summary_text = current_s.get("summary", "")
-if "sermon_title" not in st.session_state:
-    st.session_state.sermon_title = current_s.get("title", "예배와 선교")
-if "sermon_scripture" not in st.session_state:
-    st.session_state.sermon_scripture = current_s.get("scripture", "이사야 59:21")
-if "preacher_name" not in st.session_state:
-    st.session_state.preacher_name = "김세훈목사"
-if "dash_active_view" not in st.session_state:
-    st.session_state.dash_active_view = "설교 요약"
+_cur = st.session_state.sermon_library[st.session_state.current_sermon_idx] \
+    if st.session_state.sermon_library else {}
 
-# --- 9. 메인 내비게이션 바 ---
-app_mode = st.sidebar.radio(
-    "🕊️ 플랫폼 대메뉴",
-    [
-        "📊 설교 대시보드 (메인 작업실)",
-        "📤 새 설교 등록/원고작성",
-        "🎙️ AI 보이스오버 스튜디오",
-        "🎬 쇼츠 만들기 (스튜디오)",
-        "📷 말씀카드 이미지",
-        "📚 설교 서재 (Sermon Library)"
-    ]
-)
+st.session_state.setdefault("current_sermon_id", _cur.get("id", 1))
+st.session_state.setdefault("sermon_title", _cur.get("title", "예배와 선교"))
+st.session_state.setdefault("sermon_scripture", _cur.get("scripture", "이사야 59:21"))
+st.session_state.setdefault("full_sermon", _cur.get("text", ""))
+st.session_state.setdefault("sermon_summary_text", _cur.get("summary", ""))
+st.session_state.setdefault("preacher_name", "김세훈목사")
+st.session_state.setdefault("dash_active_view", "설교 요약")
+st.session_state.setdefault("cn_church_name", "화광교회")
+st.session_state.setdefault("ai_model_used", "")
+
 
 # ==============================================================================
-# 1. 📊 설교 대시보드 (메인 작업실)
+# 사이드바
+# ==============================================================================
+with st.sidebar.expander("⚙️ AI 연결 설정", expanded=not bool(get_resolved_api_key())):
+    st.text_input("🔑 Gemini API Key", value=get_resolved_api_key(), type="password",
+                  key="sidebar_api_key_input",
+                  help="Google AI Studio(aistudio.google.com)에서 발급받은 키를 입력하세요.")
+    if get_resolved_api_key():
+        st.markdown("<span class='badge-ok'>키 등록됨</span>", unsafe_allow_html=True)
+        if st.button("🔌 연결 테스트", key="btn_test_api"):
+            with st.spinner("모델 조회 중..."):
+                try:
+                    genai.configure(api_key=get_resolved_api_key())
+                    fp = hashlib.sha256(get_resolved_api_key().encode()).hexdigest()[:16]
+                    discover_available_models.clear()
+                    ms = discover_available_models(fp)
+                    st.success("사용 가능 모델: " + ", ".join(ms[:5]))
+                except Exception as e:
+                    st.error(f"연결 실패: {e}")
+    else:
+        st.markdown("<span class='badge-bad'>키 없음 · AI 기능 제한</span>", unsafe_allow_html=True)
+
+if not KOREAN_FONT_OK:
+    st.sidebar.error(
+        "⚠️ 서버에 한글 폰트가 없어 PDF·카드 이미지의 한글이 깨질 수 있습니다.\n\n"
+        "Streamlit Cloud라면 저장소 루트에 `packages.txt` 파일을 만들고 한 줄만 넣어 재배포하세요:\n\n"
+        "```\nfonts-nanum\n```"
+    )
+
+st.sidebar.markdown(
+    f"**📖 현재 작업 설교**\n\n{st.session_state.sermon_title}\n\n`{st.session_state.sermon_scripture}` "
+    f"· 원고 {len(st.session_state.full_sermon):,}자"
+)
+
+app_mode = st.sidebar.radio(
+    "🕊️ 플랫폼 대메뉴",
+    ["📊 설교 대시보드 (메인 작업실)",
+     "📤 새 설교 등록/원고작성",
+     "🎙️ AI 보이스오버 스튜디오",
+     "🎬 쇼츠 만들기 (스튜디오)",
+     "📷 말씀카드 이미지",
+     "📚 설교 서재 (Sermon Library)"]
+)
+
+
+# ==============================================================================
+# 1) 설교 대시보드
 # ==============================================================================
 if app_mode == "📊 설교 대시보드 (메인 작업실)":
     st.markdown(
-        f"""
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">
-            <h1 style="font-size: 28px; font-weight: 800; margin: 0; color: #f8fafc;">{st.session_state.sermon_title}</h1>
-            <span style="background-color: #2563eb; color: white; padding: 4px 10px; border-radius: 6px; font-size: 13px; font-weight: bold;">기본 {st.session_state.sermon_scripture}</span>
-        </div>
-        """,
+        f"""<div style="display:flex;align-items:center;gap:12px;margin-bottom:8px;">
+        <h1 style="font-size:28px;font-weight:800;margin:0;color:#f8fafc;">{st.session_state.sermon_title}</h1>
+        <span style="background:#2563eb;color:#fff;padding:4px 10px;border-radius:6px;font-size:13px;font-weight:bold;">
+        본문 {st.session_state.sermon_scripture}</span></div>""",
         unsafe_allow_html=True
     )
 
+    _an = analyze_manuscript(st.session_state.full_sermon)
+    if _an["char_count"] < 80:
+        st.error("설교 원고가 비어 있습니다. [📤 새 설교 등록/원고작성]에서 원고를 먼저 등록해 주세요.")
+    else:
+        st.caption(
+            f"🔑 원고 자동 추출 키워드: {', '.join(_an['keywords'][:10]) or '(없음)'}　|　"
+            f"📖 원고 인용 성구: {', '.join(_an['refs'][:6]) or '(없음)'}"
+        )
+
     with st.expander("💡 설교를 더 풍성하게 — 참고 구절 & 예화", expanded=False):
         if st.button("✨ 참고 성구 및 신학적 예화 생성하기", key="btn_gen_rich"):
-            with st.spinner("본문과 연관된 성구와 예화를 분석 중입니다..."):
-                prompt = f"""
-                성경 본문: {st.session_state.sermon_scripture}
-                설교 제목: {st.session_state.sermon_title}
-                설교 원고: {st.session_state.full_sermon[:1500]}
-                
-                [참고 성구 및 신학적 예화 자료집: {st.session_state.sermon_title}]
-                
-                1. 📖 본문 연관 핵심 참고 성구 3가지 및 설교적 연결점 (구절 전문 및 해설)
-                2. 💡 일상 및 현대적 공감 실화 예화 2가지 (스토리텔링)
-                3. 🏛️ 교회사 및 기독교 고전 사상가 명언 2가지 (인물 및 명언)
-                """
-                res = get_ai_response(prompt, is_json=False)
-                if res:
-                    st.session_state.rich_materials = res
-                    st.rerun()
-        
-        rich_mat_content = st.session_state.get("rich_materials", "")
-        if rich_mat_content:
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_참고성구및예화", rich_mat_content, "rich_mat")
-            st.markdown(f"<div class='content-box'>{rich_mat_content}</div>", unsafe_allow_html=True)
+            with st.spinner("본문과 연관된 성구·예화 분석 중..."):
+                task = """[출력 형식]
+1. 📖 본문 연관 참고 성구 3가지
+   - 각 항목: 성경 구절(장절) + 구절 내용 + "이 설교 원고의 어느 대목과 어떻게 연결되는지" (원고 문장 인용 필수)
+2. 💡 이 설교의 논지를 뒷받침할 현대적 예화 2가지
+   - 각 항목: 예화 제목 + 3~5문장 스토리 + 원고의 어떤 주장과 맞물리는지
+3. 🏛️ 교회사·기독교 고전 명언 2가지
+   - 인물 + 명언 + 이 원고의 어떤 대목을 강화하는지"""
+                res = get_ai_response(build_grounded_prompt(task), is_json=False, kind="rich")
+                st.session_state.rich_materials = res
+                st.rerun()
 
-    with st.expander("🎵 추천 찬양 — 새찬송가 · 복음성가 · CCM (각 5곡 검색 연결)", expanded=False):
+        if st.session_state.get("rich_materials"):
+            show_ai_status()
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_참고성구및예화",
+                                       st.session_state.rich_materials, "rich_mat")
+            render_body(st.session_state.rich_materials)
+
+    with st.expander("🎵 추천 찬양 — 새찬송가 · 복음성가 · CCM", expanded=False):
         if st.button("🎶 맞춤 찬양 15곡 추천받기", key="btn_gen_praise"):
-            with st.spinner("설교 메시지와 어울리는 찬양을 선곡 중입니다..."):
-                prompt = f"""
-                본문: {st.session_state.sermon_scripture}, 제목: {st.session_state.sermon_title}
-                JSON: {{"hymns": ["새찬송가 000장 - 제목 5곡"], "gospel_songs": ["복음성가 5곡"], "ccm": ["CCM 5곡"]}}
-                """
-                res = get_ai_response(prompt, is_json=True)
-                if res:
-                    st.session_state.praise_list = res
-                    st.rerun()
+            with st.spinner("설교 메시지와 어울리는 찬양 선곡 중..."):
+                task = """[출력 형식 - JSON만]
+{"hymns": ["새찬송가 000장 - 제목", ...5곡],
+ "gospel_songs": ["복음성가 제목", ...5곡],
+ "ccm": ["CCM 제목", ...5곡]}
+이 설교 원고의 정서·주제와 실제로 맞는 곡만 고르십시오."""
+                res = get_ai_response(build_grounded_prompt(task, ctx_chars=4000), is_json=True, kind="praise")
+                st.session_state.praise_list = res
+                st.rerun()
 
-        if "praise_list" in st.session_state and st.session_state.praise_list:
-            p_data = st.session_state.praise_list
-            cp1, cp2, cp3 = st.columns(3)
-            with cp1:
-                st.markdown("#### 📖 새찬송가 (5곡)")
-                for song in p_data.get("hymns", []):
-                    st.markdown(f"- {song} [🔍 검색](https://www.google.com/search?q={urllib.parse.quote(song)}) | [▶️ 듣기](https://www.youtube.com/results?search_query={urllib.parse.quote(song)})")
-            with cp2:
-                st.markdown("#### 🕊️ 복음성가 (5곡)")
-                for song in p_data.get("gospel_songs", []):
-                    st.markdown(f"- {song} [🔍 검색](https://www.google.com/search?q={urllib.parse.quote(song)}) | [▶️ 듣기](https://www.youtube.com/results?search_query={urllib.parse.quote(song)})")
-            with cp3:
-                st.markdown("#### 🎸 현대 CCM (5곡)")
-                for song in p_data.get("ccm", []):
-                    st.markdown(f"- {song} [🔍 검색](https://www.google.com/search?q={urllib.parse.quote(song)}) | [▶️ 듣기](https://www.youtube.com/results?search_query={urllib.parse.quote(song)})")
+        if st.session_state.get("praise_list"):
+            show_ai_status()
+            p = st.session_state.praise_list
+            c1, c2, c3 = st.columns(3)
+            for col, key, label in ((c1, "hymns", "📖 새찬송가"), (c2, "gospel_songs", "🕊️ 복음성가"), (c3, "ccm", "🎸 CCM")):
+                with col:
+                    st.markdown(f"#### {label}")
+                    for song in p.get(key, []):
+                        q = urllib.parse.quote(song)
+                        st.markdown(f"- {song} [🔍](https://www.google.com/search?q={q}) "
+                                    f"[▶️](https://www.youtube.com/results?search_query={q})")
 
     st.write("---")
+    left, right = st.columns([1, 2.5])
 
-    left_panel, right_panel = st.columns([1, 2.5])
-    
-    with left_panel:
-        st.markdown("<p style='font-size:12px; font-weight:bold; color:#94a3b8; margin-bottom:4px;'>사역 메뉴 선택</p>", unsafe_allow_html=True)
-        selected_menu = st.radio(
-            "사역 메뉴",
-            [
-                "설교 요약",
-                "소그룹 나눔",
-                "QT 5일치",
-                "카드뉴스",
-                "쇼츠 대본",
-                "🏡 세대별 가정예배지",
-                "🔍 설교 점검 및 제안",
-                "📖 소그룹 리더가이드"
-            ],
-            index=[
-                "설교 요약", "소그룹 나눔", "QT 5일치", "카드뉴스", "쇼츠 대본",
-                "🏡 세대별 가정예배지", "🔍 설교 점검 및 제안", "📖 소그룹 리더가이드"
-            ].index(st.session_state.dash_active_view) if st.session_state.dash_active_view in [
-                "설교 요약", "소그룹 나눔", "QT 5일치", "카드뉴스", "쇼츠 대본",
-                "🏡 세대별 가정예배지", "🔍 설교 점검 및 제안", "📖 소그룹 리더가이드"
-            ] else 0,
-            key="dash_menu_selector"
-        )
-        st.session_state.dash_active_view = selected_menu
+    MENU = ["설교 요약", "소그룹 나눔", "QT 5일치", "카드뉴스", "쇼츠 대본",
+            "🏡 세대별 가정예배지", "🔍 설교 점검 및 제안", "📖 소그룹 리더가이드"]
 
-    with right_panel:
-        active_view = st.session_state.dash_active_view
+    with left:
+        st.markdown("<p style='font-size:12px;font-weight:bold;color:#94a3b8;'>사역 메뉴 선택</p>",
+                    unsafe_allow_html=True)
+        sel = st.radio("사역 메뉴", MENU,
+                       index=MENU.index(st.session_state.dash_active_view)
+                       if st.session_state.dash_active_view in MENU else 0,
+                       key="dash_menu_selector", label_visibility="collapsed")
+        st.session_state.dash_active_view = sel
 
-        # 1. 설교 요약
-        if active_view == "설교 요약":
-            summary_val = st.session_state.get("sermon_summary_text", "")
-            if not summary_val or len(summary_val.strip()) < 50:
-                summary_val = analyze_expository_sermon(
-                    st.session_state.sermon_title,
-                    st.session_state.sermon_scripture,
-                    st.session_state.full_sermon
-                )
-                st.session_state.sermon_summary_text = summary_val
+    with right:
+        view = st.session_state.dash_active_view
 
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교요약", summary_val, "sermon_sum")
-            
-            if st.button("✨ 강해적 3대지 핵심 요약 다시 생성하기", type="primary", key="btn_regen_ai_summary"):
-                with st.spinner("AI가 설교 원고에서 성경구절과 강해적 원리를 추출하여 체계적으로 요약 중입니다..."):
-                    prompt = f"""
-                    설교 제목: {st.session_state.sermon_title}
-                    성경 본문: {st.session_state.sermon_scripture}
-                    설교 전문: {st.session_state.full_sermon[:4000]}
+        # ---------------- 설교 요약 ----------------
+        if view == "설교 요약":
+            if not st.session_state.get("sermon_summary_text") or len(st.session_state.sermon_summary_text) < 50:
+                st.session_state.sermon_summary_text = build_local_summary(
+                    st.session_state.sermon_title, st.session_state.sermon_scripture,
+                    st.session_state.full_sermon)
 
-                    [강해적 설교 핵심 요약 작성]
-                    위 설교 전문을 바탕으로 강단 선포용 핵심 요약을 100% 한국어로만 작성하세요:
-                    🎯 설교 핵심 명제 (중심 사상 1문장)
-                    📌 강해적 3대지 핵심 요약:
-                    - 1. 제1대지명 (본문 구절 포함)
-                      • 성경적 원리 및 주해적 설명
-                    - 2. 제2대지명 (본문 구절 포함)
-                      • 성경적 원리 및 주해적 설명
-                    - 3. 제3대지명 (본문 구절 포함)
-                      • 성경적 원리 및 주해적 설명
-                    💡 성도를 위한 구체적 실천 적용 3가지 (구체적 행동 지침)
-                    🙏 결단 및 축복 기도문 (2줄)
-                    """
-                    gen_sum = get_ai_response(prompt, is_json=False)
-                    if gen_sum:
-                        st.session_state.sermon_summary_text = gen_sum
-                        summary_val = gen_sum
-                        update_sermon_in_db(st.session_state.get("current_sermon_id", 1), updated_summary=gen_sum)
-                        st.success("강해적 핵심 요약 생성이 완료되었습니다!")
-                        st.rerun()
+            summary_val = st.session_state.sermon_summary_text
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교요약",
+                                       summary_val, "sermon_sum", ppt_mode="sermon")
 
-            if st.session_state.get("edit_mode_sermon_sum", False):
-                s_edit = st.text_area("설교 요약 내용 편집", value=summary_val, height=380, key="edit_sum_area")
-                if st.button("💾 저장", key="save_full_sermon"):
-                    st.session_state.sermon_summary_text = s_edit
-                    st.session_state.edit_mode_sermon_sum = False
-                    update_sermon_in_db(st.session_state.get("current_sermon_id", 1), updated_summary=s_edit)
-                    st.success("요약 내용이 저장 및 영구 DB에 동기화되었습니다.")
+            if st.button("✨ AI 강해 요약 생성 (원고 근거 인용 포함)", type="primary", key="btn_regen_ai_summary"):
+                with st.spinner("원고를 읽고 대지·근거·적용을 추출하는 중..."):
+                    task = """[출력 형식 - 아래 틀 그대로]
+🎯 설교 핵심 명제
+(이 원고 전체를 관통하는 중심 사상 1~2문장. 원고의 표현을 살려 쓸 것)
+
+🔑 이 설교의 핵심 키워드
+(원고에 실제로 반복 등장한 단어 6~8개, 쉼표 구분)
+
+📌 강해적 3대지
+1. (대지 제목 — 원고에 나온 표현으로. 상투어 금지) [근거 성구: 원고에 인용된 구절]
+   ▸ 원고 근거: "원고에서 그대로 가져온 문장 1~2개"
+   ▸ 주해 설명: (그 대목이 말하는 바를 2~3문장)
+2. (동일 형식)
+3. (동일 형식)
+
+💡 성도를 위한 실천 적용 3가지
+1. (원고의 권면을 구체적 행동으로 — 원고에 없는 일반론 금지)
+2.
+3.
+
+🙏 결단 및 축복 기도문
+(원고의 결론·기도 대목을 반영한 3~4문장)"""
+                    res = get_ai_response(build_grounded_prompt(task, ctx_chars=11000), is_json=False,
+                                          temperature=0.25, kind="summary")
+                    st.session_state.sermon_summary_text = res
+                    update_sermon_in_db(st.session_state.get("current_sermon_id", 1), updated_summary=res)
                     st.rerun()
-            else:
-                formatted_summary = summary_val
-                formatted_summary = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", formatted_summary)
-                st.markdown(f"<div class='content-box'>{formatted_summary}</div>", unsafe_allow_html=True)
+
+            show_ai_status()
+            if editable_section("sermon_sum", "sermon_summary_text", "설교 요약 편집",
+                                height=400, persist_summary=True):
+                render_body(st.session_state.sermon_summary_text)
 
             with st.expander("📜 설교문 원고 전문 보기", expanded=False):
-                st.write(st.session_state.full_sermon)
+                st.text(st.session_state.full_sermon)
 
-        # 2. 소그룹 나눔
-        elif active_view == "소그룹 나눔":
-            grp_txt = st.session_state.get("small_group_text", "")
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹나눔지", grp_txt, "sm_grp")
-            
-            if st.button("✨ 소그룹 나눔 질문 자동 생성", type="primary", key="btn_gen_sm_grp"):
+        # ---------------- 소그룹 나눔 ----------------
+        elif view == "소그룹 나눔":
+            txt = st.session_state.get("small_group_text", "")
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹나눔지", txt, "sm_grp")
+
+            if st.button("✨ 소그룹 나눔지 생성", type="primary", key="btn_gen_sm_grp"):
                 with st.spinner("소그룹 나눔지 작성 중..."):
-                    prompt = f"""
-                    성경 본문: {st.session_state.sermon_scripture}
-                    설교 전문: {st.session_state.full_sermon[:3500]}
-                    설교 제목: {st.session_state.sermon_title}
-                    
-                    [소그룹 나눔지 작성]
-                    위 설교 내용을 바탕으로 구역/셀모임용 소그룹 나눔지를 작성하세요:
-                    1. 마음 열기 (아이스브레이크)
-                    - [인도자 팁 / 가이드]: (분위기를 부드럽게 만드는 인도자 멘트)
-                    - (일상의 따뜻한 나눔 질문 1가지)
-                    2. 말씀 속으로
-                    - [인도자 팁 / 가이드]: (본문 이해를 돕는 인도자 가이드)
-                    - 1. (본문 말씀 이해 질문)
-                    - 2. (설교 핵심 메시지 나눔 질문)
-                    3. 삶 속으로
-                    - [인도자 팁 / 가이드]: (솔직한 나눔을 이끄는 리더 조언)
-                    - 1. (구체적 실천 방안 질문)
-                    - 2. (한 주간의 결단 질문)
-                    4. 마침 합심 기도문
-                    """
-                    res = get_ai_response(prompt, is_json=False)
-                    if res:
-                        st.session_state.small_group_text = res
-                        st.rerun()
+                    task = """[출력 형식]
+1. 마음 열기
+- [인도자 팁 / 가이드]: (이 설교 주제와 이어지는 도입 멘트)
+- 질문 1개 (이 설교의 키워드와 연결될 것)
 
-            if grp_txt:
-                if st.session_state.get("edit_mode_sm_grp", False):
-                    edited_grp = st.text_area("소그룹 나눔지 편집", value=grp_txt, height=350, key="edit_grp_area")
-                    if st.button("💾 저장", key="save_grp_btn"):
-                        st.session_state.small_group_text = edited_grp
-                        st.session_state.edit_mode_sm_grp = False
-                        st.success("저장되었습니다.")
-                        st.rerun()
-                else:
-                    formatted_grp = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", grp_txt)
-                    st.markdown(f"<div class='content-box'>{formatted_grp}</div>", unsafe_allow_html=True)
+2. 말씀 속으로
+- [인도자 팁 / 가이드]: ...
+- 1. (원고의 특정 대목을 직접 인용하며 묻는 질문)
+- 2. (원고의 두 번째 대목을 인용하며 묻는 질문)
+
+3. 삶 속으로
+- [인도자 팁 / 가이드]: ...
+- 1. (원고의 권면을 구체적 상황으로 바꾼 질문)
+- 2. (이번 주 결단 질문)
+
+4. 마침 합심 기도문 (원고 내용 반영, 3문장)
+
+※ 모든 질문에는 이 설교 원고에만 나오는 표현이 최소 1개 포함되어야 합니다."""
+                    st.session_state.small_group_text = get_ai_response(
+                        build_grounded_prompt(task), is_json=False, kind="smallgroup")
+                    st.rerun()
+
+            if txt:
+                show_ai_status()
+                if editable_section("sm_grp", "small_group_text", "소그룹 나눔지 편집"):
+                    render_body(st.session_state.small_group_text)
             else:
                 st.caption("위 버튼을 눌러 소그룹 나눔지를 생성하세요.")
 
-        # 3. QT 5일치
-        elif active_view == "QT 5일치":
-            qt_txt = st.session_state.get("qt5_text", "")
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_주간QT5일치", qt_txt, "qt5")
+        # ---------------- QT 5일치 ----------------
+        elif view == "QT 5일치":
+            txt = st.session_state.get("qt5_text", "")
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_주간QT5일치", txt, "qt5")
 
-            if st.button("✨ 5일치 QT 묵상지 자동 생성", type="primary", key="btn_gen_qt5"):
+            if st.button("✨ 5일치 QT 묵상지 생성", type="primary", key="btn_gen_qt5"):
                 with st.spinner("주간 5일치 QT 작성 중..."):
-                    prompt = f"""
-                    성경 본문: {st.session_state.sermon_scripture}
-                    설교 전문: {st.session_state.full_sermon[:3000]}
-                    설교 제목: {st.session_state.sermon_title}
-                    
-                    [주간 QT 5일치 묵상지 작성]
-                    위 설교를 바탕으로 월요일부터 금요일까지 5일치 말씀 묵상지를 작성하세요:
-                    각 날짜마다:
-                    - 📅 제목:
-                    - 📖 본문 구절:
-                    - 💡 말씀 묵상 해설:
-                    - 🎯 삶의 적용 질문:
-                    - 🙏 오늘의 기도:
-                    """
-                    res = get_ai_response(prompt, is_json=False)
-                    if res:
-                        st.session_state.qt5_text = res
-                        st.rerun()
+                    task = """[출력 형식 — 월~금 5일, 각 날짜마다]
+📅 (요일): (그날의 소제목 — 원고의 서로 다른 대목에서 뽑을 것)
+- 📖 본문 구절: (원고에 인용된 구절 중 하나, 또는 대표 성구)
+- 💡 말씀 묵상: (원고의 해당 대목을 풀어 4~5문장)
+- 🎯 삶의 적용: (구체적 행동 1가지)
+- 🙏 오늘의 기도: (2문장)
 
-            if qt_txt:
-                if st.session_state.get("edit_mode_qt5", False):
-                    edited_qt = st.text_area("QT 5일치 편집", value=qt_txt, height=350, key="edit_qt_area")
-                    if st.button("💾 저장", key="save_qt_btn"):
-                        st.session_state.qt5_text = edited_qt
-                        st.session_state.edit_mode_qt5 = False
-                        st.success("저장되었습니다.")
-                        st.rerun()
-                else:
-                    st.markdown(f"<div class='content-box'>{qt_txt}</div>", unsafe_allow_html=True)
+※ 5일이 서로 다른 내용이어야 합니다. 같은 말을 다섯 번 반복하지 마십시오."""
+                    st.session_state.qt5_text = get_ai_response(
+                        build_grounded_prompt(task), is_json=False, kind="qt")
+                    st.rerun()
+
+            if txt:
+                show_ai_status()
+                if editable_section("qt5", "qt5_text", "QT 5일치 편집"):
+                    render_body(st.session_state.qt5_text)
             else:
                 st.caption("위 버튼을 눌러 5일치 QT를 생성하세요.")
 
-        # 4. 카드뉴스
-        elif active_view == "카드뉴스":
-            card_all_text = "\n\n".join([f"CARD {c['card_number']}. {c['headline']}\n{c['body_text']}" for c in st.session_state.get("card_list", [])]) if "card_list" in st.session_state else ""
-            
-            c_head1, c_head2 = st.columns([1.2, 1.8])
-            with c_head1:
-                st.markdown("<h2 style='margin:0; font-size:24px; font-weight:bold;'>카드뉴스</h2>", unsafe_allow_html=True)
-            with c_head2:
-                col_e, col_d_ppt, col_d_zip = st.columns([1, 1.3, 1.4])
-                with col_e:
+        # ---------------- 카드뉴스 ----------------
+        elif view == "카드뉴스":
+            h1, h2 = st.columns([1.2, 1.8])
+            with h1:
+                st.markdown("<h2 style='margin:0;font-size:24px;font-weight:bold;'>카드뉴스</h2>",
+                            unsafe_allow_html=True)
+            with h2:
+                e1, e2, e3 = st.columns([1, 1.3, 1.4])
+                with e1:
                     if st.button("✏️ 편집", key="cn_edit_toggle_btn"):
                         st.session_state.cn_edit_mode = not st.session_state.get("cn_edit_mode", False)
-                with col_d_ppt:
-                    if "card_list" in st.session_state:
-                        st.download_button(
-                            "📥 PPT 전체",
-                            data=generate_cardnews_pptx(st.session_state.card_list, st.session_state.get("cn_church_name", "")),
-                            file_name=f"{st.session_state.sermon_title}_카드뉴스.pptx",
-                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                            key="cn_dl_all_ppt_btn"
-                        )
-                with col_d_zip:
-                    if "card_list" in st.session_state:
-                        st.download_button(
-                            "📦 전체 PNG (ZIP)",
-                            data=generate_cardnews_zip(st.session_state.card_list, st.session_state.sermon_scripture, st.session_state.get("cn_church_name", "")),
-                            file_name=f"{st.session_state.sermon_title}_카드뉴스_이미지.zip",
-                            mime="application/zip",
-                            key="cn_dl_all_zip_btn_top"
-                        )
+                if st.session_state.get("card_list"):
+                    cj = json.dumps(st.session_state.card_list, ensure_ascii=False)
+                    with e2:
+                        st.download_button("📥 PPT 전체",
+                                           data=generate_cardnews_pptx_bytes(cj, st.session_state.cn_church_name),
+                                           file_name=f"{st.session_state.sermon_title}_카드뉴스.pptx",
+                                           mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                           key="cn_dl_ppt")
+                    with e3:
+                        st.download_button("📦 전체 PNG",
+                                           data=generate_cardnews_zip_bytes(cj, st.session_state.sermon_scripture,
+                                                                            st.session_state.cn_church_name),
+                                           file_name=f"{st.session_state.sermon_title}_카드뉴스.zip",
+                                           mime="application/zip", key="cn_dl_zip")
 
-            st.info("💡 텍스트 수정은 물론, 카드 추가/삭제 및 이미지(PNG/ZIP) / PPT 내려받기가 가능합니다!")
+            o1, o2 = st.columns([1, 1])
+            with o1:
+                card_count = st.slider("카드 총 장수", 5, 12, 7, key="cn_count_slider")
+            with o2:
+                st.session_state.cn_church_name = st.text_input(
+                    "교회명", value=st.session_state.cn_church_name, key="cn_church_input")
 
-            cn_opt1, cn_opt2, cn_opt3 = st.columns([1.5, 1.5, 2])
-            with cn_opt1:
-                bg_opt = st.radio("배경", ["사진", "기본", "갤러리", "직접 업로드"], horizontal=True, key="cn_bg_opt")
-            with cn_opt2:
-                font_opt = st.selectbox("글씨체", ["프리텐다드", "나눔고딕", "본고딕"], key="cn_font_opt")
-                font_size = st.number_input("크기", min_value=80, max_value=140, value=100, step=5, key="cn_font_size")
-            with cn_opt3:
-                church_input = st.text_input("교회명", value=st.session_state.get("cn_church_name", "화광교회"), placeholder="교회 이름", key="cn_church_input")
-                st.session_state.cn_church_name = church_input
+            if st.button(f"🎨 카드뉴스 {card_count}장 생성 / 다시 생성", type="primary", key="btn_gen_cardnews"):
+                with st.spinner(f"원고에서 {card_count}장 카드뉴스 구성 중..."):
+                    task = f"""[출력 형식 - JSON만]
+{{"cards": [{{"card_number": 1, "headline": "...", "body_text": "..."}}, ...]}}
 
-            # 카드 장수 선택 슬라이더 (7~10장)
-            card_count_choice = st.slider("카드뉴스 총 장수 선택", min_value=7, max_value=10, value=7, step=1, key="cn_count_slider")
+정확히 {card_count}장을 만드십시오. 구성 규칙:
+- 1장: 표제 카드. headline은 설교 제목, body_text는 이 설교의 한 줄 요지(원고 문장 기반).
+- 2장~{card_count-2}장: 원고의 서로 다른 대목을 하나씩 담습니다.
+  headline은 그 대목의 핵심을 12~20자로 (원고 단어 사용), body_text는 60~110자로 원고 내용을 풀어 씁니다.
+- {card_count-1}장: 💡 삶의 적용 — 원고의 권면 3가지를 번호로.
+- {card_count}장: 🙏 기도 — 원고의 결론/기도를 반영한 2~3문장.
 
-            st.write("---")
+절대 금지: "말씀의 깊은 은혜", "믿음의 결단", "주님의 신실하신 은혜가 충만하기를" 같이
+어느 설교에나 붙는 문구로 카드를 채우는 것. 모든 카드에 이 원고 고유의 단어가 들어가야 합니다."""
+                    res = get_ai_response(build_grounded_prompt(task, ctx_chars=9000), is_json=True,
+                                          temperature=0.3, kind="cards", card_count=card_count)
+                    cards = (res or {}).get("cards", [])
+                    if cards:
+                        for i, c in enumerate(cards, start=1):
+                            c["card_number"] = i
+                        st.session_state.card_list = cards[:card_count]
+                        st.session_state.cn_card_idx = 0
+                    st.rerun()
 
-            if "card_list" not in st.session_state or not st.session_state.card_list or len(st.session_state.card_list) != card_count_choice:
-                if st.button(f"🎨 카드뉴스 {card_count_choice}장 자동 생성하기", type="primary", key="btn_gen_cardnews_init"):
-                    with st.spinner(f"설교 메시지로 {card_count_choice}장 카드뉴스 구성 중..."):
-                        prompt = f"설교 제목: {st.session_state.sermon_title}\n성경 본문: {st.session_state.sermon_scripture}\n설교문: {st.session_state.full_sermon[:3500]}\n정확히 {card_count_choice}장의 카드뉴스 JSON 출력 (100% 한국어): {{\"cards\": [{{\"card_number\": 1, \"headline\": \"제목\", \"body_text\": \"문구\"}}]}}"
-                        res = get_ai_response(prompt, is_json=True)
-                        if res and "cards" in res:
-                            st.session_state.card_list = res["cards"]
-                            st.rerun()
+            show_ai_status()
 
-            if st.session_state.get("cn_edit_mode", False) and "card_list" in st.session_state:
-                st.markdown("#### ✏️ 카드뉴스 텍스트 편집기")
-                for c_i, card_item in enumerate(st.session_state.card_list):
-                    with st.expander(f"CARD {card_item.get('card_number', c_i+1)} 편집", expanded=(c_i==0)):
-                        card_item["headline"] = st.text_input(f"카드 {c_i+1} 헤드라인", value=card_item.get("headline", ""), key=f"cn_h_{c_i}")
-                        card_item["body_text"] = st.text_area(f"카드 {c_i+1} 본문", value=card_item.get("body_text", ""), key=f"cn_b_{c_i}")
+            if st.session_state.get("cn_edit_mode") and st.session_state.get("card_list"):
+                st.markdown("#### ✏️ 카드 텍스트 편집기")
+                for i, c in enumerate(st.session_state.card_list):
+                    with st.expander(f"CARD {c.get('card_number', i+1)}", expanded=(i == 0)):
+                        c["headline"] = st.text_input("헤드라인", value=c.get("headline", ""), key=f"cn_h_{i}")
+                        c["body_text"] = st.text_area("본문", value=c.get("body_text", ""), key=f"cn_b_{i}")
 
-            if "card_list" in st.session_state and st.session_state.card_list:
+            if st.session_state.get("card_list"):
                 cards = st.session_state.card_list
-                if "cn_card_idx" not in st.session_state:
-                    st.session_state.cn_card_idx = 0
+                total = len(cards)
+                st.session_state.setdefault("cn_card_idx", 0)
+                idx = st.session_state.cn_card_idx % total
 
-                total_cards = len(cards)
-                curr_idx = st.session_state.cn_card_idx % total_cards
-                curr_card = cards[curr_idx]
-
-                car_c1, car_c2, car_c3 = st.columns([1, 4, 1])
-                with car_c1:
-                    st.markdown("<div style='height: 220px;'></div>", unsafe_allow_html=True)
-                    if st.button("❮ 이전", key="cn_prev_btn"):
-                        st.session_state.cn_card_idx = (curr_idx - 1) % total_cards
+                n1, n2, n3 = st.columns([1, 4, 1])
+                with n1:
+                    if st.button("❮ 이전", key="cn_prev"):
+                        st.session_state.cn_card_idx = (idx - 1) % total
                         st.rerun()
-                with car_c3:
-                    st.markdown("<div style='height: 220px;'></div>", unsafe_allow_html=True)
-                    if st.button("다음 ❯", key="cn_next_btn"):
-                        st.session_state.cn_card_idx = (curr_idx + 1) % total_cards
+                with n3:
+                    if st.button("다음 ❯", key="cn_next"):
+                        st.session_state.cn_card_idx = (idx + 1) % total
                         st.rerun()
-
-                bg_img_url = CARD_BACKGROUNDS[curr_idx % len(CARD_BACKGROUNDS)]
-                
-                with car_c2:
-                    st.markdown(
-                        f"""
-                        <div class="card-preview-container">
-                            <div class="card-box-preview" style="background-image: url('{bg_img_url}');">
-                                <h2 style="color: #ffffff; font-size: {int(26*(font_size/100))}px; font-weight: bold; margin-bottom: 12px; text-shadow: 0 2px 4px rgba(0,0,0,0.8);">{curr_card.get('headline', '')}</h2>
-                                <p style="color: #e2e8f0; font-size: {int(16*(font_size/100))}px; line-height: 1.7; text-shadow: 0 1px 3px rgba(0,0,0,0.8); white-space: pre-wrap;">{curr_card.get('body_text', '')}</p>
-                                <div style="margin-top: 24px; color: #fde047; font-size: 14px; font-weight: bold;">「 {st.session_state.sermon_scripture} 」</div>
-                                <div style="margin-top: 16px; color: #93c5fd; font-size: 12px;">{church_input}</div>
-                            </div>
-                            <div style="color: #94a3b8; font-size: 13px; margin-top: 14px;">
-                                <strong>{curr_idx + 1} / {total_cards} 슬라이드</strong> (← → 키로 이동)
-                            </div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True
-                    )
-                    
-                    dl_c1, dl_c2 = st.columns(2)
-                    with dl_c1:
-                        single_png_bytes = generate_single_card_png(curr_card, curr_idx, st.session_state.sermon_scripture, church_input)
-                        st.download_button(
-                            f"🖼️ CARD {curr_idx + 1} 개별 PNG 다운로드",
-                            data=single_png_bytes,
-                            file_name=f"{st.session_state.sermon_title}_card_{curr_idx + 1}.png",
-                            mime="image/png",
-                            key=f"dl_single_png_{curr_idx}"
-                        )
-                    with dl_c2:
-                        st.download_button(
-                            "📦 전체 카드뉴스 PNG (ZIP) 다운로드",
-                            data=generate_cardnews_zip(cards, st.session_state.sermon_scripture, church_input),
-                            file_name=f"{st.session_state.sermon_title}_전체_카드뉴스_PNG.zip",
-                            mime="application/zip",
-                            key=f"dl_all_zip_under_preview_{curr_idx}"
-                        )
+                with n2:
+                    png = generate_single_card_png_bytes(
+                        json.dumps(cards[idx], ensure_ascii=False), idx,
+                        st.session_state.sermon_scripture, st.session_state.cn_church_name)
+                    st_image_full(png, caption=f"{idx+1} / {total} — 실제 다운로드 결과와 동일")
+                    st.download_button(f"🖼️ CARD {idx+1} PNG 다운로드", data=png,
+                                       file_name=f"{st.session_state.sermon_title}_card_{idx+1}.png",
+                                       mime="image/png", key=f"dl_card_{idx}")
 
                 st.write("---")
                 st.markdown("#### 인스타그램 캡션")
-                insta_c1, insta_c2 = st.columns([4, 1])
-                insta_text = f"오늘 선포된 [{st.session_state.sermon_title}] ({st.session_state.sermon_scripture}) 말씀을 나눕니다.\n\n주신 은혜를 기억하고 마음에 깊이 새기며 삶 속에서 선한 능력으로 승리하시기를 축복합니다."
-                insta_tags = f"#주일설교 #{st.session_state.sermon_title.replace(' ', '')} #말씀묵상 #가정예배 #크리스천"
+                _a = analyze_manuscript(st.session_state.full_sermon)
+                cap = (f"[{st.session_state.sermon_title}] ({st.session_state.sermon_scripture})\n\n"
+                       f"{(_a['key_sentences'][0] if _a['key_sentences'] else '')}\n\n"
+                       + " ".join(["#주일설교", "#말씀묵상"] + [f"#{k}" for k in _a['keywords'][:6]]))
+                st.code(cap, language="text")
+            else:
+                st.caption("위 버튼을 눌러 카드뉴스를 생성하세요.")
 
-                with insta_c1:
-                    st.info(insta_text)
-                    st.code(insta_tags, language="text")
-                with insta_c2:
-                    if st.button("📋 전체 복사", key="btn_copy_insta"):
-                        st.success("인스타그램 캡션이 복사되었습니다!")
+        # ---------------- 쇼츠 대본 ----------------
+        elif view == "쇼츠 대본":
+            txt = st.session_state.get("shorts_script_text", "")
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_쇼츠대본", txt, "sh_script")
 
-        # 5. 쇼츠 대본
-        elif active_view == "쇼츠 대본":
-            sh_txt = st.session_state.get("shorts_script_text", "")
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_쇼츠대본", sh_txt, "sh_script")
-
-            if st.button("🎬 바이럴 쇼츠 대본 3종 생성", type="primary", key="btn_gen_shorts_script"):
+            if st.button("🎬 쇼츠 대본 3종 생성", type="primary", key="btn_gen_shorts_script"):
                 with st.spinner("쇼츠 대본 작성 중..."):
-                    prompt = f"""
-                    성경 본문: {st.session_state.sermon_scripture}
-                    설교 전문: {st.session_state.full_sermon[:3000]}
-                    설교 제목: {st.session_state.sermon_title}
-                    
-                    [60초 세로 쇼츠 대본 3종 작성]
-                    1. 🎬 감동 및 위로형 대본 (후킹, 본론, 결단)
-                    2. 💡 질문 및 호기심 자극형 대본 (후킹, 본론, 결단)
-                    3. 🔥 강한 결단 선포형 대본 (후킹, 본론, 결단)
-                    """
-                    res = get_ai_response(prompt, is_json=False)
-                    if res:
-                        st.session_state.shorts_script_text = res
-                        st.rerun()
+                    task = """[출력 형식 — 60초 세로 쇼츠 대본 3종]
+각 대본마다:
+🎬 (유형명)
+- 후킹(0~5초): (원고의 가장 강력한 문장에서 따온 한 마디)
+- 본론(5~45초): (원고 내용 기반 3~4문장, 화면 자막 단위로 줄바꿈)
+- 결단(45~60초): (한 문장 권면)
+- 화면 자막 키워드: (5개)
 
-            if sh_txt:
-                if st.session_state.get("edit_mode_sh_script", False):
-                    edited_sh = st.text_area("쇼츠 대본 편집", value=sh_txt, height=350, key="edit_sh_area")
-                    if st.button("💾 저장", key="save_sh_btn"):
-                        st.session_state.shorts_script_text = edited_sh
-                        st.session_state.edit_mode_sh_script = False
-                        st.success("저장되었습니다.")
-                        st.rerun()
-                else:
-                    st.markdown(f"<div class='content-box'>{sh_txt}</div>", unsafe_allow_html=True)
+3종 유형: 1) 감동·위로형  2) 질문·호기심형  3) 결단 선포형
+세 대본은 원고의 서로 다른 대목을 사용해야 합니다."""
+                    st.session_state.shorts_script_text = get_ai_response(
+                        build_grounded_prompt(task), is_json=False, kind="shorts_script")
+                    st.rerun()
+
+            if txt:
+                show_ai_status()
+                if editable_section("sh_script", "shorts_script_text", "쇼츠 대본 편집"):
+                    render_body(st.session_state.shorts_script_text)
             else:
                 st.caption("위 버튼을 눌러 쇼츠 대본을 생성하세요.")
 
-        # 6. 세대별 가정예배지
-        elif active_view == "🏡 세대별 가정예배지":
-            age_group = st.selectbox("예배 대상 선택", ["👶 영유아용", "🧒 어린이용", "🧑 청소년용", "👨‍👩‍👧 청장년용"], key="sel_age_group")
-            fam_txt = st.session_state.get(f"family_worship_{age_group}", "")
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_가정예배지_{age_group}", fam_txt, f"fam_{age_group}")
+        # ---------------- 가정예배지 ----------------
+        elif view == "🏡 세대별 가정예배지":
+            age = st.selectbox("예배 대상 선택", ["👶 영유아용", "🧒 어린이용", "🧑 청소년용", "👨‍👩‍👧 청장년용"],
+                               key="sel_age_group")
+            fkey = f"family_worship_{age}"
+            txt = st.session_state.get(fkey, "")
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_가정예배지_{age}", txt, f"fam_{age}")
 
-            if st.button(f"✨ {age_group} 맞춤 가정예배지 생성", type="primary", key="btn_gen_fam"):
-                with st.spinner(f"{age_group} 가정예배지 작성 중..."):
-                    prompt = f"""
-                    성경 본문: {st.session_state.sermon_scripture}
-                    설교 전문: {st.session_state.full_sermon[:3000]}
-                    설교 제목: {st.session_state.sermon_title}
-                    대상: {age_group}
-                    
-                    [가정예배 순서지 작성 ({age_group})]
-                    1. 찬양 및 신앙고백
-                    - [인도자 팁 / 가이드]: (인도자를 위한 찬양 선곡 및 시작 멘트 안내)
-                    2. 함께 읽는 성경 말씀
-                    - [인도자 팁 / 가이드]: (가족들이 교독할 때 주의할 포인트)
-                    3. {age_group} 눈높이에 맞춘 3분 가족 메시지
-                    - [인도자 팁 / 가이드]: (자녀가 쉽게 이해할 수 있는 예화 전달 팁)
-                    4. 온 가족 나눔 질문 2가지
-                    - [인도자 팁 / 가이드]: (자녀가 편안하게 대답할 수 있도록 격려하는 방법)
-                    5. 가정을 축복하는 마무리 기도문
-                    """
-                    res = get_ai_response(prompt, is_json=False)
-                    if res:
-                        st.session_state[f"family_worship_{age_group}"] = res
-                        st.rerun()
+            if st.button(f"✨ {age} 맞춤 가정예배지 생성", type="primary", key="btn_gen_fam"):
+                with st.spinner(f"{age} 가정예배지 작성 중..."):
+                    task = f"""[출력 형식 — 대상: {age}]
+1. 찬양 및 신앙고백
+- [인도자 팁 / 가이드]: (이 설교 주제에 맞는 찬송 제안과 시작 멘트)
+2. 함께 읽는 성경 말씀
+- [인도자 팁 / 가이드]: ...
+3. {age} 눈높이 3분 가족 메시지
+- (원고의 핵심 내용을 이 연령대 언어로. 원고의 예화·표현을 반드시 활용)
+4. 온 가족 나눔 질문 2가지
+- [인도자 팁 / 가이드]: ...
+5. 가정을 축복하는 마무리 기도문
 
-            if fam_txt:
-                if st.session_state.get(f"edit_mode_fam_{age_group}", False):
-                    edited_fam = st.text_area("가정예배지 편집", value=fam_txt, height=320, key=f"edit_fam_{age_group}")
-                    if st.button("💾 저장", key=f"save_fam_{age_group}"):
-                        st.session_state[f"family_worship_{age_group}"] = edited_fam
-                        st.session_state[f"edit_mode_fam_{age_group}"] = False
-                        st.success("저장되었습니다.")
-                        st.rerun()
-                else:
-                    formatted_fam = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", fam_txt)
-                    st.markdown(f"<div class='content-box'>{formatted_fam}</div>", unsafe_allow_html=True)
+※ {age}의 이해 수준에 맞춘 어휘를 쓰되, 내용은 반드시 이 설교 원고에서 나와야 합니다."""
+                    st.session_state[fkey] = get_ai_response(
+                        build_grounded_prompt(task), is_json=False, kind="family")
+                    st.rerun()
+
+            if txt:
+                show_ai_status()
+                if editable_section(f"fam_{age}", fkey, "가정예배지 편집", height=320):
+                    render_body(st.session_state[fkey])
             else:
-                st.caption(f"위 버튼을 눌러 {age_group} 맞춤 가정예배지를 생성하세요.")
+                st.caption(f"위 버튼을 눌러 {age} 맞춤 가정예배지를 생성하세요.")
 
-        # 7. 설교 점검 및 제안
-        elif active_view == "🔍 설교 점검 및 제안":
-            audit_txt = st.session_state.get("sermon_audit_text", "")
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교점검및제안", audit_txt, "sermon_audit")
+        # ---------------- 설교 점검 ----------------
+        elif view == "🔍 설교 점검 및 제안":
+            txt = st.session_state.get("sermon_audit_text", "")
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교점검및제안", txt, "sermon_audit")
 
-            if st.button("🔍 설교 전달력 및 신학적 완성도 정밀 점검", type="primary", key="btn_gen_audit"):
+            if st.button("🔍 설교 정밀 점검", type="primary", key="btn_gen_audit"):
                 with st.spinner("설교 분석 리포트 작성 중..."):
-                    prompt = f"""
-                    성경 본문: {st.session_state.sermon_scripture}
-                    설교 제목: {st.session_state.sermon_title}
-                    설교 원고: {st.session_state.full_sermon[:4000]}
-                    
-                    [설교 전문 피드백 리포트 작성]
-                    1. 📖 본문 주해의 정확성 및 성경 중심성 평가 (점수 및 상세 분석)
-                    2. 🏗️ 논리적 대지 전개 및 설교 구조 분석
-                    3. 💡 청중 공감 예화 및 삶의 적용 적절성
-                    4. 🎙️ 스피치 전달력 및 표현 개선 제안
-                    5. 📊 종합 총평 및 3가지 핵심 권고사항
-                    """
-                    res = get_ai_response(prompt, is_json=False)
-                    if res:
-                        st.session_state.sermon_audit_text = res
-                        st.rerun()
+                    task = """[출력 형식 — 냉정하고 구체적으로. 칭찬만 나열하지 말 것]
+1. 📖 본문 주해의 정확성 (점수/100 + 근거)
+   - 잘된 점: 원고 문장 인용 + 이유
+   - 아쉬운 점: 원고 문장 인용 + 구체적 수정 제안
+2. 🏗️ 대지 전개와 구조 (점수/100 + 근거)
+   - 실제 대지 구조를 요약한 뒤, 논리 비약이나 중복이 있으면 지적
+3. 💡 예화·적용의 적절성 (점수/100)
+   - 원고의 예화를 열거하고, 본문과의 연결 강도를 평가
+4. 🎙️ 전달력 개선 제안 3가지 (원고의 특정 문장을 지목해서)
+5. 📊 종합 총평 + 다음 설교를 위한 권고 3가지
 
-            if audit_txt:
-                if st.session_state.get("edit_mode_sermon_audit", False):
-                    edited_audit = st.text_area("설교 점검 내용 편집", value=audit_txt, height=350, key="edit_audit_area")
-                    if st.button("💾 저장", key="save_audit_btn"):
-                        st.session_state.sermon_audit_text = edited_audit
-                        st.session_state.edit_mode_sermon_audit = False
-                        st.success("저장되었습니다.")
-                        st.rerun()
-                else:
-                    st.markdown(f"<div class='content-box'>{audit_txt}</div>", unsafe_allow_html=True)
+※ 원고에 실제로 없는 내용을 지적하거나 칭찬하지 마십시오."""
+                    st.session_state.sermon_audit_text = get_ai_response(
+                        build_grounded_prompt(task, ctx_chars=12000), is_json=False,
+                        temperature=0.3, kind="audit")
+                    st.rerun()
+
+            if txt:
+                show_ai_status()
+                if editable_section("sermon_audit", "sermon_audit_text", "설교 점검 편집"):
+                    render_body(st.session_state.sermon_audit_text)
             else:
                 st.caption("위 버튼을 눌러 설교 점검 리포트를 생성하세요.")
 
-        # 8. 소그룹 리더가이드
-        elif active_view == "📖 소그룹 리더가이드":
-            ldr_txt = st.session_state.get("leader_guide_text", "")
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹리더가이드", ldr_txt, "ldr_guide")
+        # ---------------- 리더가이드 ----------------
+        elif view == "📖 소그룹 리더가이드":
+            txt = st.session_state.get("leader_guide_text", "")
+            render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹리더가이드", txt, "ldr_guide")
 
-            if st.button("📖 구역장/순장용 소그룹 리더가이드 생성", type="primary", key="btn_gen_ldr_guide"):
+            if st.button("📖 리더가이드 생성", type="primary", key="btn_gen_ldr_guide"):
                 with st.spinner("소그룹 인도자 가이드 작성 중..."):
-                    prompt = f"""
-                    성경 본문: {st.session_state.sermon_scripture}
-                    설교 전문: {st.session_state.full_sermon[:3500]}
-                    설교 제목: {st.session_state.sermon_title}
-                    
-                    [소그룹 리더(구역장/셀리더/순장) 심화 가이드 작성]
-                    1. 🎯 이번 주 모임의 핵심 목표 및 주제 방향
-                    - [인도자 팁 / 가이드]: (리더가 마음에 품어야 할 중심 태도)
-                    2. 📖 본문 배경 및 신학적 핵심 해설 (리더용 심화 자료)
-                    - [인도자 팁 / 가이드]: (성도들이 질문하기 쉬운 신학적 난점 대비)
-                    3. 💬 나눔 질문별 성도들의 예상 답변 및 리더 피드백 팁
-                    - [인도자 팁 / 가이드]: (대화가 한 사람에게 쏠리지 않도록 조율하는 요령)
-                    4. ⚠️ 모임 중 침묵 또는 돌발 상황 대처 요령
-                    - [인도자 팁 / 가이드]: (침묵이 길어질 때 분위기를 환기시키는 질문 팁)
-                    5. 🙏 소그룹을 위한 맞춤 중보기도 제목 3가지
-                    """
-                    res = get_ai_response(prompt, is_json=False)
-                    if res:
-                        st.session_state.leader_guide_text = res
-                        st.rerun()
+                    task = """[출력 형식]
+1. 🎯 이번 주 모임의 핵심 목표
+- [인도자 팁 / 가이드]: ...
+2. 📖 본문 배경 및 신학적 핵심 해설 (리더 심화용)
+- [인도자 팁 / 가이드]: (성도가 던질 만한 신학적 질문 2개와 답변 방향)
+3. 💬 나눔 질문별 예상 답변 & 피드백 요령
+- [인도자 팁 / 가이드]: ...
+4. ⚠️ 침묵·돌발 상황 대처
+- [인도자 팁 / 가이드]: ...
+5. 🙏 소그룹 맞춤 중보기도 제목 3가지
 
-            if ldr_txt:
-                if st.session_state.get("edit_mode_ldr_guide", False):
-                    edited_ldr = st.text_area("리더가이드 편집", value=ldr_txt, height=350, key="edit_ldr_area")
-                    if st.button("💾 저장", key="save_ldr_btn"):
-                        st.session_state.leader_guide_text = edited_ldr
-                        st.session_state.edit_mode_ldr_guide = False
-                        st.success("저장되었습니다.")
-                        st.rerun()
-                else:
-                    formatted_ldr = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", ldr_txt)
-                    st.markdown(f"<div class='content-box'>{formatted_ldr}</div>", unsafe_allow_html=True)
+※ 2번 해설은 반드시 이 설교의 본문과 원고 내용에 근거해야 합니다."""
+                    st.session_state.leader_guide_text = get_ai_response(
+                        build_grounded_prompt(task), is_json=False, kind="leader")
+                    st.rerun()
+
+            if txt:
+                show_ai_status()
+                if editable_section("ldr_guide", "leader_guide_text", "리더가이드 편집"):
+                    render_body(st.session_state.leader_guide_text)
             else:
                 st.caption("위 버튼을 눌러 소그룹 리더가이드를 생성하세요.")
 
+
 # ==============================================================================
-# 2. 📤 새 설교 등록/원고작성
+# 2) 새 설교 등록 / 원고작성
 # ==============================================================================
 elif app_mode == "📤 새 설교 등록/원고작성":
-    st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📤 새 설교 등록 및 원고 작성</h1>", unsafe_allow_html=True)
-    st.caption("직접 타이핑, 파일 업로드, 또는 개혁주의/복음주의/장로교 관점의 AI 강해설교문 자동 생성으로 새 설교를 등록하세요.")
+    st.markdown("<h1 style='font-size:28px;font-weight:800;'>📤 새 설교 등록 및 원고 작성</h1>",
+                unsafe_allow_html=True)
+    st.caption("직접 타이핑 · 파일 업로드 · AI 강해설교문 자동 생성으로 새 설교를 등록합니다.")
 
-    tab_type, tab_file, tab_ai = st.tabs([
-        "✍️ 직접 타이핑 작성",
-        "📁 파일 업로드 (.docx, .pdf, .txt)",
-        "📖 AI 강해설교문 생성 (개혁주의/복음주의/장로교)"
-    ])
+    t1, t2, t3 = st.tabs(["✍️ 직접 타이핑 작성",
+                          "📁 파일 업로드 (.docx/.pdf/.txt)",
+                          "📖 AI 강해설교문 생성"])
 
-    with tab_type:
-        st.markdown("#### 강단 선포용 설교 원고 직접 작성")
-        tc1, tc2, tc3 = st.columns([2, 1.5, 1])
-        with tc1: t_title = st.text_input("설교 제목", placeholder="예: 광야에서 만나는 하나님의 은혜", key="type_title")
-        with tc2: t_scripture = st.text_input("성경 본문", placeholder="예: 출애굽기 16:1-12", key="type_scrip")
-        with tc3: t_preacher = st.text_input("설교자 성함", value=st.session_state.preacher_name, key="type_preach")
-            
-        t_tags = st.text_input("설교 태그 (쉼표 구분)", value="주일설교, 은혜, 광야", key="type_tags")
-        t_content = st.text_area("설교문 본문 전문", height=380, placeholder="설교 원고를 직접 입력하세요...", key="type_text")
+    with t1:
+        c1, c2, c3 = st.columns([2, 1.5, 1])
+        with c1:
+            t_title = st.text_input("설교 제목", placeholder="예: 광야에서 만나는 하나님의 은혜", key="type_title")
+        with c2:
+            t_scrip = st.text_input("성경 본문", placeholder="예: 출애굽기 16:1-12", key="type_scrip")
+        with c3:
+            st.text_input("설교자", value=st.session_state.preacher_name, key="type_preach")
+
+        t_tags = st.text_input("태그 (쉼표 구분)", value="주일설교", key="type_tags")
+        t_content = st.text_area("설교문 본문 전문", height=380, key="type_text")
         st.caption(f"글자 수: **{len(t_content):,}자**")
-        
-        if st.button("💾 새 설교로 등록 및 대시보드 동기화", type="primary", key="save_type_sermon"):
-            if not t_title.strip() or not t_content.strip():
-                st.warning("설교 제목과 본문을 입력해주세요.")
-            else:
-                testament, book = classify_scripture(t_scripture.strip())
-                new_entry = {
-                    "title": t_title.strip(),
-                    "scripture": t_scripture.strip(),
-                    "testament": testament,
-                    "book": book,
-                    "topic": t_tags.split(",")[0].strip() if t_tags else "일반설교",
-                    "theology": "직접작성",
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "tags": [t.strip() for t in t_tags.split(",") if t.strip()],
-                    "summary": "",
-                    "text": t_content.strip()
-                }
-                saved_sermon = add_sermon_to_db(new_entry)
-                load_sermon_to_workspace(saved_sermon, idx=len(st.session_state.sermon_library) - 1)
-                st.session_state.dash_active_view = "설교 요약"
-                st.success(f"'{t_title}' 설교가 영구 서재에 추가 저장되었습니다! [📊 설교 대시보드]로 이동합니다.")
 
-    with tab_file:
-        st.markdown("#### 설교문 파일 업로드 (.docx, .pdf, .txt)")
+        if st.button("💾 새 설교로 등록", type="primary", key="save_type_sermon"):
+            if not t_title.strip() or len(t_content.strip()) < 50:
+                st.warning("설교 제목과 본문(50자 이상)을 입력해주세요.")
+            else:
+                testament, book = classify_scripture(t_scrip.strip())
+                entry = {"title": t_title.strip(), "scripture": t_scrip.strip(),
+                         "testament": testament, "book": book,
+                         "topic": (t_tags.split(",")[0].strip() if t_tags else "일반설교"),
+                         "theology": "직접작성", "date": datetime.now().strftime("%Y-%m-%d"),
+                         "tags": [x.strip() for x in t_tags.split(",") if x.strip()],
+                         "summary": "", "text": t_content.strip()}
+                saved = add_sermon_to_db(entry)
+                load_sermon_to_workspace(saved, idx=len(st.session_state.sermon_library) - 1)
+                st.success(f"'{t_title}' 등록 완료! 사이드바에서 [📊 설교 대시보드]로 이동하세요.")
+                st.rerun()
+
+    with t2:
         u_file = st.file_uploader("설교 파일 선택", type=["docx", "pdf", "txt"], key="up_sermon_file")
-        f_title = st.text_input("설교 제목", value="업로드 설교", key="up_title")
-        f_scripture = st.text_input("성경 본문", value="본문 구절", key="up_scrip")
-        
-        if u_file and st.button("📂 파일 읽어와서 서재에 등록하기", type="primary", key="save_up_sermon"):
+        f_title = st.text_input("설교 제목", value="", placeholder="업로드 설교 제목", key="up_title")
+        f_scrip = st.text_input("성경 본문", value="", placeholder="예: 로마서 8:28-39", key="up_scrip")
+
+        if u_file and st.button("📂 파일 읽어와서 등록", type="primary", key="save_up_sermon"):
             text = ""
             fn = u_file.name.lower()
-            if fn.endswith('.txt'): text = u_file.read().decode('utf-8', errors='ignore')
-            elif fn.endswith('.docx'):
-                d = Document(u_file)
-                text = "\n".join([p.text for p in d.paragraphs if p.text])
-            elif fn.endswith('.pdf'):
-                pdf = PdfReader(u_file)
-                for page in pdf.pages: text += (page.extract_text() or "") + "\n"
+            try:
+                if fn.endswith('.txt'):
+                    text = u_file.read().decode('utf-8', errors='ignore')
+                elif fn.endswith('.docx'):
+                    d = Document(u_file)
+                    text = "\n".join(p.text for p in d.paragraphs if p.text.strip())
+                elif fn.endswith('.pdf'):
+                    pdf = PdfReader(u_file)
+                    text = "\n".join((pg.extract_text() or "") for pg in pdf.pages)
+            except Exception as e:
+                st.error(f"파일 읽기 실패: {e}")
+                text = ""
 
-            testament, book = classify_scripture(f_scripture.strip())
-            new_entry = {
-                "title": f_title,
-                "scripture": f_scripture,
-                "testament": testament,
-                "book": book,
-                "topic": "파일등록",
-                "theology": "파일업로드",
-                "date": datetime.now().strftime("%Y-%m-%d"),
-                "tags": ["파일등록"],
-                "summary": "",
-                "text": text
-            }
-            saved_sermon = add_sermon_to_db(new_entry)
-            load_sermon_to_workspace(saved_sermon, idx=len(st.session_state.sermon_library) - 1)
-            st.session_state.dash_active_view = "설교 요약"
-            st.success("파일 등록 및 서재 영구 추가가 완료되었습니다! [📊 설교 대시보드]로 이동합니다.")
+            if len(text.strip()) < 50:
+                st.warning("본문을 읽지 못했습니다. 파일을 확인해 주세요.")
+            else:
+                title = f_title.strip() or os.path.splitext(u_file.name)[0]
+                scrip = f_scrip.strip() or (extract_scripture_refs(text)[:1] or ["본문 미지정"])[0]
+                testament, book = classify_scripture(scrip)
+                entry = {"title": title, "scripture": scrip, "testament": testament, "book": book,
+                         "topic": "파일등록", "theology": "파일업로드",
+                         "date": datetime.now().strftime("%Y-%m-%d"), "tags": ["파일등록"],
+                         "summary": "", "text": text.strip()}
+                saved = add_sermon_to_db(entry)
+                load_sermon_to_workspace(saved, idx=len(st.session_state.sermon_library) - 1)
+                st.success(f"등록 완료! (본문 자동 인식: {scrip}) [📊 설교 대시보드]로 이동하세요.")
+                st.rerun()
 
-    with tab_ai:
-        st.markdown("#### 📖 성경 본문 선택 기반 정통 강해설교문 자동 생성")
-        ai_c1, ai_c2, ai_c3 = st.columns([1.2, 1.5, 1.3])
-        with ai_c1: sel_book = st.selectbox("성경 66권 선택", BIBLE_BOOKS, index=44, key="sel_ai_book")
-        with ai_c2: sel_chap_verse = st.text_input("장 및 절 입력", value="8장 28절~39절", key="sel_ai_cv")
-        with ai_c3:
-            theology_choice = st.selectbox(
-                "신학적 관점 선택",
-                [
-                    "개혁주의 (Reformed - 칼빈주의/하나님 주권)",
-                    "장로교 정통 (Presbyterian - 웨스트민스터/구속사)",
-                    "복음주의 (Evangelical - 십자가/은혜/복음선포)"
-                ],
-                key="sel_ai_theology"
-            )
+    with t3:
+        a1, a2, a3 = st.columns([1.2, 1.5, 1.3])
+        with a1:
+            sel_book = st.selectbox("성경 66권", BIBLE_BOOKS, index=44, key="sel_ai_book")
+        with a2:
+            sel_cv = st.text_input("장·절", value="8장 28절~39절", key="sel_ai_cv")
+        with a3:
+            theology = st.selectbox("신학적 관점",
+                                    ["개혁주의 (Reformed - 칼빈주의/하나님 주권)",
+                                     "장로교 정통 (Presbyterian - 웨스트민스터/구속사)",
+                                     "복음주의 (Evangelical - 십자가/은혜/복음선포)"],
+                                    key="sel_ai_theology")
+        b1, b2 = st.columns([2, 1])
+        with b1:
+            topic = st.text_input("설교 주제 / 강조 포인트",
+                                  value="고난 속에서도 흔들리지 않는 하나님의 사랑과 구원의 확신",
+                                  key="sel_ai_topic")
+        with b2:
+            style = st.selectbox("설교 형태", ["3대지 본문중심 강해설교", "구속사적 복음설교", "원어 주해 중심 강해설교"],
+                                 key="sel_ai_style")
 
-        ai_t1, ai_t2 = st.columns([2, 1])
-        with ai_t1: ai_sermon_topic = st.text_input("설교 주제 / 강조 포인트 (선택)", value="고난 속에서도 흔들리지 않는 하나님의 영원한 사랑과 구원의 확신", key="sel_ai_topic")
-        with ai_t2: sermon_style = st.selectbox("설교 형태", ["3대지 본문중심 강해설교", "구속사적 복음설교", "원어 주해 중심 강해설교"], key="sel_ai_style")
+        full_scrip = f"{sel_book} {sel_cv}"
 
-        full_scripture_str = f"{sel_book} {sel_chap_verse}"
+        if st.button("🚀 강해설교문 전문 작성 (25~30분 분량)", type="primary", key="btn_gen_ai_sermon"):
+            if not get_resolved_api_key():
+                st.error("이 기능은 AI 생성 전용입니다. 사이드바 [⚙️ AI 연결 설정]에서 Gemini API 키를 먼저 등록해 주세요.")
+            else:
+                with st.spinner(f"[{theology.split(' ')[0]}] 관점으로 강해설교문 작성 중... (1~2분 소요)"):
+                    prompt = f"""당신은 한국 장로교 강단에서 30년간 설교해 온 목회자입니다.
+아래 조건으로 실제 강단에서 그대로 선포할 수 있는 설교 원고 전문을 작성하십시오.
 
-        if st.button("🚀 정통 강해설교문 전문 자동 작성 시작 (25~30분 분량)", type="primary", key="btn_gen_ai_sermon"):
-            with st.spinner(f"[{theology_choice.split(' ')[0]}] 관점으로 강해설교문 작성 중..."):
-                prompt = f"""
-                성경 본문: {full_scripture_str}
-                설교 주제: {ai_sermon_topic}
-                신학적 관점: {theology_choice}
-                설교 형태: {sermon_style}
-                
-                [강해설교문 전문: {sel_book} 강해 - {ai_sermon_topic}]
-                
-                서론(도입부) - 본론(제1대지, 제2대지, 제3대지) - 결론 및 결단의 기도 구조로 강단 선포용 25~30분 완성 원고를 작성하세요.
-                각 대지마다 본문 주해와 성도들의 삶에 와닿는 구체적 예화, 실천 적용 방안을 풍성히 포함하세요.
-                """
-                generated_sermon = get_ai_response(prompt, is_json=False)
-                if generated_sermon:
-                    st.session_state.temp_generated_sermon = generated_sermon
-                    st.session_state.temp_ai_title = f"{sel_book} 강해: {ai_sermon_topic}"
-                    st.session_state.temp_ai_scrip = full_scripture_str
-                    st.success("강해설교문 전문이 완성되었습니다!")
+[조건]
+- 성경 본문: {full_scrip}
+- 설교 주제: {topic}
+- 신학적 관점: {theology}
+- 설교 형태: {style}
+- 분량: 한국어 6,000자 이상 (25~30분 선포 분량)
 
-        if "temp_generated_sermon" in st.session_state and st.session_state.temp_generated_sermon:
+[반드시 지킬 구조]
+1. 제목
+2. 본문 봉독 안내 ({full_scrip})
+3. 서론 — 청중의 삶에서 출발하는 구체적 도입 (실제 있을 법한 상황 묘사)
+4. 본문의 역사적·문학적 배경 설명
+5. 제1대지 — (제목) / 본문 주해 / 예화 / 적용
+6. 제2대지 — (제목) / 본문 주해 / 예화 / 적용
+7. 제3대지 — (제목) / 본문 주해 / 예화 / 적용
+8. 결론 — 메시지 요약과 결단 촉구
+9. 마침 기도
+
+[작성 규칙]
+- 각 대지는 반드시 {full_scrip} 본문의 특정 구절을 인용하고 주해할 것.
+- 예화는 구체적이고 현실적으로. "어떤 성도가 있었습니다" 식의 막연한 예화 금지.
+- '은혜가 충만하기를' 같은 상투적 문구로 분량을 채우지 말 것.
+- 100% 한국어. 영어 메모나 머리말 없이 설교 원고 본문만 출력.
+- 마크다운 기호(#, **) 없이 평문으로 작성."""
+                    res = get_ai_response(prompt, is_json=False, temperature=0.7, kind="sermon_write")
+                    st.session_state.temp_generated_sermon = res
+                    st.session_state.temp_ai_title = f"{sel_book} 강해: {topic[:30]}"
+                    st.session_state.temp_ai_scrip = full_scrip
+                    st.rerun()
+
+        if st.session_state.get("temp_generated_sermon"):
             st.write("---")
-            render_section_top_toolbar(st.session_state.temp_ai_title, st.session_state.temp_generated_sermon, "ai_gen_sermon")
-            st.session_state.temp_generated_sermon = st.text_area("작성된 강해설교문 검토 및 수정", value=st.session_state.temp_generated_sermon, height=450, key="edit_ai_sermon_area")
-            
-            if st.button("✅ 이 설교문을 내 서재와 대시보드에 최종 등록하기", type="primary", key="btn_save_ai_sermon"):
+            show_ai_status()
+            st.caption(f"생성 분량: {len(st.session_state.temp_generated_sermon):,}자")
+            render_section_top_toolbar(st.session_state.temp_ai_title,
+                                       st.session_state.temp_generated_sermon, "ai_gen_sermon")
+            edited = st.text_area("작성된 강해설교문 검토 및 수정",
+                                  value=st.session_state.temp_generated_sermon,
+                                  height=450, key="edit_ai_sermon_area")
+
+            if st.button("✅ 서재와 대시보드에 최종 등록", type="primary", key="btn_save_ai_sermon"):
                 testament, book = classify_scripture(st.session_state.temp_ai_scrip)
-                new_entry = {
-                    "title": st.session_state.temp_ai_title,
-                    "scripture": st.session_state.temp_ai_scrip,
-                    "testament": testament,
-                    "book": book,
-                    "topic": sel_book,
-                    "theology": theology_choice.split(' ')[0],
-                    "date": datetime.now().strftime("%Y-%m-%d"),
-                    "tags": [sel_book, theology_choice.split(' ')[0], "강해설교"],
-                    "summary": "",
-                    "text": st.session_state.temp_generated_sermon
-                }
-                saved_sermon = add_sermon_to_db(new_entry)
-                load_sermon_to_workspace(saved_sermon, idx=len(st.session_state.sermon_library) - 1)
-                st.session_state.dash_active_view = "설교 요약"
-                st.success("설교문이 영구 서재에 누적 등록되고 플랫폼 전체가 동기화되었습니다!")
+                entry = {"title": st.session_state.temp_ai_title,
+                         "scripture": st.session_state.temp_ai_scrip,
+                         "testament": testament, "book": book, "topic": sel_book,
+                         "theology": theology.split(' ')[0],
+                         "date": datetime.now().strftime("%Y-%m-%d"),
+                         "tags": [sel_book, theology.split(' ')[0], "강해설교"],
+                         "summary": "", "text": edited}
+                saved = add_sermon_to_db(entry)
+                load_sermon_to_workspace(saved, idx=len(st.session_state.sermon_library) - 1)
+                st.success("등록 완료! [📊 설교 대시보드]로 이동하세요.")
+                st.rerun()
+
 
 # ==============================================================================
-# 3. 🎙️ AI 보이스오버 스튜디오
+# 3) AI 보이스오버 스튜디오
 # ==============================================================================
 elif app_mode == "🎙️ AI 보이스오버 스튜디오":
-    st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>🎙️ AI 보이스오버 스튜디오</h1>", unsafe_allow_html=True)
-    st.caption("설교문이나 요약문을 신경망 음성으로 합성하여 실시간 청취 및 고음질 MP3로 다운로드합니다.")
+    st.markdown("<h1 style='font-size:28px;font-weight:800;'>🎙️ AI 보이스오버 스튜디오</h1>",
+                unsafe_allow_html=True)
 
-    vo_col1, vo_col2 = st.columns([1.5, 1])
-    with vo_col1:
-        vo_text = st.text_area("음성 변환 텍스트", value=st.session_state.full_sermon, height=350, key="vo_text_area")
-        vo_voice = st.selectbox("성우 보이스 선택", ["인준 (남성 - 차분하고 신뢰감 있는 톤)", "선희 (여성 - 맑고 또렷한 톤)"], key="vo_voice_sel")
+    if not HAS_TTS:
+        st.error("edge-tts 패키지가 설치되어 있지 않습니다. `pip install edge-tts` 후 다시 실행해 주세요.")
+
+    c1, c2 = st.columns([1.5, 1])
+    with c1:
+        src = st.radio("변환할 원문", ["설교 원고 전문", "설교 요약", "직접 입력"], horizontal=True, key="vo_src")
+        if src == "설교 원고 전문":
+            default_txt = st.session_state.full_sermon
+        elif src == "설교 요약":
+            default_txt = st.session_state.get("sermon_summary_text", "")
+        else:
+            default_txt = ""
+
+        vo_text = st.text_area("음성 변환 텍스트", value=default_txt, height=330, key=f"vo_text_{src}")
+        vo_voice = st.selectbox("성우 보이스", ["인준 (남성 - 차분하고 신뢰감 있는 톤)", "선희 (여성 - 맑고 또렷한 톤)"],
+                                key="vo_voice_sel")
         voice_id = "ko-KR-InJoonNeural" if "인준" in vo_voice else "ko-KR-SunHiNeural"
-        
-        if st.button("🎙️ 고음질 음성(TTS) 즉시 생성하기", type="primary", key="btn_gen_tts"):
+
+        st.caption(f"글자 수 {len(vo_text):,}자 · 예상 길이 약 {max(1, len(vo_text)//330)}분")
+
+        if st.button("🎙️ 고음질 음성(TTS) 생성", type="primary", key="btn_gen_tts", disabled=not HAS_TTS):
             if not vo_text.strip():
                 st.warning("텍스트를 입력해주세요.")
             else:
                 with st.spinner("AI 음성 생성 중..."):
-                    out_audio = asyncio.run(generate_voiceover_audio(vo_text, voice_id))
-                    st.session_state.vo_audio_path = out_audio
-                    st.success("보이스오버 음성 생성이 완료되었습니다!")
+                    try:
+                        st.session_state.vo_audio_path = generate_voiceover_audio(vo_text, voice_id)
+                        st.success("보이스오버 생성 완료!")
+                    except Exception as e:
+                        st.error(f"음성 생성 실패: {e}")
 
-    with vo_col2:
-        st.markdown("### 🎧 음성 플레이어 & 다운로드")
-        if "vo_audio_path" in st.session_state and os.path.exists(st.session_state.vo_audio_path):
-            st.audio(st.session_state.vo_audio_path)
-            with open(st.session_state.vo_audio_path, "rb") as af:
-                st.download_button("📥 MP3 오디오 파일 다운로드", data=af, file_name=f"{st.session_state.sermon_title}_voice.mp3", mime="audio/mp3", key="dl_vo_mp3")
+    with c2:
+        st.markdown("### 🎧 플레이어 & 다운로드")
+        p = st.session_state.get("vo_audio_path")
+        if p and os.path.exists(p):
+            st.audio(p)
+            with open(p, "rb") as af:
+                st.download_button("📥 MP3 다운로드", data=af.read(),
+                                   file_name=f"{st.session_state.sermon_title}_voice.mp3",
+                                   mime="audio/mp3", key="dl_vo_mp3")
         else:
-            st.info("왼쪽에서 버튼을 누르면 이곳에 재생 플레이어가 나타납니다.")
+            st.info("왼쪽에서 생성하면 이곳에 플레이어가 나타납니다.")
+
 
 # ==============================================================================
-# 4. 🎬 쇼츠 만들기 (스튜디오)
+# 4) 쇼츠 만들기
 # ==============================================================================
 elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
-    st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>▶️ 쇼츠 만들기 스튜디오</h1>", unsafe_allow_html=True)
-    
-    tab_yt_extract, tab_ai_compose = st.tabs([
-        "🔗 내 영상(유튜브 링크)으로 숏츠 추출",
-        "🎨 AI 나레이션 & 템플릿 숏츠 제작"
-    ])
+    st.markdown("<h1 style='font-size:28px;font-weight:800;'>▶️ 쇼츠 만들기 스튜디오</h1>",
+                unsafe_allow_html=True)
 
-    with tab_yt_extract:
-        st.markdown("#### 📺 유튜브 예배/설교 영상에서 세로 숏츠 자동 추출")
-        st.caption("유튜브 영상 링크를 입력하고 원하는 시작 시간과 길이를 설정하면 9:16 고화질 숏츠를 즉시 추출합니다.")
-        
-        yt_url_input = st.text_input("유튜브 영상 링크 (URL)", placeholder="https://www.youtube.com/watch?v=... 또는 https://youtu.be/...", key="yt_url_input")
-        
-        yt_c1, yt_c2, yt_c3 = st.columns(3)
-        with yt_c1:
-            yt_start_min = st.number_input("시작 분 (Minute)", min_value=0, max_value=300, value=12, step=1, key="yt_s_min")
-        with yt_c2:
-            yt_start_sec = st.number_input("시작 초 (Second)", min_value=0, max_value=59, value=30, step=1, key="yt_s_sec")
-        with yt_c3:
-            yt_duration = st.slider("숏츠 길이 (초)", min_value=15, max_value=60, value=45, key="yt_dur_slider")
-            
-        yt_shorts_title = st.text_input("숏츠 상단 헤드라인 제목", value=f"{st.session_state.sermon_title}", key="yt_shorts_title")
-        yt_shorts_sub = st.text_input("강조 자막 텍스트 (선택)", value="내 열심보다 중요한 하나님의 은혜와 인도하심", key="yt_shorts_sub")
-        yt_church = st.text_input("하단 교회명 워터마크 배지", value="화광교회", key="yt_church")
+    if not HAS_VIDEO_ENGINE:
+        st.warning("`video_engine.py` 모듈이 없어 영상 렌더링 기능이 비활성화됩니다. 같은 폴더에 파일을 두고 다시 실행해 주세요.")
 
-        total_start_seconds = (yt_start_min * 60) + yt_start_sec
+    tab_yt, tab_ai = st.tabs(["🔗 유튜브 링크에서 숏츠 추출", "🎨 AI 나레이션 & 템플릿 숏츠 제작"])
 
-        if st.button("🚀 유튜브 영상에서 9:16 세로 숏츠 즉시 추출하기", type="primary", key="btn_yt_extract"):
-            if not yt_url_input.strip():
-                st.warning("유튜브 영상 링크를 입력해주세요.")
+    with tab_yt:
+        st.caption("클라우드 서버 IP는 유튜브가 자주 차단합니다. 실패하면 오른쪽 탭에서 영상을 직접 업로드하세요.")
+        yt_url = st.text_input("유튜브 영상 링크", placeholder="https://www.youtube.com/watch?v=...", key="yt_url_input")
+        y1, y2, y3 = st.columns(3)
+        with y1:
+            s_min = st.number_input("시작 분", 0, 300, 12, key="yt_s_min")
+        with y2:
+            s_sec = st.number_input("시작 초", 0, 59, 30, key="yt_s_sec")
+        with y3:
+            dur = st.slider("길이(초)", 15, 60, 45, key="yt_dur")
+
+        yt_title = st.text_input("상단 헤드라인", value=st.session_state.sermon_title, key="yt_title")
+        yt_sub = st.text_input("강조 자막", value="", key="yt_sub")
+        yt_church = st.text_input("교회명 워터마크", value=st.session_state.cn_church_name, key="yt_church")
+
+        if st.button("🚀 9:16 세로 숏츠 추출", type="primary", key="btn_yt_extract"):
+            if not yt_url.strip():
+                st.warning("유튜브 링크를 입력해주세요.")
             else:
-                with st.spinner("유튜브 차단 우회망 가동 및 영상 추출 중... (약 20~40초)"):
+                with st.spinner("영상 추출 중... (20~40초)"):
                     try:
-                        extracted_file = extract_youtube_to_shorts(
-                            yt_url=yt_url_input.strip(),
-                            start_sec=total_start_seconds,
-                            duration_sec=yt_duration,
-                            title=yt_shorts_title,
-                            subtitle_text=yt_shorts_sub,
-                            church_name=yt_church
-                        )
-                        st.session_state.yt_extracted_result = extracted_file
-                        st.success("유튜브 영상 숏츠 추출이 완벽하게 완료되었습니다!")
+                        st.session_state.yt_extracted_result = extract_youtube_to_shorts(
+                            yt_url.strip(), s_min * 60 + s_sec, dur, yt_title, yt_sub, yt_church)
+                        st.success("추출 완료!")
                     except Exception as e:
-                        st.warning(f"{str(e)}")
+                        st.warning(str(e))
 
-        if "yt_extracted_result" in st.session_state and os.path.exists(st.session_state.yt_extracted_result):
+        r = st.session_state.get("yt_extracted_result")
+        if r and os.path.exists(r):
             st.write("---")
-            st.markdown("### 🎬 추출 완료된 9:16 쇼츠 미리보기")
-            res_c1, res_c2 = st.columns([1, 1])
-            with res_c1:
-                st.video(st.session_state.yt_extracted_result)
-            with res_c2:
-                with open(st.session_state.yt_extracted_result, "rb") as yf:
-                    st.download_button(
-                        "📥 추출된 MP4 세로 숏츠 다운로드",
-                        data=yf,
-                        file_name=f"{yt_shorts_title}_shorts.mp4",
-                        mime="video/mp4",
-                        key="dl_yt_shorts_btn"
-                    )
+            v1, v2 = st.columns(2)
+            with v1:
+                st.video(r)
+            with v2:
+                with open(r, "rb") as f:
+                    st.download_button("📥 MP4 다운로드", data=f.read(),
+                                       file_name=f"{yt_title}_shorts.mp4", mime="video/mp4", key="dl_yt")
 
-    with tab_ai_compose:
-        st.markdown("#### 🌐 무료 미디어/BGM 소스 바로가기")
-        src_c1, src_c2, src_c3 = st.columns(3)
-        with src_c1: st.link_button("🎥 픽사베이 (Pixabay 무료 영상)", "https://pixabay.com/ko/videos/")
-        with src_c2: st.link_button("📸 펙셀스 (Pexels 무료 비디오)", "https://www.pexels.com/ko-kr/videos/")
-        with src_c3: st.link_button("🎵 픽사베이 무료 음악(BGM)", "https://pixabay.com/ko/music/")
+    with tab_ai:
+        s1, s2, s3 = st.columns(3)
+        with s1:
+            st.link_button("🎥 픽사베이 영상", "https://pixabay.com/ko/videos/")
+        with s2:
+            st.link_button("📸 펙셀스 비디오", "https://www.pexels.com/ko-kr/videos/")
+        with s3:
+            st.link_button("🎵 무료 BGM", "https://pixabay.com/ko/music/")
 
         st.write("---")
-        st.markdown("#### 💡 확 끌리는 5가지 쇼츠 제목 & #해시태그 추천")
-        if st.button("✨ 조회수 폭발 5가지 쇼츠 제목 & 해시태그 뽑기", key="btn_gen_shorts_meta"):
-            with st.spinner("제목 및 태그 분석 중..."):
-                prompt = f"설교제목: {st.session_state.sermon_title}, 요약: {st.session_state.full_sermon[:1500]}\n100% 한국어로 쇼츠 클릭률을 높이는 제목 5개와 해시태그 8개를 JSON으로 작성: {{\"titles\": [\"1.제목\", \"2.제목\", \"3.제목\", \"4.제목\", \"5.제목\"], \"hashtags\": [\"#쇼츠\", \"#은혜\"]}}"
-                res = get_ai_response(prompt, is_json=True)
-                if res:
-                    st.session_state.shorts_rec = res
-                    st.rerun()
+        if st.button("✨ 쇼츠 제목 5개 & 해시태그 추천", key="btn_gen_shorts_meta"):
+            with st.spinner("제목 분석 중..."):
+                task = """[출력 형식 - JSON만]
+{"titles": ["1. ...", "2. ...", "3. ...", "4. ...", "5. ..."], "hashtags": ["#...", ...8개]}
+제목은 이 설교 원고의 실제 문장·키워드에서 뽑되, 25자 이내로 클릭을 부르게 다듬으십시오."""
+                st.session_state.shorts_rec = get_ai_response(
+                    build_grounded_prompt(task, ctx_chars=4000), is_json=True, kind="shorts_meta")
+                st.rerun()
 
         selected_title = st.session_state.sermon_title
-        if "shorts_rec" in st.session_state and st.session_state.shorts_rec:
+        if st.session_state.get("shorts_rec"):
+            show_ai_status()
             rec = st.session_state.shorts_rec
-            t_choice = st.radio("추천 제목 선택", rec.get("titles", []), horizontal=False, key="rad_shorts_title")
-            if t_choice: selected_title = re.sub(r"^\d+\.\s*", "", t_choice)
+            tc = st.radio("추천 제목", rec.get("titles", []), key="rad_shorts_title")
+            if tc:
+                selected_title = re.sub(r"^\d+\.\s*", "", tc)
             st.markdown("**추천 태그:** " + " ".join(rec.get("hashtags", [])))
 
         st.write("---")
-        sh_col1, sh_col2 = st.columns([1.2, 1])
-        with sh_col1:
+        col_a, col_b = st.columns([1.2, 1])
+        with col_a:
             v_title = st.text_input("쇼츠 제목", value=selected_title, key="in_shorts_title")
-            v_script = st.text_area("자막 대본 (줄바꿈 구분)", value="내 열심보다 중요한 것은 하나님의 이끄심입니다.\n우리가 멈출 때 비로소 하나님의 역사가 시작됩니다.\n오늘 그분의 인도하심 앞에 온전히 맡기십시오.", height=120, key="in_shorts_script")
-            
-            c_v1, c_v2 = st.columns(2)
-            with c_v1: v_ratio = st.radio("비율", ["9:16 (세로 쇼츠)", "16:9 (가로 영상)"], key="rad_shorts_ratio")
-            with c_v2: v_voice = st.selectbox("보이스", ["인준 (남성)", "선희 (여성)"], key="sel_shorts_voice")
+            _a = analyze_manuscript(st.session_state.full_sermon)
+            default_script = "\n".join(_a["key_sentences"][:3]) or "말씀을 붙들고 이번 한 주를 살아갑시다."
+            v_script = st.text_area("자막 대본 (줄바꿈 구분)", value=default_script, height=130, key="in_shorts_script")
 
-            with st.expander("🎨 폰트 크기 및 자막 위치 정밀 편집", expanded=True):
-                font_c1, font_c2 = st.columns(2)
-                with font_c1:
-                    t_fsize = st.slider("제목 폰트 크기 (pt)", min_value=32, max_value=72, value=48, step=2, key="sh_t_fsize")
-                    t_ypos = st.slider("제목 Y 위치 (높이)", min_value=80, max_value=500, value=180, step=10, key="sh_t_ypos")
-                with font_c2:
-                    s_fsize = st.slider("자막/본문 폰트 크기 (pt)", min_value=24, max_value=60, value=42, step=2, key="sh_s_fsize")
-                    s_ypos = st.slider("자막 Y 위치 (높이)", min_value=800, max_value=1700, value=1400, step=20, key="sh_s_ypos")
+            r1, r2 = st.columns(2)
+            with r1:
+                v_ratio = st.radio("비율", ["9:16 (세로)", "16:9 (가로)"], key="rad_ratio")
+            with r2:
+                v_voice = st.selectbox("보이스", ["인준 (남성)", "선희 (여성)"], key="sel_shorts_voice")
 
-            bg_media = st.file_uploader("배경 동영상/사진 업로드 (최대 300MB)", type=["mp4", "mov", "jpg", "png"], key="up_shorts_bg")
-            bgm_media = st.file_uploader("배경음악 MP3 업로드 (최대 300MB)", type=["mp3", "wav"], key="up_shorts_bgm")
+            with st.expander("🎨 폰트 크기 · 자막 위치", expanded=False):
+                f1, f2 = st.columns(2)
+                with f1:
+                    t_fsize = st.slider("제목 폰트(pt)", 32, 72, 48, 2, key="sh_t_fsize")
+                    t_ypos = st.slider("제목 Y 위치", 80, 500, 180, 10, key="sh_t_ypos")
+                with f2:
+                    s_fsize = st.slider("자막 폰트(pt)", 24, 60, 42, 2, key="sh_s_fsize")
+                    s_ypos = st.slider("자막 Y 위치", 800, 1700, 1400, 20, key="sh_s_ypos")
 
-            if st.button("🚀 비디오 렌더링 시작", type="primary", key="btn_render_video"):
-                with st.spinner("자막 애니메이션 및 BGM 믹싱 렌더링 중..."):
-                    bg_p, bgm_p = None, None
-                    if bg_media:
-                        bg_p = f"./uploads_{bg_media.name}"
-                        with open(bg_p, "wb") as f: f.write(bg_media.getbuffer())
-                    if bgm_media:
-                        bgm_p = f"./uploads_{bgm_media.name}"
-                        with open(bgm_p, "wb") as f: f.write(bgm_media.getbuffer())
+            bg_media = st.file_uploader("배경 동영상/사진", type=["mp4", "mov", "jpg", "png"], key="up_shorts_bg")
+            bgm_media = st.file_uploader("배경음악", type=["mp3", "wav"], key="up_shorts_bgm")
 
-                    lines = [l.strip() for l in v_script.split("\n") if l.strip()]
-                    voice_id = "ko-KR-InJoonNeural" if "인준" in v_voice else "ko-KR-SunHiNeural"
-                    ratio_val = "9:16" if "9:16" in v_ratio else "16:9"
+            if st.button("🚀 비디오 렌더링 시작", type="primary", key="btn_render_video",
+                         disabled=not HAS_VIDEO_ENGINE):
+                with st.spinner("자막 애니메이션 · BGM 믹싱 중..."):
+                    try:
+                        os.makedirs("./uploads", exist_ok=True)
+                        bg_p = bgm_p = None
+                        if bg_media:
+                            bg_p = f"./uploads/{bg_media.name}"
+                            with open(bg_p, "wb") as f:
+                                f.write(bg_media.getbuffer())
+                        if bgm_media:
+                            bgm_p = f"./uploads/{bgm_media.name}"
+                            with open(bgm_p, "wb") as f:
+                                f.write(bgm_media.getbuffer())
 
-                    rendered_out = create_animated_video(
-                        title=v_title,
-                        script_paragraphs=lines,
-                        bg_media_path=bg_p,
-                        bgm_path=bgm_p,
-                        aspect_ratio=ratio_val,
-                        voice=voice_id,
-                        title_fontsize=t_fsize,
-                        sub_fontsize=s_fsize,
-                        title_y=t_ypos,
-                        sub_y=s_ypos
-                    )
-                    st.session_state.rendered_shorts_out = rendered_out
-                    st.success("영상 렌더링이 완료되었습니다!")
+                        lines = [l.strip() for l in v_script.split("\n") if l.strip()]
+                        st.session_state.rendered_shorts_out = create_animated_video(
+                            title=v_title, script_paragraphs=lines, bg_media_path=bg_p, bgm_path=bgm_p,
+                            aspect_ratio=("9:16" if "9:16" in v_ratio else "16:9"),
+                            voice=("ko-KR-InJoonNeural" if "인준" in v_voice else "ko-KR-SunHiNeural"),
+                            title_fontsize=t_fsize, sub_fontsize=s_fsize, title_y=t_ypos, sub_y=s_ypos)
+                        st.success("렌더링 완료!")
+                    except Exception as e:
+                        st.error(f"렌더링 실패: {e}")
 
-    with sh_col2:
-        st.markdown("### 🎬 완성된 영상")
-        if "rendered_shorts_out" in st.session_state and os.path.exists(st.session_state.rendered_shorts_out):
-            st.video(st.session_state.rendered_shorts_out)
-            with open(st.session_state.rendered_shorts_out, "rb") as vf:
-                st.download_button("📥 MP4 비디오 파일 다운로드", data=vf, file_name="sermon_shorts.mp4", mime="video/mp4", key="dl_shorts_mp4")
+        with col_b:
+            st.markdown("### 🎬 완성된 영상")
+            out = st.session_state.get("rendered_shorts_out")
+            if out and os.path.exists(out):
+                st.video(out)
+                with open(out, "rb") as vf:
+                    st.download_button("📥 MP4 다운로드", data=vf.read(), file_name="sermon_shorts.mp4",
+                                       mime="video/mp4", key="dl_shorts_mp4")
+            else:
+                st.info("렌더링하면 이곳에 영상이 나타납니다.")
+
 
 # ==============================================================================
-# 5. 📷 말씀카드 이미지 스튜디오
+# 5) 말씀카드 이미지
 # ==============================================================================
 elif app_mode == "📷 말씀카드 이미지":
-    st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📷 말씀카드 이미지 스튜디오</h1>", unsafe_allow_html=True)
-    st.caption("설교 핵심 구절과 메시지를 바탕으로 무한 고화질 말씀카드 이미지를 제작하고 내려받습니다.")
+    st.markdown("<h1 style='font-size:28px;font-weight:800;'>📷 말씀카드 이미지 스튜디오</h1>",
+                unsafe_allow_html=True)
 
-    vc_c1, vc_c2 = st.columns([1.3, 1.2])
+    _a = analyze_manuscript(st.session_state.full_sermon)
+    candidates = _a["key_sentences"][:8] or [st.session_state.sermon_title]
 
-    default_v_text = st.session_state.get("sermon_summary_text", "")
-    if default_v_text:
-        first_lines = [l.strip() for l in default_v_text.split('\n') if l.strip() and not l.startswith('🎯') and not l.startswith('📌')][:3]
-        v_init_str = " ".join(first_lines) if first_lines else st.session_state.sermon_title
-    else:
-        v_init_str = st.session_state.full_sermon[:120]
+    c1, c2 = st.columns([1.3, 1.2])
+    with c1:
+        st.markdown("#### ✏️ 문구 선택 (원고에서 자동 추출)")
+        pick = st.selectbox("원고 속 핵심 문장에서 고르기",
+                            ["(직접 입력)"] + [s[:70] + ("…" if len(s) > 70 else "") for s in candidates],
+                            key="vc_pick")
+        if pick != "(직접 입력)":
+            idx = ["(직접 입력)"] + candidates
+            init_text = candidates[[s[:70] + ("…" if len(s) > 70 else "") for s in candidates].index(pick)]
+        else:
+            init_text = st.session_state.sermon_title
 
-    with vc_c1:
-        st.markdown("#### ✏️ 말씀 문구 & 디자인 커스텀")
-        v_text_input = st.text_area("말씀문구 / 메시지", value=v_init_str, height=120, key="vc_text_in")
-        v_scrip_input = st.text_input("성경 구절", value=st.session_state.sermon_scripture, key="vc_scrip_in")
-        v_church_input = st.text_input("교회명 배지", value=st.session_state.get("cn_church_name", "화광교회"), key="vc_church_in")
+        v_text = st.text_area("말씀문구 / 메시지", value=init_text, height=120, key=f"vc_text_{pick}")
+        v_scrip = st.text_input("성경 구절", value=st.session_state.sermon_scripture, key="vc_scrip_in")
+        v_church = st.text_input("교회명 배지", value=st.session_state.cn_church_name, key="vc_church_in")
 
-        st.markdown("#### 🎨 배경 & 폰트 스타일링")
-        bg_col1, bg_col2 = st.columns(2)
-        with bg_col1:
-            vc_bg_opt = st.radio("배경 방식", ["사진", "기본", "직접 업로드"], key="vc_bg_radio")
-        with bg_col2:
-            vc_up_file = None
-            if vc_bg_opt == "직접 업로드":
-                vc_up_file = st.file_uploader("배경 이미지 업로드", type=["jpg", "png", "jpeg"], key="vc_up_file_widget")
+        st.markdown("#### 🎨 배경 & 스타일")
+        b1, b2 = st.columns(2)
+        with b1:
+            bg_opt = st.radio("배경", ["사진", "기본", "직접 업로드"], key="vc_bg_radio")
+            bg_i = st.slider("배경 사진 번호", 0, len(CARD_BACKGROUNDS) - 1, 0, key="vc_bg_idx")
+        with b2:
+            up_file = st.file_uploader("배경 이미지", type=["jpg", "png", "jpeg"], key="vc_up_file") \
+                if bg_opt == "직접 업로드" else None
 
-        st.markdown("#### 📐 세부 텍스트 & 오버레이 세팅")
-        s_col1, s_col2 = st.columns(2)
-        with s_col1:
-            vc_fsize = st.slider("폰트 크기 (pt)", min_value=28, max_value=68, value=42, step=2, key="vc_fsize_sl")
-            vc_lspace = st.slider("줄간격 (행간)", min_value=10, max_value=40, value=18, step=2, key="vc_lspace_sl")
-        with s_col2:
-            vc_fcolor = st.color_picker("글자 색상", value="#FDE047", key="vc_fcolor_pk")
-            vc_scolor = st.color_picker("테두리 색상", value="#000000", key="vc_scolor_pk")
-            vc_opacity = st.slider("배경 어둡기 (투명도)", min_value=0.2, max_value=0.9, value=0.6, step=0.05, key="vc_op_sl")
+        s1, s2 = st.columns(2)
+        with s1:
+            fsize = st.slider("폰트 크기", 28, 68, 42, 2, key="vc_fsize")
+            lspace = st.slider("줄간격", 10, 40, 18, 2, key="vc_lspace")
+        with s2:
+            fcolor = st.color_picker("글자 색", "#FDE047", key="vc_fcolor")
+            scolor = st.color_picker("테두리 색", "#000000", key="vc_scolor")
+            opacity = st.slider("배경 어둡기", 0.2, 0.9, 0.6, 0.05, key="vc_op")
 
-    with vc_c2:
-        st.markdown("### 🖼️ 말씀카드 미리보기 & 다운로드")
-        
-        card_png_bytes = generate_verse_card_png(
-            text_str=v_text_input,
-            scripture_str=v_scrip_input,
-            bg_option=vc_bg_opt,
-            custom_bg_file=vc_up_file,
-            font_size=vc_fsize,
-            line_spacing=vc_lspace,
-            font_color=vc_fcolor,
-            stroke_color=vc_scolor,
-            overlay_opacity=vc_opacity,
-            church_name=v_church_input
-        )
-        
-        st.image(card_png_bytes.getvalue(), caption="1:1 정사각형 고화질 말씀카드", use_container_width=True)
-        
-        st.download_button(
-            "📥 말씀카드 PNG 고화질 다운로드",
-            data=card_png_bytes,
-            file_name=f"{st.session_state.sermon_title}_말씀카드.png",
-            mime="image/png",
-            key="dl_verse_card_png_btn"
-        )
+    with c2:
+        st.markdown("### 🖼️ 미리보기 & 다운로드")
+        png = generate_verse_card_png(v_text, v_scrip, bg_opt, up_file, fsize, lspace,
+                                      fcolor, scolor, opacity, v_church, bg_index=bg_i)
+        st_image_full(png.getvalue(), caption="1:1 고화질 말씀카드")
+        st.download_button("📥 PNG 다운로드", data=png.getvalue(),
+                           file_name=f"{st.session_state.sermon_title}_말씀카드.png",
+                           mime="image/png", key="dl_verse_card")
+
 
 # ==============================================================================
-# 6. 📚 설교 서재 (Sermon Library) - 무한대 영구 보관 & 백업/복원 시스템
+# 6) 설교 서재
 # ==============================================================================
 elif app_mode == "📚 설교 서재 (Sermon Library)":
-    st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📚 설교 서재 (무한대 영구 기록보관소)</h1>", unsafe_allow_html=True)
-    
+    st.markdown("<h1 style='font-size:28px;font-weight:800;'>📚 설교 서재 (영구 기록보관소)</h1>",
+                unsafe_allow_html=True)
+
     sermons_db = get_db_sermons()
     st.session_state.sermon_library = sermons_db
-    
-    top_c1, top_c2 = st.columns([1.5, 1.5])
-    with top_c1:
-        st.markdown(f"총 **{len(sermons_db):,}편**의 설교문이 영구 데이터베이스에 안전하게 보관되어 있습니다.")
-    with top_c2:
-        bk_c1, bk_c2 = st.columns(2)
-        with bk_c1:
-            json_backup_bytes = json.dumps(sermons_db, ensure_ascii=False, indent=2).encode('utf-8')
-            st.download_button(
-                "💾 서재 전체 백업 (.json)",
-                data=json_backup_bytes,
-                file_name=f"설교서재_전체백업_{datetime.now().strftime('%Y%m%d')}.json",
-                mime="application/json",
-                key="dl_sermons_backup_btn"
-            )
-        with bk_c2:
-            with st.popover("📂 백업 복원하기"):
-                restore_file = st.file_uploader("백업 JSON 파일 선택", type=["json"], key="up_restore_json_file")
-                if restore_file and st.button("✅ 서재에 복원 및 병합", key="btn_confirm_restore"):
+
+    t1, t2 = st.columns([1.5, 1.5])
+    with t1:
+        st.markdown(f"총 **{len(sermons_db):,}편**의 설교문이 보관되어 있습니다.")
+    with t2:
+        k1, k2 = st.columns(2)
+        with k1:
+            st.download_button("💾 전체 백업(.json)",
+                               data=json.dumps(sermons_db, ensure_ascii=False, indent=2).encode('utf-8'),
+                               file_name=f"설교서재_백업_{datetime.now().strftime('%Y%m%d')}.json",
+                               mime="application/json", key="dl_backup")
+        with k2:
+            with st.popover("📂 백업 복원"):
+                rf = st.file_uploader("백업 JSON", type=["json"], key="up_restore")
+                mode = st.radio("복원 방식", ["기존에 병합(추가)", "완전 교체"], key="restore_mode")
+                if rf and st.button("✅ 복원 실행", key="btn_restore"):
                     try:
-                        restored_data = json.load(restore_file)
-                        if isinstance(restored_data, list):
-                            save_db_sermons(restored_data)
-                            st.session_state.sermon_library = restored_data
-                            st.success(f"총 {len(restored_data)}편의 설교가 성공적으로 복원되었습니다!")
+                        data = json.load(rf)
+                        if isinstance(data, list):
+                            if mode == "기존에 병합(추가)":
+                                exist = {(s.get("title"), s.get("scripture")) for s in sermons_db}
+                                merged = list(sermons_db)
+                                nid = max([int(s.get("id", 0)) for s in sermons_db] or [0])
+                                for s in data:
+                                    if (s.get("title"), s.get("scripture")) not in exist:
+                                        nid += 1
+                                        s["id"] = nid
+                                        merged.append(s)
+                                data = merged
+                            save_db_sermons(data)
+                            st.session_state.sermon_library = data
+                            st.success(f"복원 완료! 현재 {len(data)}편")
                             st.rerun()
-                    except Exception as re_err:
-                        st.error(f"복원 실패: {str(re_err)}")
+                        else:
+                            st.error("올바른 백업 파일이 아닙니다.")
+                    except Exception as e:
+                        st.error(f"복원 실패: {e}")
 
     st.write("---")
-
-    st.markdown("#### 🔍 다차원 정밀 검색 및 분류 필터")
-    f_c1, f_c2, f_c3, f_c4 = st.columns([1.5, 1.2, 1.5, 1.2])
-    
-    with f_c1:
-        search_kw = st.text_input("검색어 (제목/키워드/본문)", placeholder="예: 예배, 선교, 이사야...", key="lib_search_kw")
-    with f_c2:
-        testament_filter = st.selectbox("구약/신약 구분", ["전체", "구약", "신약"], key="lib_testament_filter")
-    with f_c3:
-        book_filter = st.selectbox("성경 66권 책별", ["전체"] + BIBLE_BOOKS, key="lib_book_filter")
-    with f_c4:
-        sort_order = st.selectbox("정렬 순서", ["최신순 (등록일)", "오래된순"], key="lib_sort_order")
+    f1, f2, f3, f4 = st.columns([1.5, 1.2, 1.5, 1.2])
+    with f1:
+        kw = st.text_input("검색어 (제목/본문/키워드)", key="lib_kw")
+    with f2:
+        tf = st.selectbox("구약/신약", ["전체", "구약", "신약"], key="lib_testament")
+    with f3:
+        bf = st.selectbox("성경 66권", ["전체"] + BIBLE_BOOKS, key="lib_book")
+    with f4:
+        so = st.selectbox("정렬", ["최신순", "오래된순"], key="lib_sort")
 
     st.write("---")
-
-    filtered_sermons = []
-    for s_item in sermons_db:
-        if "testament" not in s_item or "book" not in s_item:
-            testament, book = classify_scripture(s_item.get("scripture", ""))
-            s_item["testament"] = testament
-            s_item["book"] = book
-
-        if search_kw:
-            kw_match = (
-                search_kw.lower() in s_item.get("title", "").lower() or
-                search_kw.lower() in s_item.get("scripture", "").lower() or
-                search_kw.lower() in s_item.get("text", "").lower() or
-                any(search_kw.lower() in t.lower() for t in s_item.get("tags", []))
-            )
-            if not kw_match:
+    filtered = []
+    for s in sermons_db:
+        if "testament" not in s or "book" not in s:
+            s["testament"], s["book"] = classify_scripture(s.get("scripture", ""))
+        if kw:
+            hay = " ".join([s.get("title", ""), s.get("scripture", ""), s.get("text", "")]
+                           + list(s.get("tags", []))).lower()
+            if kw.lower() not in hay:
                 continue
-
-        if testament_filter != "전체" and s_item.get("testament") != testament_filter:
+        if tf != "전체" and s.get("testament") != tf:
             continue
-
-        if book_filter != "전체" and s_item.get("book") != book_filter:
+        if bf != "전체" and s.get("book") != bf:
             continue
+        filtered.append(s)
 
-        filtered_sermons.append(s_item)
+    filtered.sort(key=lambda x: x.get("id", 0), reverse=(so == "최신순"))
+    st.markdown(f"**검색 결과:** `{len(filtered):,}편`")
 
-    if sort_order == "오래된순":
-        filtered_sermons.sort(key=lambda x: x.get("id", 0))
+    if not filtered:
+        st.info("조건에 맞는 설교문이 없습니다.")
     else:
-        filtered_sermons.sort(key=lambda x: x.get("id", 0), reverse=True)
-
-    st.markdown(f"**검색 결과:** `{len(filtered_sermons):,}편` 검색됨")
-
-    if not filtered_sermons:
-        st.info("조건에 해당하는 설교문이 서재에 없습니다.")
-    else:
-        for item_i, s_item in enumerate(filtered_sermons):
-            with st.container():
-                st.markdown(
-                    f"""
-                    <div style="background-color: #0f172a; border: 1px solid #334155; border-radius: 14px; padding: 20px; margin-bottom: 14px;">
-                        <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
-                            <h3 style="margin: 0; font-size: 20px; font-weight: bold; color: #f8fafc;">{s_item.get('title')}</h3>
-                            <span style="background-color: #1e3a8a; color: #fde047; padding: 4px 12px; border-radius: 12px; font-size: 12px; font-weight: bold;">{s_item.get('testament', '구약')} · {s_item.get('book', '성경')}</span>
-                        </div>
-                        <p style="margin: 0 0 10px 0; font-size: 14px; color: #94a3b8;">
-                            📖 <strong>{s_item.get('scripture')}</strong> · [{s_item.get('theology', '개혁주의')}] · 📅 등록일: {s_item.get('date', '2026-08-27')}
-                        </p>
-                        <div style="margin-bottom: 14px;">
-                            {' '.join([f'<span style=\"background:#1e293b; color:#38bdf8; padding:3px 10px; border-radius:6px; font-size:12px; margin-right:4px;\">#{t}</span>' for t in s_item.get('tags', [])])}
-                        </div>
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-                
-                b_col1, b_col2 = st.columns([3, 1])
-                with b_col1:
-                    if st.button("📖 이 설교를 대시보드로 불러와서 작업하기", key=f"lib_load_btn_{s_item.get('id')}_{item_i}"):
-                        load_sermon_to_workspace(s_item, idx=sermons_db.index(s_item) if s_item in sermons_db else 0)
-                        st.session_state.dash_active_view = "설교 요약"
-                        st.success(f"'{s_item.get('title')}' 설교로 모든 플랫폼 메뉴가 완벽히 동기화되었습니다!")
-                        st.rerun()
-                with b_col2:
-                    if st.button("🗑️ 서재에서 삭제", key=f"lib_del_btn_{s_item.get('id')}_{item_i}"):
-                        updated_lib = [x for x in get_db_sermons() if x.get('id') != s_item.get('id')]
-                        save_db_sermons(updated_lib)
-                        st.session_state.sermon_library = updated_lib
-                        st.success("설교가 서재에서 안전하게 삭제되었습니다.")
-                        st.rerun()
+        for i, s in enumerate(filtered):
+            tags_html = ' '.join(
+                f'<span style="background:#1e293b;color:#38bdf8;padding:3px 10px;border-radius:6px;'
+                f'font-size:12px;margin-right:4px;">#{t}</span>' for t in s.get('tags', []))
+            st.markdown(
+                f"""<div style="background:#0f172a;border:1px solid #334155;border-radius:14px;padding:20px;margin-bottom:10px;">
+                <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;">
+                <h3 style="margin:0;font-size:20px;font-weight:bold;color:#f8fafc;">{s.get('title')}</h3>
+                <span style="background:#1e3a8a;color:#fde047;padding:4px 12px;border-radius:12px;font-size:12px;font-weight:bold;">
+                {s.get('testament','기타')} · {s.get('book','성경')}</span></div>
+                <p style="margin:0 0 10px 0;font-size:14px;color:#94a3b8;">
+                📖 <strong>{s.get('scripture')}</strong> · [{s.get('theology','-')}] · 📅 {s.get('date','-')}
+                · 📝 {len(s.get('text','')):,}자</p>
+                <div style="margin-bottom:6px;">{tags_html}</div></div>""",
+                unsafe_allow_html=True
+            )
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                if st.button("📖 대시보드로 불러오기", key=f"lib_load_{s.get('id')}_{i}"):
+                    try:
+                        real_idx = sermons_db.index(s)
+                    except ValueError:
+                        real_idx = 0
+                    load_sermon_to_workspace(s, idx=real_idx)
+                    st.success(f"'{s.get('title')}' 로 전체 메뉴가 동기화되었습니다.")
+                    st.rerun()
+            with c2:
+                if st.button("🗑️ 삭제", key=f"lib_del_{s.get('id')}_{i}"):
+                    updated = [x for x in get_db_sermons() if x.get('id') != s.get('id')]
+                    save_db_sermons(updated)
+                    st.session_state.sermon_library = updated
+                    st.success("삭제되었습니다.")
+                    st.rerun()
