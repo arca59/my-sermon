@@ -233,7 +233,7 @@ def update_sermon_in_db(sermon_id, updated_summary=None, updated_text=None):
     save_db_sermons(current_list)
     st.session_state.sermon_library = current_list
 
-# 정밀 강해 설교 로컬 분석 엔진
+# 정밀 강해 설교 로컬 분석 엔진 (설교 요약 전용)
 def analyze_expository_sermon(title: str, scripture: str, full_text: str) -> str:
     paragraphs = [p.strip() for p in full_text.split('\n') if len(p.strip()) > 10]
     if not paragraphs:
@@ -349,20 +349,6 @@ def clean_korean_output(text: str) -> str:
     if not text:
         return ""
     
-    markers = [
-        r"(\[(?:소그룹|주간|가정예배|60초|참고|설교|세대별|리더|신앙).*?\])",
-        r"(###?\s*[0-9가-힣])",
-        r"(🎯\s*설교)",
-        r"(1\.\s*마음\s*열기)",
-        r"(1\.\s*본문\s*연관)",
-        r"(1\.\s*[가-힣]{2,})"
-    ]
-    for marker in markers:
-        match = re.search(marker, text)
-        if match:
-            text = text[match.start():]
-            break
-
     lines = text.split("\n")
     cleaned_lines = []
     for line in lines:
@@ -375,21 +361,16 @@ def clean_korean_output(text: str) -> str:
             continue
         if stripped.startswith("* Check") or stripped.startswith("* Ensure") or stripped.startswith("* Focus:"):
             continue
-        if re.search(r'^\*\s*\*(Concept|Drafting|Selection|Draft|Idea \d+|Content|Focus):\*', stripped):
-            continue
             
         k_chars = len(re.findall(r'[가-힣]', stripped))
         e_chars = len(re.findall(r'[a-zA-Z]', stripped))
-        if e_chars > 15 and k_chars == 0:
+        if e_chars > 20 and k_chars == 0:
             continue
             
         line = re.sub(r'\([A-Za-z0-9\s,\.\?\!\'\":;\-\/]{5,}\)', '', line)
         cleaned_lines.append(line)
         
     result = "\n".join(cleaned_lines).strip()
-    result = re.sub(r'(\n\s*[\*\-•]\s*)\n+(\s*)', r'\1 ', result)
-    result = re.sub(r'(\n\s*\d+\.\s*)\n+(\s*)', r'\1 ', result)
-    result = re.sub(r'(\*\s*)\n+(\s*)', r'\1 ', result)
     result = re.sub(r'\n{3,}', '\n\n', result)
     return result if result else text
 
@@ -435,9 +416,9 @@ def get_ai_response(prompt: str, is_json: bool = True):
         system_instruction = (
             "당신은 한국 교회의 사역을 돕는 최고 권위의 목회 전문 어시스턴트입니다. "
             "영문 생각 과정이나 기획 메모는 일절 작성하지 마십시오. "
-            "사용자가 요청한 타이틀과 양식에 정확히 부합하는 완성형 사역 콘텐츠만을 출력하십시오. "
-            "인도자(리더/인도자/부모)만 알아야 할 안내 팁이나 멘트는 반드시 '[인도자 팁 / 가이드]' 머리말로 구분하여 작성하십시오. "
-            "글머리 기호나 번호 바로 뒤에 줄바꿈 없이 100% 완성된 한국어 사역 문서 본문만 바로 출력하십시오."
+            "사용자가 요청한 메뉴와 목적(참고 성구 및 예화, 소그룹 나눔지, QT 5일치, 카드뉴스, 쇼츠 대본, 가정예배지, 설교 점검, 소그룹 리더가이드 등)에 정확히 부합하는 전용 결과물만을 생성하십시오. "
+            "인도자(리더/구역장/셀리더/부모)만 알아야 할 안내 팁이나 멘트는 반드시 '[인도자 팁 / 가이드]: ...' 형식으로 작성하십시오. "
+            "100% 완성된 한국어 사역 문서 본문만 바로 출력하십시오."
         )
 
         for model_name in FAST_MODELS:
@@ -502,27 +483,27 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
                 "hashtags": ["#주일설교", "#말씀묵상", "#은혜", "#기독교", "#크리스천", "#쇼츠", "#기도", "#축복"]
             }
 
-    # 1. 참고 성구 및 신학적 예화 전용 폴백
-    if "참고" in prompt or "예화" in prompt:
+    # 1. 참고 성구 및 예화 전용 반환
+    if "참고" in prompt or "예화" in prompt or "성구" in prompt:
         return f"""[참고 성구 및 신학적 예화 자료집: {title}]
 
 1. 📖 본문 연관 핵심 참고 성구 3가지 및 설교적 연결점
 • 로마서 10장 14-15절 ("보내심을 받지 아니하였으면 어찌 전파하리요...")
-  - 연결점: 이사야 59:21에서 선포된 말씀의 전수가 신약 시대 복음 전파와 땅끝 선교의 필연적 사명으로 직결됨을 확증합니다.
+  - 연결점: {scripture}에 나타난 하나님의 뜻이 신약 시대 복음 전파와 땅끝 선교의 필연적 사명으로 확증됨을 보여줍니다.
 • 마태복음 28장 19-20절 ("너희는 가서 모든 민족을 제자로 삼아...")
-  - 연결점: 성령과 함께 우리 입에 두신 말씀을 가지고 모든 족속을 향해 나아가는 지상 대명령의 신학적 기초가 됩니다.
+  - 연결점: 우리에게 주신 말씀과 성령을 가지고 모든 족속을 향해 나아가는 지상 대명령의 신학적 기초가 됩니다.
 • 사도행전 1장 8절 ("오직 성령이 너희에게 임하시면 너희가 권능을 받고...")
-  - 연결점: 말씀과 성령의 기름부으심이 개인의 영성에 머물지 않고 땅끝 증인의 능력으로 폭발함을 보여줍니다.
+  - 연결점: 말씀과 성령의 기름부으심이 개인의 영성에 머물지 않고 땅끝 증인의 능력으로 확장됨을 확증합니다.
 
 2. 💡 일상 및 현대적 공감 실화 예화 2가지
-• '스탠리 존스(E. Stanley Jones) 선교사의 10/40창 헌신'
-  - 인도와 아시아의 어두운 땅을 밟으며 "예수는 길이다"를 선포했던 존스 선교사는, 가장 절망적인 종족 속에서 복음의 능력이 어떻게 영혼을 살려내는지를 삶으로 입증했습니다.
-• '어느 늙은 어머니의 낡은 성경책 유산'
+• '스탠리 존스(E. Stanley Jones) 선교사의 선교적 헌신'
+  - 아시아의 어두운 땅을 밟으며 그리스도를 선포했던 존스 선교사는, 가장 절망적인 현장 속에서 복음의 능력이 영혼을 살려내는 능력을 삶으로 입증했습니다.
+• '어느 어머니의 낡은 성경책 유산'
   - 물질적 유산 대신 평생 눈물로 기도하며 손때 묻힌 성경을 물려받은 아들이 훗날 열방의 선교사로 헌신하게 된 감동 실화입니다.
 
-3. 🏛️ 교회사 및 기독교 사상가 명언 2가지
+3. 🏛️ 교회사 및 기독교 고전 사상가 명언 2가지
 • C.S. 루이스 (C.S. Lewis)
-  - "교회는 오직 한 가지 목적을 위해 존재한다. 즉 사람들을 그리스도께로 이끌어 작은 그리스도가 되게 하는 것이다. 만약 교회가 이 선교적 사명을 잃는다면 건물도, 성직자도, 성경도 다 헛될 뿐이다."
+  - "교회는 오직 한 가지 목적을 위해 존재한다. 즉 사람들을 그리스도께로 이끌어 작은 그리스도가 되게 하는 것이다."
 • 찰스 스펄전 (Charles Spurgeon)
   - "만약 당신에게 복음을 전하고자 하는 열망이 없다면, 당신 자신이 먼저 구원받았는지 진지하게 돌아보아야 합니다." """
 
@@ -531,52 +512,52 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
         return analyze_expository_sermon(title, scripture, full_text)
 
     # 3. 소그룹 리더 가이드
-    if "소그룹" in prompt and "리더" in prompt:
+    if "소그룹 리더" in prompt or "심화 가이드" in prompt:
         return f"""[소그룹 리더(구역장/셀리더/순장) 심화 가이드: {title}]
 
 1. 🎯 이번 주 모임의 핵심 목표 및 주제 방향
-- [인도자 팁 / 가이드]: 성도들이 {scripture} 말씀을 통해 개인의 영적 회복을 넘어 열방과 이웃을 향한 선교적 사명감을 품도록 인도합니다.
+- [인도자 팁 / 가이드]: 성도들이 {scripture} 말씀을 통해 개인적 위로를 넘어 세상 속에서 선교적 사명을 감당하도록 이끕니다.
 
 2. 📖 본문 배경 및 신학적 핵심 해설 (리더용 심화 자료)
-- [인도자 팁 / 가이드]: 본문은 하나님의 영과 말씀이 영원히 떠나지 않으리라는 확고한 구속사적 언약을 다룹니다.
+- [인도자 팁 / 가이드]: 본문은 하나님의 영과 말씀이 영원히 함께하신다는 구속사적 언약을 다룹니다.
 
 3. 💬 나눔 질문별 성도들의 예상 답변 및 리더 피드백 팁
-- [인도자 팁 / 가이드]: '선교는 선교사만 하는 것 아닌가요?'라는 질문이 나올 경우, "우리의 일터와 가정이 바로 1차 선교지입니다"라고 폭넓은 적용을 제시해 주세요.
+- [인도자 팁 / 가이드]: 대화가 한 사람에게 치우치지 않도록 골고루 기회를 주며 경청해 주세요.
 
 4. ⚠️ 모임 중 침묵 또는 돌발 상황 대처 요령
-- [인도자 팁 / 가이드]: 침묵이 흐를 때는 "최근 믿지 않는 가족이나 이웃에게 사랑을 전하고 싶었던 순간이 있었나요?"처럼 편안한 일상 질문으로 유도하세요.
+- [인도자 팁 / 가이드]: 침묵이 길어질 때는 리더가 먼저 가벼운 은혜의 고백으로 분위기를 열어주세요.
 
 5. 🙏 소그룹을 위한 맞춤 중보기도 제목 3가지
 - 1. 우리 구역원들의 가정이 말씀과 성령의 은혜로 충만하도록
-- 2. 10/40창 지역과 파송된 선교사님들의 안전과 영적 부흥을 위해
-- 3. 믿음의 다음 세대가 복음의 주역으로 우뚝 서도록"""
+- 2. 복음이 필요한 미전도 종족과 선교사님들의 사역을 위해
+- 3. 믿음의 다음 세대가 복음의 주역으로 세워지도록"""
 
     # 4. 소그룹 나눔지
     if "소그룹" in prompt:
         return f"""[소그룹 나눔지: {title}] (본문: {scripture})
 
 1. 마음 열기 (아이스브레이크)
-- [인도자 팁 / 가이드]: 따뜻한 환영과 함께 한 주간의 감사 제목을 나누며 시작합니다.
-- 질문: 이번 주간 내 삶 속에서 하나님의 도우심과 은혜를 경험한 일은 무엇인가요?
+- [인도자 팁 / 가이드]: 한 주간 인도하신 하나님께 감사하며 부드럽게 시작하세요.
+- 질문: 이번 한 주 동안 일상에서 하나님의 도우심을 경험한 순간은 언제인가요?
 
 2. 말씀 속으로
-- [인도자 팁 / 가이드]: 본문 {scripture} 말씀을 다 함께 교독한 후 나눔으로 들어갑니다.
-- 1. 오늘 말씀에서 '내 영과 내 말'이 영원히 떠나지 않는다는 언약은 나에게 어떤 확신을 주나요?
-- 2. 설교를 통해 깨닫게 된 참된 예배와 열방 선교의 연관성은 무엇인가요?
+- [인도자 팁 / 가이드]: 본문 {scripture} 말씀을 다 함께 교독한 후 나눔을 시작합니다.
+- 1. 오늘 말씀에서 내 마음에 가장 깊이 와닿은 성구와 메시지는 무엇인가요?
+- 2. 설교를 통해 깨닫게 된 참된 예배와 삶의 현장은 어떤 연관이 있나요?
 
 3. 삶 속으로
-- [인도자 팁 / 가이드]: 성도들이 일상에서 실천할 수 있는 작은 복음의 발걸음을 나누도록 격려합니다.
-- 1. 내가 품고 기도해야 할 믿지 않는 영혼이나 땅끝 선교지는 어디인가요?
-- 2. 이번 주간 구체적으로 실천할 선교적 결단 한 가지를 나누어 봅시다.
+- [인도자 팁 / 가이드]: 구체적이고 실천 가능한 결단을 이끌어내도록 격려해 주세요.
+- 1. 내가 이번 주에 복음의 선한 영향력을 흘려보내야 할 이웃은 누구인가요?
+- 2. 말씀에 순종하여 구체적으로 실천할 믿음의 행동 한 가지는 무엇인가요?
 
 4. 마침 합심 기도문
-- 살아계신 하나님, 우리에게 주신 거룩한 말씀을 마음에 품고 세상 속에서 당당히 증인 되게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
+- 살아계신 하나님, 오늘 나눈 {title} 말씀을 마음에 새깁니다. 세상 속에서 주의 증인으로 당당히 살아가게 하옵소서. 예수님의 이름으로 기도드립니다. 아멘."""
 
     # 5. QT 5일치
     if "QT" in prompt or "묵상" in prompt:
         return f"""[주간 QT 5일치: {title}] (본문: {scripture})
 
-📅 월요일: 영원히 떠나지 않는 언약
+📅 월요일: 언약의 품으로 나아가기
 - 📖 본문 구절: {scripture}
 - 💡 말씀 묵상: 하나님은 우리 입에 두신 말씀과 성령이 영원토록 함께하리라 약속하십니다.
 - 🎯 삶의 적용: 오늘 하루 언약의 말씀을 입술로 선포하며 승리하십시오.
@@ -590,9 +571,9 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 
 📅 수요일: 열방의 어둠을 밝히는 빛
 - 📖 본문 구절: {scripture}
-- 💡 말씀 묵상: 10/40창을 비롯한 복음의 사각지대에 주의 빛이 비추어야 합니다.
-- 🎯 삶의 적용: 고통받는 땅끝 미전도 종족을 위해 1분간 중보기도 하십시오.
-- 🙏 오늘의 기도: 선교사님들과 복음이 필요한 땅을 축복하여 주옵소서.
+- 💡 말씀 묵상: 복음의 사각지대에 주의 생명의 빛이 환하게 비추어야 합니다.
+- 🎯 삶의 적용: 고통받는 땅끝 영혼과 선교사님들을 위해 1분간 기도하십시오.
+- 🙏 오늘의 기도: 선교사님들의 사역 위에 성령의 능력을 더하여 주옵소서.
 
 📅 목요일: 참된 예배자의 선교적 사명
 - 📖 본문 구절: {scripture}
@@ -641,10 +622,10 @@ def generate_fallback_sermon_resource(prompt: str, is_json: bool):
 - 3대지 전개가 유기적이며 예배에서 선교로 이어지는 복음적 흐름이 탄탄합니다.
 
 3. 💡 청중 공감 예화 및 삶의 적용 적절성 (95점)
-- 10/40창 선교 전략과 일상의 증인 됨을 조화롭게 연결하여 성도들의 구체적 실천을 잘 이끌어냅니다.
+- 전략적 시각과 일상의 증인 됨을 조화롭게 연결하여 성도들의 구체적 실천을 잘 이끌어냅니다.
 
 4. 🎙️ 스피치 전달력 및 표현 개선 제안
-- 성령의 영원한 임재를 강조하는 핵심 문장을 결론부에서 힘차게 선포하면 감동이 배가될 것입니다.
+- 핵심 명제 문장을 결론부에서 힘차게 선포하면 감동이 배가될 것입니다.
 
 5. 📊 종합 총평 및 핵심 권고사항
 - 성도들에게 선교적 비전과 영적 자부심을 심어주는 매우 탁월하고 균형 잡힌 강단 선포 원고입니다."""
@@ -1653,7 +1634,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
     with right_panel:
         active_view = st.session_state.dash_active_view
 
-        # 1. 설교 요약 (전문 강해 3대지 주해 요약 렌더링)
+        # 1. 설교 요약
         if active_view == "설교 요약":
             summary_val = st.session_state.get("sermon_summary_text", "")
             if not summary_val or len(summary_val.strip()) < 50:
@@ -1712,6 +1693,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             with st.expander("📜 설교문 원고 전문 보기", expanded=False):
                 st.write(st.session_state.full_sermon)
 
+        # 2. 소그룹 나눔
         elif active_view == "소그룹 나눔":
             grp_txt = st.session_state.get("small_group_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹나눔지", grp_txt, "sm_grp")
@@ -1720,26 +1702,23 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 with st.spinner("소그룹 나눔지 작성 중..."):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
-                    설교 요약: {st.session_state.full_sermon[:3500]}
+                    설교 전문: {st.session_state.full_sermon[:3500]}
+                    설교 제목: {st.session_state.sermon_title}
                     
-                    [소그룹 나눔지: {st.session_state.sermon_title}]
-                    
+                    [소그룹 나눔지 작성]
+                    위 설교 내용을 바탕으로 구역/셀모임용 소그룹 나눔지를 작성하세요:
                     1. 마음 열기 (아이스브레이크)
                     - [인도자 팁 / 가이드]: (분위기를 부드럽게 만드는 인도자 멘트)
                     - (일상의 따뜻한 나눔 질문 1가지)
-                    
                     2. 말씀 속으로
                     - [인도자 팁 / 가이드]: (본문 이해를 돕는 인도자 가이드)
                     - 1. (본문 말씀 이해 질문)
                     - 2. (설교 핵심 메시지 나눔 질문)
-                    
                     3. 삶 속으로
                     - [인도자 팁 / 가이드]: (솔직한 나눔을 이끄는 리더 조언)
                     - 1. (구체적 실천 방안 질문)
                     - 2. (한 주간의 결단 질문)
-                    
                     4. 마침 합심 기도문
-                    - (은혜로운 마무리 기도문)
                     """
                     res = get_ai_response(prompt, is_json=False)
                     if res:
@@ -1760,6 +1739,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption("위 버튼을 눌러 소그룹 나눔지를 생성하세요.")
 
+        # 3. QT 5일치
         elif active_view == "QT 5일치":
             qt_txt = st.session_state.get("qt5_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_주간QT5일치", qt_txt, "qt5")
@@ -1768,11 +1748,11 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 with st.spinner("주간 5일치 QT 작성 중..."):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
-                    설교 요약: {st.session_state.full_sermon[:3000]}
+                    설교 전문: {st.session_state.full_sermon[:3000]}
+                    설교 제목: {st.session_state.sermon_title}
                     
-                    [주간 QT 5일치: {st.session_state.sermon_title}]
-                    
-                    월요일부터 금요일까지 5일치 말씀 묵상지를 작성하세요:
+                    [주간 QT 5일치 묵상지 작성]
+                    위 설교를 바탕으로 월요일부터 금요일까지 5일치 말씀 묵상지를 작성하세요:
                     각 날짜마다:
                     - 📅 제목:
                     - 📖 본문 구절:
@@ -1798,6 +1778,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption("위 버튼을 눌러 5일치 QT를 생성하세요.")
 
+        # 4. 카드뉴스
         elif active_view == "카드뉴스":
             card_all_text = "\n\n".join([f"CARD {c['card_number']}. {c['headline']}\n{c['body_text']}" for c in st.session_state.get("card_list", [])]) if "card_list" in st.session_state else ""
             
@@ -1837,7 +1818,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 font_opt = st.selectbox("글씨체", ["프리텐다드", "나눔고딕", "본고딕"], key="cn_font_opt")
                 font_size = st.number_input("크기", min_value=80, max_value=140, value=100, step=5, key="cn_font_size")
             with cn_opt3:
-                church_input = st.text_input("교회명", value=st.session_state.get("cn_church_name", "화광교회"), placeholder="교회 이름 (Enter로 줄바꿈, 최대 2줄)", key="cn_church_input")
+                church_input = st.text_input("교회명", value=st.session_state.get("cn_church_name", "화광교회"), placeholder="교회 이름", key="cn_church_input")
                 st.session_state.cn_church_name = church_input
 
             st.write("---")
@@ -1845,7 +1826,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             if "card_list" not in st.session_state or not st.session_state.card_list:
                 if st.button("🎨 카드뉴스 자동 생성하기", type="primary", key="btn_gen_cardnews_init"):
                     with st.spinner("설교 메시지로 카드뉴스 구성 중..."):
-                        prompt = f"설교 본문: {st.session_state.sermon_scripture}\n설교문: {st.session_state.full_sermon[:3500]}\n정확히 7장의 카드뉴스 JSON 출력 (100% 한국어): {{\"cards\": [{{\"card_number\": 1, \"headline\": \"제목\", \"body_text\": \"문구\"}}]}}"
+                        prompt = f"설교 제목: {st.session_state.sermon_title}\n성경 본문: {st.session_state.sermon_scripture}\n설교문: {st.session_state.full_sermon[:3500]}\n정확히 7장의 카드뉴스 JSON 출력 (100% 한국어): {{\"cards\": [{{\"card_number\": 1, \"headline\": \"제목\", \"body_text\": \"문구\"}}]}}"
                         res = get_ai_response(prompt, is_json=True)
                         if res and "cards" in res:
                             st.session_state.card_list = res["cards"]
@@ -1919,10 +1900,8 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         )
 
                 st.write("---")
-
                 st.markdown("#### 인스타그램 캡션")
                 insta_c1, insta_c2 = st.columns([4, 1])
-                
                 insta_text = f"오늘 선포된 [{st.session_state.sermon_title}] ({st.session_state.sermon_scripture}) 말씀을 나눕니다.\n\n주신 은혜를 기억하고 마음에 깊이 새기며 삶 속에서 선한 능력으로 승리하시기를 축복합니다."
                 insta_tags = f"#주일설교 #{st.session_state.sermon_title.replace(' ', '')} #말씀묵상 #가정예배 #크리스천"
 
@@ -1933,6 +1912,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     if st.button("📋 전체 복사", key="btn_copy_insta"):
                         st.success("인스타그램 캡션이 복사되었습니다!")
 
+        # 5. 쇼츠 대본
         elif active_view == "쇼츠 대본":
             sh_txt = st.session_state.get("shorts_script_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_쇼츠대본", sh_txt, "sh_script")
@@ -1941,24 +1921,13 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 with st.spinner("쇼츠 대본 작성 중..."):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
-                    설교 요약: {st.session_state.full_sermon[:3000]}
+                    설교 전문: {st.session_state.full_sermon[:3000]}
+                    설교 제목: {st.session_state.sermon_title}
                     
-                    [60초 세로 쇼츠 대본 3종: {st.session_state.sermon_title}]
-                    
-                    1. 🎬 감동 및 위로형 대본
-                    - [0~5초 후킹 멘트]:
-                    - [5~45초 본론 메시지]:
-                    - [45~60초 결단 및 축복]:
-                    
-                    2. 💡 질문 및 호기심 자극형 대본
-                    - [0~5초 후킹 멘트]:
-                    - [5~45초 본론 메시지]:
-                    - [45~60초 결단 및 축복]:
-                    
-                    3. 🔥 강한 결단 선포형 대본
-                    - [0~5초 후킹 멘트]:
-                    - [5~45초 본론 메시지]:
-                    - [45~60초 결단 및 축복]:
+                    [60초 세로 쇼츠 대본 3종 작성]
+                    1. 🎬 감동 및 위로형 대본 (후킹, 본론, 결단)
+                    2. 💡 질문 및 호기심 자극형 대본 (후킹, 본론, 결단)
+                    3. 🔥 강한 결단 선포형 대본 (후킹, 본론, 결단)
                     """
                     res = get_ai_response(prompt, is_json=False)
                     if res:
@@ -1978,6 +1947,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption("위 버튼을 눌러 쇼츠 대본을 생성하세요.")
 
+        # 6. 세대별 가정예배지
         elif active_view == "🏡 세대별 가정예배지":
             age_group = st.selectbox("예배 대상 선택", ["👶 영유아용", "🧒 어린이용", "🧑 청소년용", "👨‍👩‍👧 청장년용"], key="sel_age_group")
             fam_txt = st.session_state.get(f"family_worship_{age_group}", "")
@@ -1987,23 +1957,19 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 with st.spinner(f"{age_group} 가정예배지 작성 중..."):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
-                    설교 요약: {st.session_state.full_sermon[:3000]}
+                    설교 전문: {st.session_state.full_sermon[:3000]}
+                    설교 제목: {st.session_state.sermon_title}
                     대상: {age_group}
                     
-                    [가정예배 순서지 ({age_group}): {st.session_state.sermon_title}]
-                    
+                    [가정예배 순서지 작성 ({age_group})]
                     1. 찬양 및 신앙고백
                     - [인도자 팁 / 가이드]: (인도자를 위한 찬양 선곡 및 시작 멘트 안내)
-                    
                     2. 함께 읽는 성경 말씀
                     - [인도자 팁 / 가이드]: (가족들이 교독할 때 주의할 포인트)
-                    
                     3. {age_group} 눈높이에 맞춘 3분 가족 메시지
-                    - [인도자 팁 / 가이드]: ({age_group} 자녀가 쉽게 이해할 수 있는 예화 전달 팁)
-                    
+                    - [인도자 팁 / 가이드]: (자녀가 쉽게 이해할 수 있는 예화 전달 팁)
                     4. 온 가족 나눔 질문 2가지
                     - [인도자 팁 / 가이드]: (자녀가 편안하게 대답할 수 있도록 격려하는 방법)
-                    
                     5. 가정을 축복하는 마무리 기도문
                     """
                     res = get_ai_response(prompt, is_json=False)
@@ -2025,6 +1991,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption(f"위 버튼을 눌러 {age_group} 맞춤 가정예배지를 생성하세요.")
 
+        # 7. 설교 점검 및 제안
         elif active_view == "🔍 설교 점검 및 제안":
             audit_txt = st.session_state.get("sermon_audit_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_설교점검및제안", audit_txt, "sermon_audit")
@@ -2036,8 +2003,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     설교 제목: {st.session_state.sermon_title}
                     설교 원고: {st.session_state.full_sermon[:4000]}
                     
-                    [설교 전문 피드백 리포트: {st.session_state.sermon_title}]
-                    
+                    [설교 전문 피드백 리포트 작성]
                     1. 📖 본문 주해의 정확성 및 성경 중심성 평가 (점수 및 상세 분석)
                     2. 🏗️ 논리적 대지 전개 및 설교 구조 분석
                     3. 💡 청중 공감 예화 및 삶의 적용 적절성
@@ -2062,6 +2028,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             else:
                 st.caption("위 버튼을 눌러 설교 점검 리포트를 생성하세요.")
 
+        # 8. 소그룹 리더가이드
         elif active_view == "📖 소그룹 리더가이드":
             ldr_txt = st.session_state.get("leader_guide_text", "")
             render_section_top_toolbar(f"{st.session_state.sermon_title}_소그룹리더가이드", ldr_txt, "ldr_guide")
@@ -2070,22 +2037,18 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 with st.spinner("소그룹 인도자 가이드 작성 중..."):
                     prompt = f"""
                     성경 본문: {st.session_state.sermon_scripture}
-                    설교 요약: {st.session_state.full_sermon[:3500]}
+                    설교 전문: {st.session_state.full_sermon[:3500]}
+                    설교 제목: {st.session_state.sermon_title}
                     
-                    [소그룹 리더(구역장/셀리더/순장) 심화 가이드: {st.session_state.sermon_title}]
-                    
+                    [소그룹 리더(구역장/셀리더/순장) 심화 가이드 작성]
                     1. 🎯 이번 주 모임의 핵심 목표 및 주제 방향
                     - [인도자 팁 / 가이드]: (리더가 마음에 품어야 할 중심 태도)
-                    
                     2. 📖 본문 배경 및 신학적 핵심 해설 (리더용 심화 자료)
                     - [인도자 팁 / 가이드]: (성도들이 질문하기 쉬운 신학적 난점 대비)
-                    
                     3. 💬 나눔 질문별 성도들의 예상 답변 및 리더 피드백 팁
                     - [인도자 팁 / 가이드]: (대화가 한 사람에게 쏠리지 않도록 조율하는 요령)
-                    
                     4. ⚠️ 모임 중 침묵 또는 돌발 상황 대처 요령
                     - [인도자 팁 / 가이드]: (침묵이 길어질 때 분위기를 환기시키는 질문 팁)
-                    
                     5. 🙏 소그룹을 위한 맞춤 중보기도 제목 3가지
                     """
                     res = get_ai_response(prompt, is_json=False)
@@ -2205,7 +2168,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
             )
 
         ai_t1, ai_t2 = st.columns([2, 1])
-        with ai_t1: ai_sermon_topic = st.text_input("설교 주제 / 강조 포인트 (선택)", value="고난 속에서도 흔들리지 않는 하나님의 영원한 사랑과 구원의 확신", key="sel_ai_topic")
+        with ai_t1: ai_sermon_topic = st.text_input("설교 주제 / 강조 포인트 (선택)", value="고난 속에서도 흔들리지 않는 하나님의 원대한 사랑과 구원의 확신", key="sel_ai_topic")
         with ai_t2: sermon_style = st.selectbox("설교 형태", ["3대지 본문중심 강해설교", "구속사적 복음설교", "원어 주해 중심 강해설교"], key="sel_ai_style")
 
         full_scripture_str = f"{sel_book} {sel_chap_verse}"
