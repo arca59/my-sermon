@@ -148,10 +148,11 @@ def classify_scripture(scripture_text: str):
             return "신약", b
     return "기타", "성경전체"
 
-# --- 설교 영구 보관소 파일 데이터베이스 엔진 ---
+# --- 무한대 영구 저장 설교 데이터베이스 엔진 ---
 SERMON_DB_PATH = "./outputs/sermons_db.json"
 
-def load_sermons_from_db():
+def get_db_sermons():
+    """디스크에서 전체 설교 목록을 안전하게 불러오기 (무한대 누적)"""
     os.makedirs("./outputs", exist_ok=True)
     if os.path.exists(SERMON_DB_PATH):
         try:
@@ -203,16 +204,42 @@ def load_sermons_from_db():
 우리가 절망 가운데 있을 때 기도로 나아가면 주님께서 우리의 부르짖음에 응답하십니다. 어떠한 상황에서도 소망을 주님께 두고 온전히 선포하십시오."""
         }
     ]
-    save_sermons_to_db(default_data)
+    save_db_sermons(default_data)
     return default_data
 
-def save_sermons_to_db(sermons_list):
+def save_db_sermons(sermons_list):
+    """디스크 파일에 영구 저장"""
     os.makedirs("./outputs", exist_ok=True)
     try:
         with open(SERMON_DB_PATH, "w", encoding="utf-8") as f:
             json.dump(sermons_list, f, ensure_ascii=False, indent=2)
     except Exception as e:
         st.error(f"서재 파일 저장 오류: {str(e)}")
+
+def add_sermon_to_db(new_sermon_dict):
+    """새 설교를 기존 목록에 덮어쓰지 않고 무한대로 추가 저장"""
+    current_list = get_db_sermons()
+    existing_ids = [int(s.get("id", 0)) for s in current_list if str(s.get("id", "")).isdigit()]
+    next_id = max(existing_ids or [0]) + 1
+    new_sermon_dict["id"] = next_id
+    
+    current_list.append(new_sermon_dict)
+    save_db_sermons(current_list)
+    st.session_state.sermon_library = current_list
+    return new_sermon_dict
+
+def update_sermon_in_db(sermon_id, updated_summary=None, updated_text=None):
+    """작업 중인 설교의 수정 사항을 디스크에 영구 반영"""
+    current_list = get_db_sermons()
+    for s in current_list:
+        if s.get("id") == sermon_id:
+            if updated_summary is not None:
+                s["summary"] = updated_summary
+            if updated_text is not None:
+                s["text"] = updated_text
+            break
+    save_db_sermons(current_list)
+    st.session_state.sermon_library = current_list
 
 # 빠른 초기 요약 생성기
 def generate_instant_fallback_summary(title, scripture, full_text):
@@ -244,6 +271,7 @@ def generate_instant_fallback_summary(title, scripture, full_text):
 
 # --- 모든 메뉴 완벽 동기화 및 캐시 초기화 핵심 함수 ---
 def load_sermon_to_workspace(sermon_item, idx=0):
+    st.session_state.current_sermon_id = sermon_item.get("id", 1)
     st.session_state.current_sermon_idx = idx
     st.session_state.sermon_title = sermon_item.get("title", "")
     st.session_state.sermon_scripture = sermon_item.get("scripture", "")
@@ -472,7 +500,7 @@ def wrap_korean_text(text: str, font, max_width: int, draw: PIL.ImageDraw.ImageD
             wrapped_lines.append(curr_line)
     return "\n".join(wrapped_lines)
 
-# --- 카드뉴스 PNG 이미지 고화질 합성 엔진 (자동 줄바꿈 완벽 적용) ---
+# --- 카드뉴스 PNG 이미지 고화질 합성 엔진 ---
 def generate_single_card_png(card_item, idx, scripture_str="", church_name=""):
     bg_url = CARD_BACKGROUNDS[idx % len(CARD_BACKGROUNDS)]
     img_b = fetch_image_bytes(bg_url)
@@ -1265,20 +1293,22 @@ def render_section_top_toolbar(title: str, content: str, state_key: str):
 
 # --- 8. 전역 세션 및 영구 서재 DB 초기화 ---
 if "sermon_library" not in st.session_state:
-    st.session_state.sermon_library = load_sermons_from_db()
+    st.session_state.sermon_library = get_db_sermons()
 
 if "current_sermon_idx" not in st.session_state:
     st.session_state.current_sermon_idx = 0
 
-current_s = st.session_state.sermon_library[st.session_state.current_sermon_idx]
+current_s = st.session_state.sermon_library[st.session_state.current_sermon_idx] if len(st.session_state.sermon_library) > 0 else {}
+if "current_sermon_id" not in st.session_state:
+    st.session_state.current_sermon_id = current_s.get("id", 1)
 if "full_sermon" not in st.session_state or not st.session_state.full_sermon:
-    st.session_state.full_sermon = current_s["text"]
+    st.session_state.full_sermon = current_s.get("text", "")
 if "sermon_summary_text" not in st.session_state or not st.session_state.sermon_summary_text:
     st.session_state.sermon_summary_text = current_s.get("summary", "")
 if "sermon_title" not in st.session_state:
-    st.session_state.sermon_title = current_s["title"]
+    st.session_state.sermon_title = current_s.get("title", "눈동자처럼 은혜 가운데")
 if "sermon_scripture" not in st.session_state:
-    st.session_state.sermon_scripture = current_s["scripture"]
+    st.session_state.sermon_scripture = current_s.get("scripture", "시편 17:8")
 if "preacher_name" not in st.session_state:
     st.session_state.preacher_name = "김세훈목사"
 if "dash_active_view" not in st.session_state:
@@ -1395,7 +1425,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
     with right_panel:
         active_view = st.session_state.dash_active_view
 
-        # 1. 설교 요약 (강해적 원리 완벽 적용)
+        # 1. 설교 요약 (강해적 3대지 원리 추출 및 실시간 DB 동기화)
         if active_view == "설교 요약":
             summary_val = st.session_state.get("sermon_summary_text", "")
             if not summary_val:
@@ -1433,9 +1463,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.session_state.sermon_summary_text = gen_sum
                         summary_val = gen_sum
                         
-                        if "sermon_library" in st.session_state and len(st.session_state.sermon_library) > st.session_state.current_sermon_idx:
-                            st.session_state.sermon_library[st.session_state.current_sermon_idx]["summary"] = gen_sum
-                            save_sermons_to_db(st.session_state.sermon_library)
+                        update_sermon_in_db(st.session_state.get("current_sermon_id", 1), updated_summary=gen_sum)
                         st.success("강해적 핵심 요약 생성이 완료되었습니다!")
                         st.rerun()
 
@@ -1445,14 +1473,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     st.session_state.sermon_summary_text = s_edit
                     st.session_state.edit_mode_sermon_sum = False
                     
-                    if "sermon_library" in st.session_state and len(st.session_state.sermon_library) > st.session_state.current_sermon_idx:
-                        st.session_state.sermon_library[st.session_state.current_sermon_idx]["summary"] = s_edit
-                        save_sermons_to_db(st.session_state.sermon_library)
-                        
-                    st.success("요약 내용이 저장 및 동기화되었습니다.")
+                    update_sermon_in_db(st.session_state.get("current_sermon_id", 1), updated_summary=s_edit)
+                    st.success("요약 내용이 저장 및 영구 DB에 동기화되었습니다.")
                     st.rerun()
             else:
-                # 서식 미화 렌더링
                 formatted_summary = summary_val
                 formatted_summary = re.sub(r'(\[인도자\s*팁.*?\])', r"<span class='leader-tip'>\1</span>", formatted_summary)
                 st.markdown(f"<div class='content-box'>{formatted_summary}</div>", unsafe_allow_html=True)
@@ -1885,7 +1909,6 @@ elif app_mode == "📤 새 설교 등록/원고작성":
             else:
                 testament, book = classify_scripture(t_scripture.strip())
                 new_entry = {
-                    "id": len(st.session_state.sermon_library) + 1,
                     "title": t_title.strip(),
                     "scripture": t_scripture.strip(),
                     "testament": testament,
@@ -1897,12 +1920,10 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                     "summary": "",
                     "text": t_content.strip()
                 }
-                st.session_state.sermon_library.append(new_entry)
-                save_sermons_to_db(st.session_state.sermon_library)
-                
-                load_sermon_to_workspace(new_entry, idx=len(st.session_state.sermon_library) - 1)
+                saved_sermon = add_sermon_to_db(new_entry)
+                load_sermon_to_workspace(saved_sermon, idx=len(st.session_state.sermon_library) - 1)
                 st.session_state.dash_active_view = "설교 요약"
-                st.success(f"'{t_title}' 설교가 등록되고 모든 메뉴가 동기화되었습니다!")
+                st.success(f"'{t_title}' 설교가 영구 서재에 추가 저장되었습니다! [📊 설교 대시보드]로 이동합니다.")
 
     with tab_file:
         st.markdown("#### 설교문 파일 업로드 (.docx, .pdf, .txt)")
@@ -1923,7 +1944,6 @@ elif app_mode == "📤 새 설교 등록/원고작성":
 
             testament, book = classify_scripture(f_scripture.strip())
             new_entry = {
-                "id": len(st.session_state.sermon_library) + 1,
                 "title": f_title,
                 "scripture": f_scripture,
                 "testament": testament,
@@ -1935,12 +1955,10 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 "summary": "",
                 "text": text
             }
-            st.session_state.sermon_library.append(new_entry)
-            save_sermons_to_db(st.session_state.sermon_library)
-
-            load_sermon_to_workspace(new_entry, idx=len(st.session_state.sermon_library) - 1)
+            saved_sermon = add_sermon_to_db(new_entry)
+            load_sermon_to_workspace(saved_sermon, idx=len(st.session_state.sermon_library) - 1)
             st.session_state.dash_active_view = "설교 요약"
-            st.success("파일 등록 및 서재 동기화가 완료되었습니다!")
+            st.success("파일 등록 및 서재 영구 추가가 완료되었습니다! [📊 설교 대시보드]로 이동합니다.")
 
     with tab_ai:
         st.markdown("#### 📖 성경 본문 선택 기반 정통 강해설교문 자동 생성")
@@ -1992,7 +2010,6 @@ elif app_mode == "📤 새 설교 등록/원고작성":
             if st.button("✅ 이 설교문을 내 서재와 대시보드에 최종 등록하기", type="primary", key="btn_save_ai_sermon"):
                 testament, book = classify_scripture(st.session_state.temp_ai_scrip)
                 new_entry = {
-                    "id": len(st.session_state.sermon_library) + 1,
                     "title": st.session_state.temp_ai_title,
                     "scripture": st.session_state.temp_ai_scrip,
                     "testament": testament,
@@ -2004,12 +2021,10 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                     "summary": "",
                     "text": st.session_state.temp_generated_sermon
                 }
-                st.session_state.sermon_library.append(new_entry)
-                save_sermons_to_db(st.session_state.sermon_library)
-
-                load_sermon_to_workspace(new_entry, idx=len(st.session_state.sermon_library) - 1)
+                saved_sermon = add_sermon_to_db(new_entry)
+                load_sermon_to_workspace(saved_sermon, idx=len(st.session_state.sermon_library) - 1)
                 st.session_state.dash_active_view = "설교 요약"
-                st.success("설교문이 영구 서재에 등록되고 플랫폼 전체가 동기화되었습니다!")
+                st.success("설교문이 영구 서재에 누적 등록되고 플랫폼 전체가 동기화되었습니다!")
 
 # ==============================================================================
 # 3. 🎙️ AI 보이스오버 스튜디오
@@ -2258,19 +2273,52 @@ elif app_mode == "📷 말씀카드 이미지":
         )
 
 # ==============================================================================
-# 6. 📚 설교 서재 (Sermon Library) - 영구 보관 및 다차원 정밀 필터링
+# 6. 📚 설교 서재 (Sermon Library) - 무한대 영구 보관 & 백업/복원 시스템
 # ==============================================================================
 elif app_mode == "📚 설교 서재 (Sermon Library)":
-    st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📚 설교 서재 (영구 기록보관소)</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 style='font-size: 28px; font-weight: 800;'>📚 설교 서재 (무한대 영구 기록보관소)</h1>", unsafe_allow_html=True)
     
-    sermons_db = load_sermons_from_db()
-    st.caption(f"총 {len(sermons_db)}편의 설교 원고가 영구 보관 중입니다.")
+    # 디스크 실시간 데이터 로드
+    sermons_db = get_db_sermons()
+    st.session_state.sermon_library = sermons_db
+    
+    # 상단 요약 배지 및 백업/복원 액션 바
+    top_c1, top_c2 = st.columns([1.5, 1.5])
+    with top_c1:
+        st.markdown(f"총 **{len(sermons_db):,}편**의 설교문이 영구 데이터베이스에 안전하게 보관되어 있습니다.")
+    with top_c2:
+        bk_c1, bk_c2 = st.columns(2)
+        with bk_c1:
+            json_backup_bytes = json.dumps(sermons_db, ensure_ascii=False, indent=2).encode('utf-8')
+            st.download_button(
+                "💾 서재 전체 백업 (.json)",
+                data=json_backup_bytes,
+                file_name=f"설교서재_전체백업_{datetime.now().strftime('%Y%m%d')}.json",
+                mime="application/json",
+                key="dl_sermons_backup_btn"
+            )
+        with bk_c2:
+            with st.popover("📂 백업 복원하기"):
+                restore_file = st.file_uploader("백업 JSON 파일 선택", type=["json"], key="up_restore_json_file")
+                if restore_file and st.button("✅ 서재에 복원 및 병합", key="btn_confirm_restore"):
+                    try:
+                        restored_data = json.load(restore_file)
+                        if isinstance(restored_data, list):
+                            save_db_sermons(restored_data)
+                            st.session_state.sermon_library = restored_data
+                            st.success(f"총 {len(restored_data)}편의 설교가 성공적으로 복원되었습니다!")
+                            st.rerun()
+                    except Exception as re_err:
+                        st.error(f"복원 실패: {str(re_err)}")
 
+    st.write("---")
+
+    # 다차원 검색 및 정밀 분류 필터
     st.markdown("#### 🔍 다차원 정밀 검색 및 분류 필터")
     f_c1, f_c2, f_c3, f_c4 = st.columns([1.5, 1.2, 1.5, 1.2])
     
     with f_c1:
-        search_kw = st.text_input("검색어 (제목/키워드)", placeholder="예: 신앙전수, 은혜, 고난...", key="lib_search_kw")
+        search_kw = st.text_input("검색어 (제목/키워드/본문)", placeholder="예: 눈동자, 은혜, 고난...", key="lib_search_kw")
     with f_c2:
         testament_filter = st.selectbox("구약/신약 구분", ["전체", "구약", "신약"], key="lib_testament_filter")
     with f_c3:
@@ -2310,7 +2358,7 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
     else:
         filtered_sermons.sort(key=lambda x: x.get("id", 0), reverse=True)
 
-    st.markdown(f"**검색 결과:** `{len(filtered_sermons)}편` 검색됨")
+    st.markdown(f"**검색 결과:** `{len(filtered_sermons):,}편` 검색됨")
 
     if not filtered_sermons:
         st.info("조건에 해당하는 설교문이 서재에 없습니다.")
@@ -2338,13 +2386,14 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
                 b_col1, b_col2 = st.columns([3, 1])
                 with b_col1:
                     if st.button("📖 이 설교를 대시보드로 불러와서 작업하기", key=f"lib_load_btn_{s_item.get('id')}_{item_i}"):
-                        load_sermon_to_workspace(s_item, idx=st.session_state.sermon_library.index(s_item) if s_item in st.session_state.sermon_library else 0)
+                        load_sermon_to_workspace(s_item, idx=sermons_db.index(s_item) if s_item in sermons_db else 0)
                         st.session_state.dash_active_view = "설교 요약"
                         st.success(f"'{s_item.get('title')}' 설교로 모든 플랫폼 메뉴가 완벽히 동기화되었습니다!")
                         st.rerun()
                 with b_col2:
                     if st.button("🗑️ 서재에서 삭제", key=f"lib_del_btn_{s_item.get('id')}_{item_i}"):
-                        st.session_state.sermon_library = [x for x in st.session_state.sermon_library if x.get('id') != s_item.get('id')]
-                        save_sermons_to_db(st.session_state.sermon_library)
-                        st.success("설교가 서재에서 삭제되었습니다.")
+                        updated_lib = [x for x in get_db_sermons() if x.get('id') != s_item.get('id')]
+                        save_db_sermons(updated_lib)
+                        st.session_state.sermon_library = updated_lib
+                        st.success("설교가 서재에서 안전하게 삭제되었습니다.")
                         st.rerun()
