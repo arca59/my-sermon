@@ -1140,7 +1140,7 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
         "prayer": prayer_text
     }
 
-# --- 고품격 PPTX 생성기: 2~9번 슬라이드는 밝은 크림 화이트 + 1번과 10번만 풍경 딤 이미지 배경 ---
+# --- 고품격 PPTX 생성기 (2~9번 화이트 배경 / 1,10번 딤 이미지 배경) ---
 def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: str, full_sermon: str = "") -> io.BytesIO:
     try:
         prs = Presentation()
@@ -1165,7 +1165,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         def set_pure_light_slide(slide):
             fill = slide.background.fill
             fill.solid()
-            fill.fore_color.rgb = RGBColor(248, 250, 252)  # Soft Crisp White
+            fill.fore_color.rgb = RGBColor(248, 250, 252)
 
         parsed = parse_sermon_content(title, scripture, summary_content, full_sermon)
         prop_text = parsed["prop"]
@@ -1173,7 +1173,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         app_text = parsed["app"]
         prayer_text = parsed["prayer"]
 
-        # [Slide 1: 표지 - 배경 이미지 + 어두운 딤 오버레이 + 앰버골드/화이트 폰트]
+        # [Slide 1: 표지]
         s1 = prs.slides.add_slide(blank_layout)
         set_image_dim_slide(s1, CARD_BACKGROUNDS[0])
         tb1 = s1.shapes.add_textbox(Inches(1.5), Inches(2.2), Inches(10.33), Inches(3.8))
@@ -1182,7 +1182,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p1.font.size, p1.font.bold = Pt(38), True
         p1.font.color.rgb, p1.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
 
-        # [Slide 2: 들어가며 & 핵심 명제 - 화이트 배경 + 딥 네이비 / 다크 차콜 폰트]
+        # [Slide 2: 들어가며]
         s2 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s2)
         tb2 = s2.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1191,14 +1191,14 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p2_head = tf2.paragraphs[0]
         p2_head.text = f"들어가며 · 핵심 메시지 ({scripture})"
         p2_head.font.size, p2_head.font.bold = Pt(32), True
-        p2_head.font.color.rgb = RGBColor(30, 58, 138)  # Deep Royal Blue
+        p2_head.font.color.rgb = RGBColor(30, 58, 138)
         
         p2_body = tf2.add_paragraph()
         p2_body.text = f"\n{prop_text}"
         p2_body.font.size = Pt(20)
-        p2_body.font.color.rgb = RGBColor(30, 41, 59)  # Dark Charcoal (선명함)
+        p2_body.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 3: 설교의 전체 흐름 - 화이트 배경 + 4단 목차 카드 레이아웃]
+        # [Slide 3: 설교의 전체 흐름]
         s3 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s3)
         tb3_h = s3.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(1.0))
@@ -1211,8 +1211,8 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             top_pos = Inches(2.2 + (card_i * 1.15))
             shape = s3.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.0), top_pos, Inches(11.33), Inches(0.95))
             shape.fill.solid()
-            shape.fill.fore_color.rgb = RGBColor(255, 255, 255)  # Pure White Card
-            shape.line.color.rgb = RGBColor(203, 213, 225)  # Subtle Border
+            shape.fill.fore_color.rgb = RGBColor(255, 255, 255)
+            shape.line.color.rgb = RGBColor(203, 213, 225)
             tf_card = shape.text_frame
             p_c = tf_card.paragraphs[0]
             first_line = points[card_i].split('\n')[0][:50]
@@ -1220,13 +1220,13 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
             p_c.font.size, p_c.font.bold = Pt(20), True
             p_c.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 4: 본문 핵심 성구 - 화이트 배경 + 블루 배지 카드]
+        # [Slide 4: 본문 핵심 성구]
         s4 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s4)
         
         shape_scrip = s4.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.0), Inches(1.2), Inches(11.33), Inches(5.0))
         shape_scrip.fill.solid()
-        shape_scrip.fill.fore_color.rgb = RGBColor(239, 246, 255)  # Soft Sky Blue
+        shape_scrip.fill.fore_color.rgb = RGBColor(239, 246, 255)
         shape_scrip.line.color.rgb = RGBColor(147, 197, 253)
         tf4 = shape_scrip.text_frame
         tf4.word_wrap = True
@@ -1240,7 +1240,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p4_b.font.size = Pt(20)
         p4_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 5: 제1대지 - 화이트 배경 + 선명한 다크 폰트]
+        # [Slide 5: 제1대지]
         s5 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s5)
         tb5 = s5.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1255,7 +1255,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p5_b.font.size = Pt(20)
         p5_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 6: 제2대지 - 화이트 배경 + 선명한 다크 폰트]
+        # [Slide 6: 제2대지]
         s6 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s6)
         tb6 = s6.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1270,7 +1270,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p6_b.font.size = Pt(20)
         p6_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 7: 제3대지 - 화이트 배경 + 선명한 다크 폰트]
+        # [Slide 7: 제3대지]
         s7 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s7)
         tb7 = s7.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1285,7 +1285,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p7_b.font.size = Pt(20)
         p7_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 8: 핵심 묵상/영적 원리 - 화이트 배경 + 선명한 다크 폰트]
+        # [Slide 8: 핵심 묵상/영적 원리]
         s8 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s8)
         tb8 = s8.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1300,7 +1300,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p8_b.font.size = Pt(20)
         p8_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 9: 삶의 적용 - 화이트 배경 + 3가지 실천 카드]
+        # [Slide 9: 삶의 적용]
         s9 = prs.slides.add_slide(blank_layout)
         set_pure_light_slide(s9)
         tb9 = s9.shapes.add_textbox(Inches(1.0), Inches(0.8), Inches(11.33), Inches(5.8))
@@ -1315,7 +1315,7 @@ def generate_sermon_structure_pptx(title: str, scripture: str, summary_content: 
         p9_b.font.size = Pt(19)
         p9_b.font.color.rgb = RGBColor(30, 41, 59)
 
-        # [Slide 10: 결단 및 마침 기도 - 배경 이미지 + 어두운 딤 오버레이 + 앰버골드/화이트 폰트]
+        # [Slide 10: 결단 및 마침 기도]
         s10 = prs.slides.add_slide(blank_layout)
         set_image_dim_slide(s10, CARD_BACKGROUNDS[0])
         tb10 = s10.shapes.add_textbox(Inches(1.2), Inches(1.2), Inches(10.93), Inches(5.2))
@@ -1575,9 +1575,9 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 prompt = f"""
                 성경 본문: {st.session_state.sermon_scripture}
                 설교 제목: {st.session_state.sermon_title}
-                설교 요약: {st.session_state.full_sermon[:1500]}
+                설교 원고: {st.session_state.full_sermon[:1500]}
                 
-                [참고 성구 및 예화 자료집: {st.session_state.sermon_title}]
+                [참고 성구 및 신학적 예화 자료집: {st.session_state.sermon_title}]
                 
                 1. 📖 본문 연관 핵심 참고 성구 3가지 및 설교적 연결점 (구절 전문 및 해설)
                 2. 💡 일상 및 현대적 공감 실화 예화 2가지 (스토리텔링)
@@ -1653,7 +1653,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
     with right_panel:
         active_view = st.session_state.dash_active_view
 
-        # 1. 설교 요약 (강해적 3대지 원리 추출 및 실시간 DB 동기화)
+        # 1. 설교 요약 (전문 강해 3대지 주해 요약 렌더링)
         if active_view == "설교 요약":
             summary_val = st.session_state.get("sermon_summary_text", "")
             if not summary_val or len(summary_val.strip()) < 50:
@@ -2038,10 +2038,10 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     
                     [설교 전문 피드백 리포트: {st.session_state.sermon_title}]
                     
-                    1. 본문 주해의 정확성 및 성경 중심성 평가 (점수 및 상세 분석)
-                    2. 논리적 대지 전개 및 설교 구조 분석
-                    3. 청중 공감 예화 및 삶의 적용 적절성
-                    4. 스피치 전달력 및 표현 개선 제안
+                    1. 📖 본문 주해의 정확성 및 성경 중심성 평가 (점수 및 상세 분석)
+                    2. 🏗️ 논리적 대지 전개 및 설교 구조 분석
+                    3. 💡 청중 공감 예화 및 삶의 적용 적절성
+                    4. 🎙️ 스피치 전달력 및 표현 개선 제안
                     5. 📊 종합 총평 및 3가지 핵심 권고사항
                     """
                     res = get_ai_response(prompt, is_json=False)
