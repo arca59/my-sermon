@@ -40,6 +40,8 @@ from datetime import datetime
 
 from docx import Document
 from docx.shared import Pt as DocxPt, RGBColor as DocxRGB
+from docx.oxml.ns import qn as docx_qn
+from docx.oxml import OxmlElement
 from pypdf import PdfReader
 from pptx import Presentation
 from pptx.util import Inches, Pt
@@ -245,6 +247,38 @@ st.markdown("""
         box-shadow:0 12px 30px rgba(2,6,23,.42);
     }
     hr{ border-color: var(--line) !important; }
+
+    /* ===== 안내·가이드 문구는 전부 파란 계열로 통일 ===== */
+    [data-testid="stCaptionContainer"], [data-testid="stCaptionContainer"] p{
+        color:#7dd3fc !important; font-weight:600;
+    }
+    [data-testid="stCaptionContainer"]{
+        border-left:3px solid rgba(56,189,248,.55);
+        background:rgba(56,189,248,.07);
+        padding:6px 12px; border-radius:0 10px 10px 0; margin:4px 0 8px 0;
+    }
+    /* st.info = 안내 박스 */
+    div[data-testid="stAlertContainer"]{
+        border-radius:14px !important; border:1px solid rgba(56,189,248,.35) !important;
+    }
+    /* 라디오/셀렉트 라벨 */
+    label[data-testid="stWidgetLabel"] p{ color:#c3cdf5 !important; font-weight:700; }
+
+    /* 탭 */
+    button[data-baseweb="tab"]{ font-weight:700 !important; }
+    div[data-baseweb="tab-highlight"]{
+        background: linear-gradient(90deg,#7c3aed,#0ea5e9) !important; height:3px !important;
+    }
+    /* 슬라이더 */
+    div[data-testid="stSlider"] [data-baseweb="slider"] div[role="slider"]{
+        background: linear-gradient(135deg,#7c3aed,#0ea5e9) !important;
+    }
+    /* 사이드바 메뉴 */
+    section[data-testid="stSidebar"] [role="radiogroup"] label:hover{
+        background: rgba(14,165,233,.14);
+    }
+    /* 카드 미리보기 이미지 */
+    [data-testid="stImage"] img{ border-radius:16px; box-shadow:0 14px 34px rgba(2,6,23,.55); }
 </style>
 """, unsafe_allow_html=True)
 
@@ -780,23 +814,205 @@ def build_sermon_context(text: str, max_chars: int = 9000) -> str:
     )
 
 
+def _get_secret(name: str, default: str = "") -> str:
+    """secrets.toml 이 아예 없는 환경에서도 죽지 않도록 감싼다."""
+    try:
+        v = st.secrets.get(name, default)
+        return str(v) if v is not None else default
+    except Exception:
+        return default
+
+
 # ==============================================================================
 # 영구 저장 설교 DB
 # ==============================================================================
 SERMON_DB_PATH = "./outputs/sermons_db.json"
 
+# ------------------------------------------------------------------------------
+# ★ 영구 보관 엔진 (Streamlit Cloud 대응)
+#
+#   Streamlit Cloud 의 디스크는 앱이 잠들거나 재배포될 때마다 초기화됩니다.
+#   그래서 로컬 파일에만 저장하면 다음 접속 때 설교가 사라집니다.
+#   → GitHub Gist(비공개)를 진짜 저장소로 쓰고, 로컬 파일은 캐시로만 씁니다.
+#      secrets 에 GITHUB_TOKEN 만 넣어두면 나머지는 앱이 알아서 합니다.
+# ------------------------------------------------------------------------------
+GIST_FILENAME = "my_sermon_studio_sermons.json"
+GIST_DESC = "MY 설교 AI 스튜디오 · 설교 서재 영구 보관"
 
-def get_db_sermons():
-    os.makedirs("./outputs", exist_ok=True)
-    if os.path.exists(SERMON_DB_PATH):
-        try:
+
+def _gh_token() -> str:
+    return (_get_secret("GITHUB_TOKEN", "") or _get_secret("GH_TOKEN", "")
+            or os.environ.get("GITHUB_TOKEN", "")).strip()
+
+
+def _gh_api(method: str, url: str, payload=None, timeout=20):
+    token = _gh_token()
+    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    req = urllib.request.Request(url, data=data, method=method, headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "Content-Type": "application/json",
+        "User-Agent": "my-sermon-studio",
+    })
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        body = r.read().decode("utf-8")
+    return json.loads(body) if body else {}
+
+
+def cloud_store_ready() -> bool:
+    return bool(_gh_token())
+
+
+def _gist_find_id():
+    """secrets 의 GIST_ID 를 우선 쓰고, 없으면 내 Gist 목록에서 파일명으로 찾는다."""
+    fixed = _get_secret("GIST_ID", "").strip()
+    if fixed:
+        return fixed
+    if st.session_state.get("_gist_id"):
+        return st.session_state["_gist_id"]
+    try:
+        for page in (1, 2, 3):
+            items = _gh_api("GET", f"https://api.github.com/gists?per_page=100&page={page}")
+            if not items:
+                break
+            for g in items:
+                if GIST_FILENAME in (g.get("files") or {}):
+                    st.session_state["_gist_id"] = g["id"]
+                    return g["id"]
+            if len(items) < 100:
+                break
+    except Exception as e:
+        st.session_state["_cloud_error"] = str(e)[:200]
+    return None
+
+
+def cloud_load():
+    """Gist 에서 설교 목록을 읽어온다. 실패하면 None."""
+    if not cloud_store_ready():
+        return None
+    gid = _gist_find_id()
+    if not gid:
+        return []            # 토큰은 있는데 아직 저장소가 없음 → 빈 목록
+    try:
+        g = _gh_api("GET", f"https://api.github.com/gists/{gid}")
+        f = (g.get("files") or {}).get(GIST_FILENAME)
+        if not f:
+            return []
+        if f.get("truncated") and f.get("raw_url"):
+            raw = fetch_url_text(f["raw_url"])
+        else:
+            raw = f.get("content", "")
+        data = json.loads(raw) if raw else []
+        return data if isinstance(data, list) else []
+    except Exception as e:
+        st.session_state["_cloud_error"] = str(e)[:200]
+        return None
+
+
+def cloud_save(sermons_list) -> bool:
+    if not cloud_store_ready():
+        return False
+    content = json.dumps(sermons_list, ensure_ascii=False, indent=2)
+    payload = {"files": {GIST_FILENAME: {"content": content}}}
+    gid = _gist_find_id()
+    try:
+        if gid:
+            _gh_api("PATCH", f"https://api.github.com/gists/{gid}", payload)
+        else:
+            payload["description"] = GIST_DESC
+            payload["public"] = False
+            g = _gh_api("POST", "https://api.github.com/gists", payload)
+            st.session_state["_gist_id"] = g.get("id")
+        st.session_state["_cloud_error"] = ""
+        return True
+    except Exception as e:
+        st.session_state["_cloud_error"] = str(e)[:200]
+        return False
+
+
+def fetch_url_text(url: str) -> str:
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "my-sermon-studio"})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.read().decode("utf-8")
+    except Exception:
+        return ""
+
+
+def _read_local_db():
+    try:
+        if os.path.exists(SERMON_DB_PATH):
             with open(SERMON_DB_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
-                if isinstance(data, list) and len(data) > 0:
+                if isinstance(data, list):
                     return data
-        except Exception:
-            pass
-    default_data = [{
+    except Exception:
+        pass
+    return []
+
+
+def _write_local_db(sermons_list):
+    try:
+        os.makedirs("./outputs", exist_ok=True)
+        with open(SERMON_DB_PATH, "w", encoding="utf-8") as f:
+            json.dump(sermons_list, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+def _sig(s: dict) -> str:
+    return f"{s.get('title','')}|{s.get('scripture','')}|{len(s.get('text',''))}"
+
+
+def merge_sermons(a, b):
+    """두 목록을 합치되 같은 설교는 한 번만. (사라짐 방지용 안전 병합)"""
+    out, seen = [], set()
+    for lst in (a or [], b or []):
+        for s in lst:
+            k = _sig(s)
+            if k in seen:
+                continue
+            seen.add(k)
+            out.append(dict(s))
+    for i, s in enumerate(out, start=1):
+        s["id"] = i
+    return out
+
+
+def get_db_sermons(force_reload: bool = False):
+    """
+    세션 안에서는 한 번만 원격을 읽고 이후엔 캐시를 쓴다.
+    (매 클릭마다 GitHub 를 부르면 느려지므로)
+    """
+    if not force_reload and st.session_state.get("_db_loaded") and \
+            isinstance(st.session_state.get("sermon_library"), list):
+        return st.session_state.sermon_library
+
+    local = _read_local_db()
+    remote = cloud_load()           # None = 클라우드 미설정/실패
+
+    if remote is None:
+        data = local
+    else:
+        # 클라우드가 진짜 저장소. 다만 로컬에만 있는 설교도 절대 버리지 않는다.
+        data = merge_sermons(remote, local)
+        if len(data) != len(remote):
+            cloud_save(data)
+
+    if not data:
+        data = _default_sermons()
+        if remote is not None:
+            cloud_save(data)
+
+    _write_local_db(data)
+    st.session_state.sermon_library = data
+    st.session_state._db_loaded = True
+    return data
+
+
+def _default_sermons():
+    return [{
         "id": 1,
         "title": "예배와 선교",
         "scripture": "이사야 59:21",
@@ -813,17 +1029,18 @@ def get_db_sermons():
 
 우리가 말씀과 성령으로 충만하여 대대손손 복음의 유산을 전수하고 땅끝까지 증인 되는 삶을 살아갑시다."""
     }]
-    save_db_sermons(default_data)
-    return default_data
 
 
 def save_db_sermons(sermons_list):
-    os.makedirs("./outputs", exist_ok=True)
-    try:
-        with open(SERMON_DB_PATH, "w", encoding="utf-8") as f:
-            json.dump(sermons_list, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        st.error(f"서재 파일 저장 오류: {str(e)}")
+    """로컬 캐시 + 클라우드(Gist) 양쪽에 저장한다."""
+    _write_local_db(sermons_list)
+    st.session_state.sermon_library = sermons_list
+    st.session_state._db_loaded = True
+    if cloud_store_ready():
+        if not cloud_save(sermons_list):
+            st.warning("⚠️ 클라우드 저장에 실패했습니다. "
+                       f"({st.session_state.get('_cloud_error', '')}) "
+                       "서재 화면의 [💾 전체 백업] 으로 파일을 꼭 내려받아 두세요.")
 
 
 def add_sermon_to_db(new_sermon_dict):
@@ -897,15 +1114,6 @@ def load_sermon_to_workspace(sermon_item, idx=0):
 # ==============================================================================
 # 보안 접속
 # ==============================================================================
-def _get_secret(name: str, default: str = "") -> str:
-    """secrets.toml 이 아예 없는 환경에서도 죽지 않도록 감싼다."""
-    try:
-        v = st.secrets.get(name, default)
-        return str(v) if v is not None else default
-    except Exception:
-        return default
-
-
 USER_PIN = _get_secret("APP_PIN", "7777") or "7777"
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -1770,19 +1978,152 @@ def generate_cardnews_zip_bytes(cards_json: str, scripture_str: str, church_name
 
 
 # ==============================================================================
-# 문서 내보내기 (전부 캐싱 — 매 rerun 재생성 방지)
+# 문서 내보내기 — 워드 / PDF / PPT / TXT 모두 '색이 있는' 문서로
+#   · 인도자 가이드 = 파란 박스 + 파란 글씨
+#   · 섹션 제목    = 보라 배경 강조
+#   · 번호 항목    = 번호만 강조색
+#   · 원고 근거    = 인디고 인용 블록
 # ==============================================================================
+DOC_COLORS = {
+    "title":  (76, 29, 149),      # 보라 (문서 제목)
+    "head":   (91, 33, 182),      # 섹션 제목
+    "headbg": "EDE9FE",
+    "leader": (7, 89, 133),       # 인도자 가이드 글씨(진한 파랑)
+    "leaderlbl": (2, 132, 199),   # 인도자 가이드 라벨
+    "leaderbg": "E0F2FE",         # 인도자 가이드 배경(하늘)
+    "num":    (219, 39, 119),     # 번호 배지색
+    "quote":  (67, 56, 202),      # 원고 근거
+    "quotebg": "EEF2FF",
+    "body":   (30, 41, 59),
+    "meta":   (100, 116, 139),
+}
+
+# 구조 인식용 정규식 (렌더링·내보내기 공용)
+LEADER_RE = re.compile(r'^\s*[-•]?\s*\[?\s*인도자\s*(팁|가이드)[^\]\n]*\]?\s*[:：]?\s*(.*)$')
+SEC_HEAD_RE = re.compile(
+    r'^\s*(?:[0-9]{1,2}\s*[\.\)]\s*)?[🎯📌💡🙏📖💬⚠️🏡🎵📝🔎✨🔥📅🧭🔑💎🗣️🏷️✍️📊🎬🏗️🎙️🌍🏛️❓]'
+)
+LIST_ITEM_RE = re.compile(r'^(\s*)[-•]\s*(\d{1,2})\s*[\.\)]\s*(.*)$')
+TOP_NUM_RE = re.compile(r'^(\d{1,2})\s*[\.\)]\s*(.+)$')
+QUOTE_RE = re.compile(r'^\s*▸\s*(.*)$')
+
+
+def parse_doc_blocks(content: str):
+    """텍스트를 (종류, 내용) 블록으로 분해한다. 모든 내보내기가 이 결과를 공유한다."""
+    blocks = []
+    for raw in (content or "").split("\n"):
+        line = raw.rstrip()
+        if not line.strip():
+            blocks.append(("blank", ""))
+            continue
+        m = LEADER_RE.match(line)
+        if m:
+            blocks.append(("leader", m.group(2).strip()))
+            continue
+        m = QUOTE_RE.match(line)
+        if m:
+            blocks.append(("quote", m.group(1).strip()))
+            continue
+        m = LIST_ITEM_RE.match(line)
+        if m:
+            blocks.append(("item", (m.group(2), m.group(3).strip())))
+            continue
+        if SEC_HEAD_RE.match(line) or (TOP_NUM_RE.match(line) and len(line.strip()) < 60):
+            blocks.append(("head", line.strip()))
+            continue
+        blocks.append(("plain", line.strip()))
+    return blocks
+
+
+# ---------------------------- WORD ----------------------------
+def _docx_shade(par, hex_fill):
+    try:
+        pPr = par._p.get_or_add_pPr()
+        shd = OxmlElement('w:shd')
+        shd.set(docx_qn('w:val'), 'clear')
+        shd.set(docx_qn('w:color'), 'auto')
+        shd.set(docx_qn('w:fill'), hex_fill)
+        pPr.append(shd)
+    except Exception:
+        pass
+
+
+def _docx_left_border(par, hex_color, sz=24):
+    try:
+        pPr = par._p.get_or_add_pPr()
+        pbdr = OxmlElement('w:pBdr')
+        left = OxmlElement('w:left')
+        left.set(docx_qn('w:val'), 'single')
+        left.set(docx_qn('w:sz'), str(sz))
+        left.set(docx_qn('w:space'), '8')
+        left.set(docx_qn('w:color'), hex_color)
+        pbdr.append(left)
+        pPr.append(pbdr)
+    except Exception:
+        pass
+
+
 @st.cache_data(show_spinner=False, max_entries=48)
 def create_docx_bytes(title: str, content: str) -> bytes:
     try:
         doc = Document()
+
         tp = doc.add_paragraph()
-        run = tp.add_run(title)
-        run.font.size, run.font.bold = DocxPt(18), True
-        run.font.color.rgb = DocxRGB(30, 58, 138)
-        doc.add_paragraph(f"작성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오\n")
-        for line in (content or "").split("\n"):
-            doc.add_paragraph(line.strip())
+        r = tp.add_run(title)
+        r.font.size, r.font.bold = DocxPt(20), True
+        r.font.color.rgb = DocxRGB(*DOC_COLORS["title"])
+        _docx_shade(tp, "F5F3FF")
+        _docx_left_border(tp, "7C3AED", 36)
+
+        mp = doc.add_paragraph()
+        mr = mp.add_run(f"작성일 {datetime.now().strftime('%Y-%m-%d')}  ·  MY 설교 AI 스튜디오")
+        mr.font.size = DocxPt(8.5)
+        mr.font.color.rgb = DocxRGB(*DOC_COLORS["meta"])
+
+        for kind, val in parse_doc_blocks(content):
+            if kind == "blank":
+                doc.add_paragraph()
+            elif kind == "head":
+                p = doc.add_paragraph()
+                run = p.add_run(val)
+                run.font.size, run.font.bold = DocxPt(13), True
+                run.font.color.rgb = DocxRGB(*DOC_COLORS["head"])
+                _docx_shade(p, DOC_COLORS["headbg"])
+                _docx_left_border(p, "7C3AED", 28)
+            elif kind == "leader":
+                p = doc.add_paragraph()
+                lbl = p.add_run("💡 인도자 가이드   ")
+                lbl.font.size, lbl.font.bold = DocxPt(10), True
+                lbl.font.color.rgb = DocxRGB(*DOC_COLORS["leaderlbl"])
+                body = p.add_run(val)
+                body.font.size, body.font.bold = DocxPt(10.5), True
+                body.font.color.rgb = DocxRGB(*DOC_COLORS["leader"])
+                _docx_shade(p, DOC_COLORS["leaderbg"])
+                _docx_left_border(p, "0284C7", 36)
+            elif kind == "quote":
+                p = doc.add_paragraph()
+                p.paragraph_format.left_indent = DocxPt(16)
+                run = p.add_run("▸ " + val)
+                run.font.size, run.font.italic = DocxPt(9.5), True
+                run.font.color.rgb = DocxRGB(*DOC_COLORS["quote"])
+                _docx_shade(p, DOC_COLORS["quotebg"])
+                _docx_left_border(p, "6366F1", 20)
+            elif kind == "item":
+                num, text = val
+                p = doc.add_paragraph()
+                p.paragraph_format.left_indent = DocxPt(14)
+                nr = p.add_run(f"{num}.  ")
+                nr.font.size, nr.font.bold = DocxPt(11), True
+                nr.font.color.rgb = DocxRGB(*DOC_COLORS["num"])
+                tr = p.add_run(text)
+                tr.font.size = DocxPt(10.5)
+                tr.font.color.rgb = DocxRGB(*DOC_COLORS["body"])
+            else:
+                p = doc.add_paragraph()
+                run = p.add_run(val)
+                run.font.size = DocxPt(10.5)
+                run.font.color.rgb = DocxRGB(*DOC_COLORS["body"])
+
         bio = io.BytesIO()
         doc.save(bio)
         return bio.getvalue()
@@ -1790,81 +2131,192 @@ def create_docx_bytes(title: str, content: str) -> bytes:
         return (content or "").encode("utf-8")
 
 
+# ---------------------------- PDF ----------------------------
 @st.cache_data(show_spinner=False, max_entries=48)
 def create_pdf_bytes(title: str, content: str) -> bytes:
     try:
-        font_to_use = init_korean_font()
+        f = init_korean_font()
         bio = io.BytesIO()
-        doc = SimpleDocTemplate(bio, pagesize=letter, rightMargin=36, leftMargin=36,
-                                topMargin=36, bottomMargin=36)
-        t_style = ParagraphStyle("K_Title", fontName=font_to_use, fontSize=15, leading=20,
-                                 textColor="#1e3a8a", spaceAfter=8)
-        m_style = ParagraphStyle("K_Meta", fontName=font_to_use, fontSize=8, leading=12,
-                                 textColor="#64748b", spaceAfter=12)
-        b_style = ParagraphStyle("K_Body", fontName=font_to_use, fontSize=9.5, leading=15,
-                                 textColor="#1e293b", spaceAfter=5)
-        story = [Paragraph(f"<b>{title}</b>", t_style),
-                 Paragraph(f"생성일: {datetime.now().strftime('%Y-%m-%d')} | MY 설교 AI 스튜디오", m_style),
-                 Spacer(1, 8)]
-        for line in (content or "").split("\n"):
-            clean = line.strip().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            if clean:
-                clean = re.sub(r'\*\*(.*?)\*\*', r'<b>\1</b>', clean)
-                story.append(Paragraph(clean, b_style))
+        doc = SimpleDocTemplate(bio, pagesize=letter, rightMargin=38, leftMargin=38,
+                                topMargin=38, bottomMargin=38)
+
+        S = dict(
+            title=ParagraphStyle("T", fontName=f, fontSize=16, leading=22, textColor="#4C1D95",
+                                 backColor="#F5F3FF", borderColor="#7C3AED", borderWidth=0,
+                                 leftIndent=8, borderPadding=8, spaceAfter=4),
+            meta=ParagraphStyle("M", fontName=f, fontSize=8, leading=12, textColor="#64748B",
+                                spaceAfter=12),
+            head=ParagraphStyle("H", fontName=f, fontSize=12.5, leading=19, textColor="#5B21B6",
+                                backColor="#EDE9FE", borderPadding=(6, 8, 6, 10),
+                                spaceBefore=10, spaceAfter=6),
+            leader=ParagraphStyle("L", fontName=f, fontSize=10, leading=16, textColor="#075985",
+                                  backColor="#E0F2FE", borderColor="#0284C7", borderWidth=1,
+                                  borderPadding=(7, 9, 7, 11), leftIndent=2,
+                                  spaceBefore=4, spaceAfter=6),
+            quote=ParagraphStyle("Q", fontName=f, fontSize=9, leading=14, textColor="#4338CA",
+                                 backColor="#EEF2FF", borderPadding=(5, 7, 5, 9),
+                                 leftIndent=14, spaceAfter=4),
+            item=ParagraphStyle("I", fontName=f, fontSize=10, leading=16, textColor="#1E293B",
+                                leftIndent=16, spaceAfter=3),
+            body=ParagraphStyle("B", fontName=f, fontSize=10, leading=16, textColor="#1E293B",
+                                spaceAfter=4),
+        )
+
+        def esc(t):
+            return (t or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+        story = [Paragraph(f"<b>{esc(title)}</b>", S["title"]),
+                 Paragraph(f"작성일 {datetime.now().strftime('%Y-%m-%d')} · MY 설교 AI 스튜디오", S["meta"])]
+
+        for kind, val in parse_doc_blocks(content):
+            if kind == "blank":
+                story.append(Spacer(1, 5))
+            elif kind == "head":
+                story.append(Paragraph(f"<b>{esc(val)}</b>", S["head"]))
+            elif kind == "leader":
+                story.append(Paragraph(
+                    f'<font color="#0284C7"><b>💡 인도자 가이드</b></font><br/>'
+                    f'<b>{esc(val)}</b>', S["leader"]))
+            elif kind == "quote":
+                story.append(Paragraph(f"<i>▸ {esc(val)}</i>", S["quote"]))
+            elif kind == "item":
+                num, text = val
+                story.append(Paragraph(
+                    f'<font color="#DB2777"><b>{esc(num)}.</b></font>&nbsp;&nbsp;{esc(text)}',
+                    S["item"]))
             else:
-                story.append(Spacer(1, 4))
+                story.append(Paragraph(esc(val), S["body"]))
+
         doc.build(story)
         return bio.getvalue()
     except Exception:
         return (content or "").encode("utf-8")
 
 
+# ---------------------------- TXT ----------------------------
 def create_txt_bytes(title: str, content: str) -> bytes:
-    return f"[{title}]\n작성일: {datetime.now().strftime('%Y-%m-%d')}\n\n{content}".encode("utf-8")
+    """색은 못 넣지만, 기호로 인도자 가이드가 한눈에 구분되게 한다."""
+    lines = ["═" * 58, f"  {title}",
+             f"  작성일 {datetime.now().strftime('%Y-%m-%d')} · MY 설교 AI 스튜디오",
+             "═" * 58, ""]
+    circled = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫"
+    for kind, val in parse_doc_blocks(content):
+        if kind == "blank":
+            lines.append("")
+        elif kind == "head":
+            lines += ["", "━━━ " + val + " " + "━" * max(3, 46 - len(val)), ""]
+        elif kind == "leader":
+            lines += ["┃ 💡 인도자 가이드", f"┃ {val}", "┗" + "━" * 40]
+        elif kind == "quote":
+            lines.append(f"    ▸ {val}")
+        elif kind == "item":
+            num, text = val
+            try:
+                mark = circled[int(num) - 1]
+            except Exception:
+                mark = f"{num}."
+            lines.append(f"   {mark} {text}")
+        else:
+            lines.append(val)
+    return "\n".join(lines).encode("utf-8")
 
 
+# ---------------------------- PPT (문서형) ----------------------------
 @st.cache_data(show_spinner=False, max_entries=32)
 def create_document_pptx_bytes(title: str, content: str) -> bytes:
-    """일반 문서형 PPT (QT/나눔지/가이드 등)"""
+    """일반 문서형 PPT (QT/나눔지/가이드 등) — 색상 구분 포함"""
     try:
         prs = Presentation()
         prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
         blank = prs.slide_layouts[6]
 
+        # 표지
         s1 = prs.slides.add_slide(blank)
         s1.background.fill.solid()
-        s1.background.fill.fore_color.rgb = RGBColor(15, 23, 42)
-        tb = s1.shapes.add_textbox(Inches(1.5), Inches(2.8), Inches(10.33), Inches(2.0))
-        p = tb.text_frame.paragraphs[0]
-        p.text = title
-        p.font.size, p.font.bold = Pt(36), True
-        p.font.color.rgb, p.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
+        s1.background.fill.fore_color.rgb = RGBColor(23, 16, 60)
+        bar = s1.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.2), Inches(2.6),
+                                  Inches(10.9), Inches(2.3))
+        bar.fill.solid()
+        bar.fill.fore_color.rgb = RGBColor(76, 29, 149)
+        set_shape_fill_alpha(bar, 0.55)
+        bar.line.color.rgb = RGBColor(167, 139, 250)
+        bar.shadow.inherit = False
+        tp = bar.text_frame.paragraphs[0]
+        tp.text = title
+        tp.font.size, tp.font.bold = Pt(34), True
+        tp.font.color.rgb, tp.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
 
-        chunks, cur = [], ""
-        for para in [x.strip() for x in (content or "").split("\n") if x.strip()]:
-            if len(cur) + len(para) > 300 and cur:
-                chunks.append(cur)
-                cur = para + "\n"
-            else:
-                cur += para + "\n"
+        blocks = [b for b in parse_doc_blocks(content) if b[0] != "blank"]
+
+        # 실제 줄바꿈 수를 예측해 슬라이드를 채운다 (여백이 크게 남지 않도록)
+        CPL = 44          # 한 줄에 들어가는 대략의 글자 수
+        BUDGET = 15       # 슬라이드당 허용 줄 수
+
+        def weight_of(kind, val):
+            txt = val[1] if kind == "item" else (val if isinstance(val, str) else str(val))
+            lines = max(1, (len(txt) // CPL) + 1)
+            if kind in ("head", "leader"):
+                lines += 1          # 위아래 여백 몫
+            return lines
+
+        pages, cur, used = [], [], 0
+        for kind, val in blocks:
+            w = weight_of(kind, val)
+            if used + w > BUDGET and cur:
+                pages.append(cur)
+                cur, used = [], 0
+            cur.append((kind, val))
+            used += w
         if cur:
-            chunks.append(cur)
+            pages.append(cur)
 
-        for ch in chunks:
+        for pg in pages:
             slide = prs.slides.add_slide(blank)
             slide.background.fill.solid()
-            slide.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
-            htx = slide.shapes.add_textbox(Inches(1.0), Inches(0.5), Inches(11.33), Inches(0.8))
+            slide.background.fill.fore_color.rgb = RGBColor(250, 250, 255)
+
+            top_bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(0.16))
+            top_bar.fill.solid()
+            top_bar.fill.fore_color.rgb = RGBColor(124, 58, 237)
+            top_bar.line.fill.background()
+            top_bar.shadow.inherit = False
+
+            htx = slide.shapes.add_textbox(Inches(0.8), Inches(0.36), Inches(11.8), Inches(0.7))
             hp = htx.text_frame.paragraphs[0]
             hp.text = title
-            hp.font.size, hp.font.bold = Pt(20), True
-            hp.font.color.rgb = RGBColor(30, 58, 138)
-            btx = slide.shapes.add_textbox(Inches(1.0), Inches(1.5), Inches(11.33), Inches(5.4))
-            btx.text_frame.word_wrap = True
-            bp = btx.text_frame.paragraphs[0]
-            bp.text = ch.strip()
-            bp.font.size = Pt(18)
-            bp.font.color.rgb = RGBColor(30, 41, 59)
+            hp.font.size, hp.font.bold = Pt(18), True
+            hp.font.color.rgb = RGBColor(91, 33, 182)
+
+            btx = slide.shapes.add_textbox(Inches(0.8), Inches(1.25), Inches(11.8), Inches(5.9))
+            tf = btx.text_frame
+            tf.word_wrap = True
+            first = True
+            for kind, val in pg:
+                p = tf.paragraphs[0] if first else tf.add_paragraph()
+                first = False
+                if kind == "head":
+                    p.text = "▌ " + val
+                    p.font.size, p.font.bold = Pt(19), True
+                    p.font.color.rgb = RGBColor(91, 33, 182)
+                    p.space_before = Pt(10)
+                elif kind == "leader":
+                    p.text = "💡 인도자 가이드 — " + val
+                    p.font.size, p.font.bold = Pt(15), True
+                    p.font.color.rgb = RGBColor(2, 132, 199)
+                    p.space_before = Pt(6)
+                elif kind == "quote":
+                    p.text = "   ▸ " + val
+                    p.font.size, p.font.italic = Pt(13), True
+                    p.font.color.rgb = RGBColor(67, 56, 202)
+                elif kind == "item":
+                    num, text = val
+                    p.text = f"   {num}. {text}"
+                    p.font.size = Pt(15)
+                    p.font.color.rgb = RGBColor(30, 41, 59)
+                else:
+                    p.text = val
+                    p.font.size = Pt(15)
+                    p.font.color.rgb = RGBColor(30, 41, 59)
 
         bio = io.BytesIO()
         prs.save(bio)
@@ -1972,13 +2424,35 @@ def generate_sermon_structure_pptx_bytes(title: str, scripture: str, summary_con
             tf = tb.text_frame
             tf.word_wrap = True
             h = tf.paragraphs[0]
-            h.text = f"{idx_label} {heading}".strip()
-            h.font.size, h.font.bold = Pt(30), True
-            h.font.color.rgb = RGBColor(30, 58, 138)
-            b = tf.add_paragraph()
-            b.text = "\n" + (body or "")
-            b.font.size = Pt(19)
-            b.font.color.rgb = RGBColor(30, 41, 59)
+            h.text = f"▌ {idx_label} {heading}".strip()
+            h.font.size, h.font.bold = Pt(29), True
+            h.font.color.rgb = RGBColor(91, 33, 182)
+
+            for kind, val in parse_doc_blocks(body or ""):
+                if kind == "blank":
+                    continue
+                bp = tf.add_paragraph()
+                if kind == "leader":
+                    bp.text = "💡 인도자 가이드 — " + val
+                    bp.font.size, bp.font.bold = Pt(16), True
+                    bp.font.color.rgb = RGBColor(2, 132, 199)
+                elif kind == "quote":
+                    bp.text = "   ▸ " + val
+                    bp.font.size, bp.font.italic = Pt(15), True
+                    bp.font.color.rgb = RGBColor(67, 56, 202)
+                elif kind == "head":
+                    bp.text = val
+                    bp.font.size, bp.font.bold = Pt(19), True
+                    bp.font.color.rgb = RGBColor(91, 33, 182)
+                elif kind == "item":
+                    num, text = val
+                    bp.text = f"   {num}. {text}"
+                    bp.font.size = Pt(17)
+                    bp.font.color.rgb = RGBColor(30, 41, 59)
+                else:
+                    bp.text = val
+                    bp.font.size = Pt(18)
+                    bp.font.color.rgb = RGBColor(30, 41, 59)
             return s
 
         p = parse_sermon_content(title, scripture, summary_content, full_sermon)
@@ -2335,14 +2809,6 @@ def show_ai_status():
 # ------------------------------------------------------------------------------
 # 결과물 후처리 : 섹션별 번호 재시작 + 인도자 가이드 블록 강조
 # ------------------------------------------------------------------------------
-LEADER_RE = re.compile(r'^\s*[-•]?\s*\[?\s*인도자\s*(팁|가이드)[^\]\n]*\]?\s*[:：]?\s*(.*)$')
-SEC_HEAD_RE = re.compile(
-    r'^\s*(?:[0-9]{1,2}\s*[\.\)]\s*)?[🎯📌💡🙏📖💬⚠️🏡🎵📝🔎✨🔥📅🧭🔑💎🗣️🏷️✍️📊🎬🏗️🎙️]'
-)
-LIST_ITEM_RE = re.compile(r'^(\s*)[-•]\s*(\d{1,2})\s*[\.\)]\s*(.*)$')
-TOP_NUM_RE = re.compile(r'^(\d{1,2})\s*[\.\)]\s*(.+)$')
-
-
 def fix_list_numbering(text: str) -> str:
     """
     번호가 문서 전체에 걸쳐 이어지는 문제(말씀나눔 1,2 → 기도제목 3,4)를 고친다.
@@ -2472,6 +2938,40 @@ with st.sidebar.expander("⚙️ AI 연결 설정", expanded=not bool(get_resolv
                     st.error(f"연결 실패: {e}")
     else:
         st.markdown("<span class='badge-bad'>키 없음 · AI 기능 제한</span>", unsafe_allow_html=True)
+
+with st.sidebar.expander("🗄️ 설교 서재 저장소", expanded=not cloud_store_ready()):
+    if cloud_store_ready():
+        gid = _gist_find_id()
+        if gid:
+            st.markdown("<span class='badge-ok'>영구 보관 작동 중</span>", unsafe_allow_html=True)
+            st.caption(f"GitHub 비공개 Gist에 저장됩니다.\n\n보관함 ID: `{gid[:10]}…`")
+            st.link_button("🔗 보관함 열어보기", f"https://gist.github.com/{gid}")
+        else:
+            st.markdown("<span class='badge-ok'>토큰 확인됨</span>", unsafe_allow_html=True)
+            st.caption("첫 설교를 등록하면 비공개 보관함이 자동으로 만들어집니다.")
+        if st.session_state.get("_cloud_error"):
+            st.error(f"클라우드 오류: {st.session_state['_cloud_error']}")
+        if st.button("🔄 보관함에서 다시 불러오기", key="btn_cloud_reload"):
+            get_db_sermons(force_reload=True)
+            st.success("보관함과 동기화했습니다.")
+            st.rerun()
+    else:
+        st.markdown("<span class='badge-bad'>임시 저장 · 사라질 수 있음</span>", unsafe_allow_html=True)
+        st.error(
+            "지금은 설교가 **서버 임시 폴더**에만 저장됩니다.\n\n"
+            "Streamlit Cloud는 앱이 잠들거나 재배포될 때 이 폴더를 지웁니다. "
+            "그래서 다음 접속 때 설교가 사라진 것입니다.\n\n"
+            "**영구 보관 켜는 법 (5분)**\n"
+            "1. github.com → 오른쪽 위 프로필 → Settings\n"
+            "2. 맨 아래 Developer settings → Personal access tokens → **Tokens (classic)**\n"
+            "3. Generate new token (classic) → Note에 `sermon`, Expiration은 **No expiration**\n"
+            "4. 체크박스 중 **gist** 하나만 체크 → Generate token\n"
+            "5. 나온 긴 문자열(ghp_… )을 복사\n"
+            "6. Streamlit 앱 화면 → Manage app → ⋮ → Settings → **Secrets** 에 아래 한 줄 붙여넣고 Save\n"
+            "```\nGITHUB_TOKEN = \"ghp_여기에붙여넣기\"\n```\n"
+            "7. 앱이 자동 재시작되면 끝입니다. 이후 등록한 설교는 영원히 보관됩니다."
+        )
+        st.info("설정 전까지는 서재 화면의 **[💾 전체 백업]** 버튼으로 파일을 꼭 내려받아 두세요.")
 
 if not KOREAN_FONT_OK:
     st.sidebar.error(
@@ -3526,10 +4026,13 @@ elif app_mode == "📷 말씀카드 이미지":
         with b2:
             up_file = st.file_uploader("배경 이미지", type=["jpg", "png", "jpeg"], key="vc_up_file") \
                 if bg_opt == "직접 업로드" else None
-            bg_i = st.number_input("이미지 번호 (숫자를 바꾸면 새 이미지)", min_value=0, max_value=999999,
-                                   value=0, step=1, key="vc_bg_idx")
+            # ⚠️ 위젯 key 를 코드에서 직접 수정하면 Streamlit 이 예외를 냅니다.
+            #    그래서 카운터는 위젯이 아닌 일반 세션 키로 따로 관리합니다.
+            bg_i = int(st.session_state.get("vc_bg_counter", 0))
+            st.markdown(f"<div style='padding:6px 0;color:#7dd3fc;font-weight:700;'>"
+                        f"현재 이미지 #{bg_i}</div>", unsafe_allow_html=True)
             if st.button("🔀 다른 이미지로 바꾸기", key="vc_shuffle"):
-                st.session_state.vc_bg_idx = int(st.session_state.get("vc_bg_idx", 0)) + 1
+                st.session_state["vc_bg_counter"] = bg_i + 1
                 st.rerun()
         bg_opt = "사진" if bg_opt.startswith("사진") else bg_opt
 
@@ -3561,6 +4064,14 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
 
     sermons_db = get_db_sermons()
     st.session_state.sermon_library = sermons_db
+
+    if cloud_store_ready():
+        st.success("🗄️ **영구 보관 작동 중** — GitHub 비공개 보관함에 자동 저장됩니다. "
+                   "앱을 다시 켜도 설교가 사라지지 않습니다.")
+    else:
+        st.error("⚠️ **지금은 임시 저장 상태입니다.** 앱이 재시작되면 아래 설교들이 사라집니다. "
+                 "왼쪽 사이드바 **[🗄️ 설교 서재 저장소]** 를 열어 영구 보관을 켜 주세요. "
+                 "그 전까지는 아래 [💾 전체 백업] 을 꼭 눌러 파일로 보관하세요.")
 
     t1, t2 = st.columns([1.5, 1.5])
     with t1:
@@ -3662,6 +4173,5 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
                 if st.button("🗑️ 삭제", key=f"lib_del_{s.get('id')}_{i}"):
                     updated = [x for x in get_db_sermons() if x.get('id') != s.get('id')]
                     save_db_sermons(updated)
-                    st.session_state.sermon_library = updated
                     st.success("삭제되었습니다.")
                     st.rerun()
