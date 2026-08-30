@@ -399,6 +399,25 @@ THEOLOGY_LENSES = {
     },
 }
 
+SERMON_LENGTHS = {
+    "5분 (짧은 권면)":     {"chars": 1200,  "tokens": 3000,
+                        "guide": "새벽기도·짧은 권면 분량입니다. 서론은 3문장 이내, 대지 설명은 핵심만, 예화는 1개만 쓰십시오."},
+    "10분 (경건회)":       {"chars": 2400,  "tokens": 4500,
+                        "guide": "경건회·주중예배 분량입니다. 예화는 2개 이내, 각 대지는 짧고 선명하게 쓰십시오."},
+    "15분 (주중예배)":     {"chars": 3600,  "tokens": 6000,
+                        "guide": "본문 주해와 적용을 균형 있게 담되 곁가지를 치지 마십시오."},
+    "20분 (간결한 주일설교)": {"chars": 4800,  "tokens": 7000,
+                        "guide": "각 대지에 주해 1문단 · 예화 1개 · 적용 1개씩 배치하십시오."},
+    "25분 (표준 주일설교)":  {"chars": 6000,  "tokens": 8192,
+                        "guide": "표준 주일 강단 분량입니다. 서론·배경·대지·결론·기도를 고루 갖추십시오."},
+    "30분 (충실한 주일설교)": {"chars": 7200,  "tokens": 8192,
+                        "guide": "본문 배경 설명과 예화를 넉넉히 넣되, 늘어지지 않게 각 대지를 균등하게 배분하십시오."},
+    "40분 (강해 심화)":     {"chars": 9600,  "tokens": 12000,
+                        "guide": "절별 주해를 상세히 넣고, 원어·배경 설명과 예화를 각 대지마다 충분히 배치하십시오."},
+    "60분 (성경공부·특강)":  {"chars": 14000, "tokens": 16000,
+                        "guide": "성경공부·특강 분량입니다. 절별 주해, 배경, 신학적 쟁점, 질의응답용 보충 설명까지 담으십시오."},
+}
+
 OUTLINE_SHAPES = {
     "원포인트 (One-Point)": {
         "points": ["본론 — 하나의 중심 진리를 세 국면으로 심화"],
@@ -1197,6 +1216,47 @@ SYSTEM_INSTRUCTION = (
 )
 
 
+RESEARCH_SYSTEM = (
+    "당신은 30년 경력의 한국 장로교 설교자이자 성경 연구자입니다. "
+    "히브리어·헬라어 원어, 고대 근동/그레코로만 역사, 교회사, 조직신학, 세계 문학과 예술, "
+    "그리고 최근 국내외 시사에 두루 밝습니다."
+)
+
+RESEARCH_RULES = """[절대 준수 규칙]
+1. 특정 설교 원고에 갇히지 말고, 성경 66권 전체·역사·문학·예술·현대 사건에서 폭넓게 자료를 찾아오십시오.
+2. 사실 정확성이 최우선입니다. 인물명·연도·지명·책 제목·구절 장절을 정확히 쓰십시오.
+   확신이 없으면 그 항목을 버리고 확실한 다른 항목으로 바꾸십시오.
+   그래도 애매하면 문장 끝에 (확인 필요) 라고 반드시 표기하십시오.
+3. 존재하지 않는 인용문·저작·사건을 절대 지어내지 마십시오.
+4. 어느 본문에나 붙일 수 있는 일반론('은혜가 충만하기를', '믿음의 결단')로 항목을 채우지 마십시오.
+   반드시 이 본문·이 주제에만 해당하는 구체적 내용이어야 합니다.
+5. 100% 한국어. 영어 사고 과정·머리말·마무리 인사 없이 지정한 형식 그대로만 출력하십시오.
+6. 번호는 각 항목(섹션) 안에서 1번부터 다시 시작합니다."""
+
+
+def build_research_prompt(task_block: str, scripture: str, topic: str = "",
+                          theology: str = "", extra_context: str = "") -> str:
+    """
+    원고에 매이지 않는 '연구용' 프롬프트.
+    설교 본문과 주제만 주고, 성경 전체·역사·문학·현대에서 자료를 끌어오게 한다.
+    """
+    lens = ""
+    if theology and theology in THEOLOGY_LENSES:
+        lens = f"\n[신학적 관점]\n{theology}\n{THEOLOGY_LENSES[theology]['guide']}\n"
+    topic_line = f"설교 주제 / 강조 포인트: {topic}" if topic.strip() else \
+        "설교 주제: (지정 없음 — 본문 자체가 말하는 중심 주제를 스스로 규정하고 그것을 기준으로 작업하십시오)"
+
+    return f"""{RESEARCH_SYSTEM}
+
+[작업 대상]
+설교 본문: {scripture}
+{topic_line}
+{lens}{extra_context}
+{RESEARCH_RULES}
+
+{task_block}"""
+
+
 def build_grounded_prompt(task_block: str, ctx_chars: int = 9000, extra: str = "") -> str:
     """모든 생성 작업에 공통으로 붙는 '근거 강제' 프롬프트 골격"""
     title = st.session_state.get("sermon_title", "")
@@ -1273,11 +1333,22 @@ def extract_json_from_text(text):
     return None
 
 
+SEARCH_TOOL_VARIANTS = [
+    [{"google_search": {}}],
+    [{"google_search_retrieval": {}}],
+    "google_search_retrieval",
+]
+
+
 def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35,
-                    kind: str = "summary", card_count: int = 7):
+                    kind: str = "summary", card_count: int = 7,
+                    use_search: bool = False, max_tokens: int = 8192):
     """
     AI 호출. 실패하면 조용히 템플릿을 뱉지 않고,
     세션에 실패 사유를 기록한 뒤 '원고 기반' 대체 결과를 돌려준다.
+
+    use_search=True 이면 Gemini 의 Google 검색 근거(grounding) 를 먼저 시도한다.
+    (계정/모델이 지원하지 않으면 자동으로 검색 없이 재시도)
     """
     st.session_state.ai_fallback_used = False
     st.session_state.ai_last_error = ""
@@ -1310,22 +1381,34 @@ def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35
             except Exception:
                 model = genai.GenerativeModel(model_name)
 
+            def _gen(cfg, with_search):
+                """검색 근거를 붙여 먼저 시도하고, 안 되면 검색 없이."""
+                if with_search:
+                    for tv in SEARCH_TOOL_VARIANTS:
+                        try:
+                            r = model.generate_content(prompt, generation_config=cfg, tools=tv)
+                            st.session_state.ai_search_used = True
+                            return r
+                        except Exception:
+                            continue
+                st.session_state.ai_search_used = False
+                return model.generate_content(prompt, generation_config=cfg)
+
             if is_json:
-                cfg = {"response_mime_type": "application/json", "temperature": temperature}
+                cfg = {"response_mime_type": "application/json", "temperature": temperature,
+                       "max_output_tokens": max_tokens}
                 try:
-                    res = model.generate_content(prompt, generation_config=cfg)
+                    # 검색 도구와 JSON 강제 출력은 함께 못 쓰는 모델이 있어 JSON 은 검색 없이
+                    res = _gen(cfg, False)
                 except Exception:
-                    res = model.generate_content(prompt, generation_config={"temperature": temperature})
+                    res = _gen({"temperature": temperature}, False)
                 parsed = extract_json_from_text(getattr(res, "text", ""))
                 if parsed:
                     st.session_state.ai_model_used = model_name
                     return parsed
                 errors.append(f"{model_name}: JSON 파싱 실패")
             else:
-                res = model.generate_content(
-                    prompt,
-                    generation_config={"temperature": temperature, "max_output_tokens": 8192}
-                )
+                res = _gen({"temperature": temperature, "max_output_tokens": max_tokens}, use_search)
                 txt = getattr(res, "text", "") or ""
                 cleaned = clean_korean_output(txt)
                 if cleaned and len(cleaned.strip()) > 60:
@@ -1556,6 +1639,13 @@ def grounded_fallback(kind: str, is_json: bool, card_count: int = 7):
                     f"- 결단(45~60초): {end}",
                     f"- 자막 키워드: {', '.join(keys[i*2:i*2+5]) or ', '.join(keys[:5])}", ""]
         return "\n".join(out)
+
+    if kind in ("research", "context"):
+        return ("⚠️ 본문 연구 도구는 AI 전용 기능입니다.\n\n"
+                "성경 66권 전체·역사·문학·현대 자료에서 내용을 찾아와야 하므로, "
+                "설교 원고만으로는 만들 수 없습니다.\n"
+                "사이드바 [⚙️ AI 연결 설정]에서 Gemini API 키를 등록한 뒤 다시 눌러 주세요.\n\n"
+                f"(사유: {st.session_state.get('ai_last_error', '연결 실패')})")
 
     if kind == "sermon_write":
         return ("⚠️ 강해설교문 자동 작성은 AI 전용 기능입니다.\n"
@@ -2578,6 +2668,97 @@ def generate_cardnews_pptx_bytes(cards_json: str, church_name: str = "",
 # ==============================================================================
 # 말씀카드
 # ==============================================================================
+# ==============================================================================
+# 문맥 연구용 도해(圖解) 이미지 — 본문 단락 구조 · 연대표를 그림으로
+# ==============================================================================
+@st.cache_data(show_spinner=False, max_entries=32)
+def render_outline_diagram(scripture: str, outline_json: str, timeline_json: str = "[]") -> bytes:
+    """단락 구조 + 연대표를 한 장의 도해 이미지(PNG)로 만든다. 슬라이드에 바로 붙일 수 있다."""
+    try:
+        outline = json.loads(outline_json) or []
+    except Exception:
+        outline = []
+    try:
+        timeline = json.loads(timeline_json) or []
+    except Exception:
+        timeline = []
+
+    W = 1500
+    row_h = 108
+    head_h = 130
+    tl_h = 240 if timeline else 0
+    H = head_h + max(1, len(outline)) * row_h + tl_h + 70
+
+    img = PIL.Image.new("RGB", (W, H), (250, 250, 255))
+    d = PIL.ImageDraw.Draw(img)
+
+    f_title = get_pil_font(38)
+    f_head = get_pil_font(27)
+    f_body = get_pil_font(22)
+    f_small = get_pil_font(19)
+
+    # 상단 그라데이션 띠
+    for y in range(96):
+        t = y / 96
+        d.line([(0, y), (W, y)], fill=(int(76 + 48 * t), int(29 + 100 * t), int(149 + 80 * t)))
+    d.text((44, 28), f"본문 구조 도해 · {scripture}", fill=(255, 255, 255), font=f_title)
+
+    palette = [(124, 58, 237), (14, 165, 233), (219, 39, 119), (16, 185, 129),
+               (245, 158, 11), (99, 102, 241)]
+
+    y = head_h
+    for i, sec in enumerate(outline[:8]):
+        c = palette[i % len(palette)]
+        d.rounded_rectangle([40, y, W - 40, y + row_h - 18], radius=16,
+                            fill=(255, 255, 255), outline=c, width=3)
+        d.rounded_rectangle([40, y, 44 + 150, y + row_h - 18], radius=16, fill=c)
+        rng = str(sec.get("range", f"{i+1}"))[:14]
+        d.text((60, y + 14), rng, fill=(255, 255, 255), font=f_head)
+        d.text((215, y + 10), str(sec.get("title", ""))[:44], fill=(30, 27, 75), font=f_head)
+        d.text((215, y + 50), str(sec.get("summary", ""))[:72], fill=(71, 85, 105), font=f_small)
+        y += row_h
+
+    # 연대표
+    if timeline:
+        ty = y + 20
+        d.rounded_rectangle([40, ty, 200, ty + 44], radius=12, fill=(237, 233, 254))
+        d.text((60, ty + 8), "연대표", fill=(76, 29, 149), font=f_head)
+        ty += 90
+        d.line([(70, ty + 26), (W - 70, ty + 26)], fill=(148, 163, 184), width=4)
+        n = min(len(timeline), 6)
+        step = (W - 200) // max(1, n - 1) if n > 1 else 0
+        for i, ev in enumerate(timeline[:n]):
+            x = 100 + step * i
+            d.ellipse([x - 11, ty + 15, x + 11, ty + 37], fill=palette[i % len(palette)])
+            when = str(ev.get("when", ""))[:16]
+            what = str(ev.get("what", ""))[:20]
+            wb = d.textbbox((0, 0), when, font=f_body)
+            d.text((x - (wb[2] - wb[0]) // 2, ty - 18), when, fill=(30, 27, 75), font=f_body)
+            tb = d.textbbox((0, 0), what, font=f_small)
+            d.text((x - (tb[2] - tb[0]) // 2, ty + 48), what, fill=(71, 85, 105), font=f_small)
+
+    d.text((44, H - 40), "MY 설교 AI 스튜디오 · 본문 구조 도해",
+           fill=(148, 163, 184), font=f_small)
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def bible_place_links(names):
+    """지명·유물에 대해 지도/사진/고고학 자료 바로가기 링크를 만든다."""
+    rows = []
+    for nm in names:
+        q = urllib.parse.quote(str(nm))
+        rows.append({
+            "이름": nm,
+            "지도": f"https://www.openbible.info/geo/search?q={q}",
+            "사진·유물": f"https://commons.wikimedia.org/w/index.php?search={q}&title=Special:MediaSearch&type=image",
+            "이미지 검색": f"https://www.google.com/search?tbm=isch&q={q}",
+        })
+    return rows
+
+
 def generate_verse_card_png(text_str, scripture_str, bg_option="사진", custom_bg_file=None,
                             font_size=42, line_spacing=18, font_color="#FDE047",
                             stroke_color="#000000", overlay_opacity=0.6, church_name="",
@@ -2878,6 +3059,434 @@ def render_body(text: str):
                 unsafe_allow_html=True)
 
 
+# ==============================================================================
+# 본문 연구 도구 7종 (설교 등록 → AI 강해설교문 생성 탭의 하위 항목)
+# ==============================================================================
+def _rkey(name: str, scripture: str) -> str:
+    """본문이 바뀌면 이전 결과가 자동으로 무효가 되도록 본문을 키에 넣는다."""
+    return f"res_{name}::{scripture}"
+
+
+def _research_block(label: str, name: str, scripture: str, task: str, topic: str,
+                    theology: str, temp: float = 0.55, tokens: int = 8192,
+                    use_search: bool = True, expanded: bool = False):
+    """연구 도구 한 칸(생성 버튼 + 결과 + 내려받기)을 그린다."""
+    key = _rkey(name, scripture)
+    with st.expander(label, expanded=expanded):
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            go = st.button("✨ 생성 / 다시 생성", key=f"btn_{name}_{abs(hash(scripture)) % 99999}",
+                           type="primary")
+        with c2:
+            st.caption(f"대상 본문: {scripture}" + (f"　·　주제: {topic}" if topic.strip() else ""))
+        if go:
+            with st.spinner("자료를 찾아 정리하는 중입니다... (30초~1분)"):
+                st.session_state[key] = get_ai_response(
+                    build_research_prompt(task, scripture, topic, theology),
+                    is_json=False, temperature=temp, kind="research",
+                    use_search=use_search, max_tokens=tokens)
+            st.rerun()
+
+        val = st.session_state.get(key, "")
+        if val:
+            show_ai_status()
+            if st.session_state.get("ai_search_used"):
+                st.caption("🌐 웹 검색 근거를 사용해 작성했습니다.")
+            render_section_top_toolbar(f"{scripture}_{name}", val, f"{name}_{abs(hash(scripture)) % 9999}")
+            render_body(val)
+        else:
+            st.caption("위 버튼을 눌러 자료를 만들어 보세요.")
+    return st.session_state.get(key, "")
+
+
+def context_to_text(d: dict, scripture: str) -> str:
+    """문맥 연구 JSON 을 내려받기 좋은 텍스트로 조립"""
+    L = [f"🧭 본문 문맥 연구 · {scripture}", ""]
+
+    def sec(title, body):
+        if body:
+            L.extend([title, str(body), ""])
+
+    L.append("📖 기본 정보")
+    for lab, k in [("저자", "author"), ("저작 시기", "date_written"),
+                   ("청중(대상)", "audience"), ("기록 목적", "purpose")]:
+        if d.get(k):
+            L.append(f"- {lab}: {d[k]}")
+    L.append("")
+    sec("🏛️ 역사적 배경", d.get("historical"))
+    sec("📜 성경 문맥적 배경", d.get("biblical_context"))
+    sec("👥 사회·문화적 배경", d.get("socio_cultural"))
+    sec("⚖️ 정치·경제적 배경", d.get("political_economic"))
+
+    if d.get("outline"):
+        L.append("🧩 단락 나누기")
+        for i, o in enumerate(d["outline"], start=1):
+            L.append(f"- {i}. [{o.get('range','')}] {o.get('title','')}")
+            if o.get("summary"):
+                L.append(f"   ▸ {o['summary']}")
+        L.append("")
+
+    if d.get("key_verses"):
+        L.append("💎 본문의 핵심 구절")
+        for i, v in enumerate(d["key_verses"], start=1):
+            L.append(f"- {i}. {v.get('ref','')} “{v.get('text','')}”")
+            if v.get("why"):
+                L.append(f"   ▸ {v['why']}")
+        L.append("")
+
+    if d.get("homiletic"):
+        L.append("🎙️ 본문의 설교적 원리")
+        for i, x in enumerate(d["homiletic"], start=1):
+            L.append(f"- {i}. {x}")
+        L.append("")
+    if d.get("expository"):
+        L.append("📐 강해적 원리")
+        for i, x in enumerate(d["expository"], start=1):
+            L.append(f"- {i}. {x}")
+        L.append("")
+
+    sec("⛪ 개혁주의 신학에서 본문의 위치와 해석", d.get("reformed"))
+    sec("🌍 선교적 교회의 관점으로 본 본문", d.get("missional"))
+
+    if d.get("timeline"):
+        L.append("🗓️ 연대표")
+        for i, t in enumerate(d["timeline"], start=1):
+            L.append(f"- {i}. {t.get('when','')} — {t.get('what','')}")
+        L.append("")
+    if d.get("compare_table"):
+        L.append("📊 본문 당시 vs 오늘")
+        for i, r in enumerate(d["compare_table"], start=1):
+            L.append(f"- {i}. {r.get('항목','')} | 당시: {r.get('본문 당시','')} | 오늘: {r.get('오늘 우리','')}")
+        L.append("")
+    if d.get("places"):
+        L.append("🗺️ 관련 지명: " + ", ".join(map(str, d["places"])))
+    if d.get("artifacts"):
+        L.append("🏺 관련 유물·고고학 자료: " + ", ".join(map(str, d["artifacts"])))
+    return "\n".join(L)
+
+
+def render_context_section(scripture: str, topic: str, theology: str):
+    """문맥 연구 — 표 · 도해 이미지 · 지도/유물 링크까지"""
+    key = _rkey("context", scripture)
+    with st.expander("🧭 문맥 연구 — 배경 · 단락 · 도표 · 지도 · 도해", expanded=False):
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            go = st.button("✨ 문맥 연구 생성", type="primary",
+                           key=f"btn_ctx_{abs(hash(scripture)) % 99999}")
+        with c2:
+            st.caption("역사적·문맥적·사회문화적·정치경제적 배경, 저자·시기·청중·목적, "
+                       "단락 나누기, 핵심 구절, 설교적·강해적 원리, 개혁주의·선교적 관점까지 한 번에.")
+        if go:
+            with st.spinner("본문 배경을 조사하고 도표를 만드는 중입니다... (1분 내외)"):
+                task = """[출력 형식 — 아래 JSON 하나만 출력. 설명 문장 금지]
+{
+ "author": "저자와 그 근거(2~3문장)",
+ "date_written": "저작 시기와 근거(2~3문장)",
+ "audience": "1차 청중이 누구였는지, 그들의 상황(3문장)",
+ "purpose": "기록 목적(3문장)",
+ "historical": "역사적 배경 — 당시 제국/왕조, 사건, 연대를 구체적으로 (6~8문장)",
+ "biblical_context": "성경 문맥적 배경 — 앞뒤 문맥, 이 책 전체 구조 속 위치, 구속사적 자리 (6~8문장)",
+ "socio_cultural": "사회·문화적 배경 — 관습, 신분, 가정, 종교 관행 (6~8문장)",
+ "political_economic": "정치·경제적 배경 — 통치 체제, 세금, 생업, 계층 (5~7문장)",
+ "outline": [{"range":"1-3절","title":"단락 제목","summary":"한 문장 요약"}],
+ "key_verses": [{"ref":"장:절","text":"구절 전문(개역개정)","why":"왜 핵심인지 2문장"}],
+ "homiletic": ["본문의 설교적 원리 4가지"],
+ "expository": ["강해적 원리 4가지 — 본문을 어떻게 열어야 하는가"],
+ "reformed": "개혁주의 신학에서 이 본문의 위치와 해석 (6문장). 언약·주권·은혜 관점 포함",
+ "missional": "선교적 교회의 관점으로 본 본문 (6문장). 보내심받은 공동체로서의 적용",
+ "timeline": [{"when":"주전/주후 연대","what":"사건"}],
+ "compare_table": [{"항목":"예: 감옥","본문 당시":"당시 상황","오늘 우리":"오늘의 대응물"}],
+ "places": ["본문과 관련된 실제 지명 4~6개"],
+ "artifacts": ["관련 유물·고고학 자료·유적 이름 3~5개"]
+}
+※ outline 은 3~6개, key_verses 는 3개, timeline 은 4~6개, compare_table 은 4~5행.
+※ 연대·지명·인물은 정확하게. 학자 간 견해가 갈리면 '다수설/소수설'을 함께 적으십시오."""
+                data = get_ai_response(
+                    build_research_prompt(task, scripture, topic, theology),
+                    is_json=True, temperature=0.35, kind="context", max_tokens=12000)
+                st.session_state[key] = data if isinstance(data, dict) else {}
+            st.rerun()
+
+        d = st.session_state.get(key) or {}
+        if not d:
+            if st.session_state.get("ai_fallback_used"):
+                st.warning(
+                    "⚠️ 문맥 연구는 AI 전용 기능입니다. 성경 배경·역사 자료를 찾아와야 하므로 "
+                    "Gemini API 키가 필요합니다.\n\n"
+                    f"사유: `{st.session_state.get('ai_last_error','연결 실패')}`\n\n"
+                    "→ 사이드바 [⚙️ AI 연결 설정]에서 키를 등록해 주세요.")
+            else:
+                st.caption("위 버튼을 눌러 문맥 연구를 시작하세요.")
+            return
+
+        show_ai_status()
+        text_all = context_to_text(d, scripture)
+        render_section_top_toolbar(f"{scripture}_문맥연구", text_all,
+                                   f"ctx_{abs(hash(scripture)) % 9999}")
+
+        m1, m2, m3, m4 = st.columns(4)
+        for col, lab, k in ((m1, "저자", "author"), (m2, "저작 시기", "date_written"),
+                            (m3, "청중", "audience"), (m4, "목적", "purpose")):
+            with col:
+                st.markdown(
+                    f"<div class='lib-card' style='padding:14px;'>"
+                    f"<div style='color:#fde047;font-weight:800;font-size:13px;'>{lab}</div>"
+                    f"<div style='color:#e8ecff;font-size:13px;margin-top:6px;line-height:1.6;'>"
+                    f"{_esc(str(d.get(k,'—'))[:180])}</div></div>", unsafe_allow_html=True)
+
+        st.markdown("#### 🖼️ 본문 구조 도해 (슬라이드에 바로 사용)")
+        png = render_outline_diagram(scripture,
+                                     json.dumps(d.get("outline", []), ensure_ascii=False),
+                                     json.dumps(d.get("timeline", []), ensure_ascii=False))
+        st_image_full(png, caption=f"{scripture} 단락 구조 · 연대표")
+        st.download_button("📥 도해 이미지(PNG) 내려받기", data=png,
+                           file_name=f"{scripture}_구조도해.png", mime="image/png",
+                           key=f"dl_diag_{abs(hash(scripture)) % 9999}")
+
+        if d.get("outline"):
+            st.markdown("#### 🧩 단락 나누기")
+            st.table([{"구간": o.get("range", ""), "단락 제목": o.get("title", ""),
+                       "요약": o.get("summary", "")} for o in d["outline"]])
+        if d.get("compare_table"):
+            st.markdown("#### 📊 본문 당시 vs 오늘")
+            st.table(d["compare_table"])
+        if d.get("timeline"):
+            st.markdown("#### 🗓️ 연대표")
+            st.table([{"연대": t.get("when", ""), "사건": t.get("what", "")} for t in d["timeline"]])
+
+        places = list(d.get("places", [])) + list(d.get("artifacts", []))
+        if places:
+            st.markdown("#### 🗺️ 지도 · 유물 사진 바로가기")
+            st.caption("AI는 사진을 직접 가져올 수 없어, 신뢰할 수 있는 자료 사이트로 바로 연결합니다.")
+            for row in bible_place_links(places[:10]):
+                st.markdown(
+                    f"**{row['이름']}** — [🗺️ 성경 지도]({row['지도']}) · "
+                    f"[🏺 유물·사진(위키미디어)]({row['사진·유물']}) · "
+                    f"[🔍 이미지 검색]({row['이미지 검색']})")
+
+        st.markdown("#### 📜 배경 상세")
+        render_body(text_all)
+
+
+def render_research_tools(scripture: str, topic: str, theology: str):
+    st.markdown("### 🔬 본문 연구 도구")
+    st.caption("아래 항목들은 설교 원고가 없어도, 선택한 본문과 주제만으로 자료를 만들어 옵니다.")
+
+    # 1) 문맥
+    render_context_section(scripture, topic, theology)
+
+    # 2) 원어 주해
+    _research_block(
+        "🔤 원어 주해 — 절별 히브리어/헬라어 연구", "original", scripture,
+        """[출력 형식 — 본문의 각 절마다 아래 틀 그대로 반복]
+
+📖 (장:절)
+원문: (히브리어 또는 헬라어 원문 그대로)
+음역: (한글 음역)
+직역: (한국어 직역 — 어순을 살려 딱딱하게)
+
+- 1. 핵심 단어 ①: 원어(음역, 스트롱번호) — 기본 뜻 / 이 문맥에서의 뜻
+   ▸ 문법: (품사·시제·태·법·인칭·수, 명사면 격·수·성)
+   ▸ 신학적 함의: (2문장)
+- 2. 핵심 단어 ②: (동일 형식)
+- 3. 구문 분석: (주절과 종속절 관계, 접속사·전치사·분사구문의 기능을 2~3문장)
+- 4. 주해: (이 절이 말하는 바를 3~4문장. 오해하기 쉬운 지점이 있으면 지적)
+
+(본문의 모든 절을 위 형식으로 다룬 뒤, 마지막에)
+
+🔑 본문 전체 원어 요약
+- 1. 반복되는 핵심 어휘와 그 효과
+- 2. 문학적 구조(교차대구·수미상관·점층 등)가 있으면 지적
+- 3. 번역본 간 차이가 큰 지점과 그 이유
+
+※ 원어 철자와 스트롱번호는 정확하게. 확신이 없으면 스트롱번호를 생략하십시오.
+※ 절 수가 많으면 의미 단위로 2~3절씩 묶어도 됩니다.""",
+        topic, theology, temp=0.3, tokens=14000)
+
+    # 3) 예화 4종
+    _research_block(
+        "💎 설교 예화 12개 — 성경 · 역사 · 문학예술 · 현대", "illust4", scripture,
+        """[출력 형식 — 네 갈래, 각 3개씩 총 12개. 아래 틀 그대로]
+
+📖 성경 예화 (성경 66권 전체에서)
+- 1. 「제목」 (본문: 성경 장절)
+   ▸ 내용: (5~7문장. 인물·상황·전환점·결말을 이야기로)
+   ▸ 오늘 본문과의 연결: (왜 이 본문과 맞물리는지 2~3문장)
+- 2. (동일 형식)
+- 3. (동일 형식)
+
+🏛️ 역사 예화 (실제 역사적 사건·사고·인물의 일화)
+- 1. 「제목」 (연도 / 장소 / 인물)
+   ▸ 내용: (5~7문장. 연도·지명·이름을 정확히)
+   ▸ 오늘 본문과의 연결: ...
+- 2. (동일 형식)
+- 3. (동일 형식)
+
+🎼 문학·예술 예화 (소설·시·회화·음악·영화에서)
+- 1. 「작품명」 (작가/작곡가/화가, 발표 연도, 장르)
+   ▸ 내용: (5~7문장. 어떤 장면·악장·구절인지 구체적으로)
+   ▸ 오늘 본문과의 연결: ...
+- 2. (동일 형식)
+- 3. (동일 형식)
+
+🌍 현대 실제 사례 (2018년 이후, 실제로 일어난 일)
+- 1. 「제목」 (연도, 국가/지역, 인물 또는 사건명)
+   ▸ 내용: (5~7문장. 실제 보도·기록에 근거한 사건만. 지어낸 미담 금지)
+   ▸ 오늘 본문과의 연결: ...
+- 2. (동일 형식)
+- 3. (동일 형식)
+
+[이 항목의 특별 규칙]
+- 성경 예화는 오늘 본문 자체를 다시 말하지 말고, 성경 66권의 '다른' 본문에서 가져오십시오.
+- 역사 예화는 교회사에 국한하지 말고 세계사·한국사의 사건·사고·일화까지 포함하십시오.
+- 문학·예술 예화는 작품명과 창작자를 정확히 쓰고, 줄거리를 지어내지 마십시오.
+- 현대 사례는 반드시 실제로 일어난 일이어야 합니다. 만들어낸 '어떤 성도의 이야기'는 절대 금지입니다.
+  확실한 사건이 3개가 안 되면, 확실한 것만 쓰고 부족한 자리에 (추가 확인 필요)라고 적으십시오.""",
+        topic, theology, temp=0.6, tokens=14000)
+
+    # 4) 명언
+    _research_block(
+        "🗣️ 설교 명언 — 주제 관련 신학자·목회자 5인 이상", "quotes5", scripture,
+        """[출력 형식 — 최소 5명, 서로 다른 인물. 설교 원고가 아니라 '본문과 주제'에 맞춰 고르십시오]
+
+🗣️ 이 본문·주제를 살리는 명언
+
+- 1. "명언 원문(한국어 번역)" — 인물 이름 (생몰연대 / 직함)
+   ▸ 원문 출처: (책 제목·설교 제목·문헌. 불확실하면 '출처 확인 필요'라고 정직하게)
+   ▸ 왜 이 본문에 맞는가: (2문장)
+   ▸ 활용 위치: (서론 / 제1대지 / 제2대지 / 결론 중 어디에, 어떻게 인용할지)
+- 2. ~ 5. (동일 형식)
+
+📌 인물 구성 규칙
+- 교부·종교개혁자(어거스틴, 칼빈, 루터 등) 최소 1명
+- 근현대 설교자·신학자(스펄전, 로이드 존스, 본회퍼, 존 스토트, 팀 켈러, 유진 피터슨 등) 최소 2명
+- 한국 교회 목회자 또는 한국 기독교 사상가 최소 1명
+
+⚠️ 그 인물이 하지 않은 말을 절대 지어내지 마십시오. 확신이 없으면 다른 인물로 바꾸십시오.""",
+        topic, theology, temp=0.45, tokens=8192)
+
+    # 5) 주석가 관점
+    _research_block(
+        "📚 주석가 관점 — 본문에 대한 주요 주석가 5인 이상 해석", "commentary", scripture,
+        """[출력 형식 — 이 본문을 실제로 다룬 주석가·신학자 5인 이상]
+
+📚 주석가별 해석 비교
+
+- 1. 존 칼빈 (Calvin) — 『기독교 강요』/『성경주석』
+   ▸ 대상 범위: (전체 / 몇 절 / 어느 단락)
+   ▸ 핵심 주장: (3~4문장. 이 주석가가 이 본문에서 무엇을 강조했는지)
+   ▸ 대표적 논지: (가능하면 요지를 인용하듯 제시하되, 지어낸 직접 인용문은 금지)
+- 2. ~ 5. (동일 형식. 서로 다른 신학 전통에서 고르십시오)
+
+⚖️ 쟁점별 견해 대조
+- 1. (쟁점 1 — 예: 이 절의 주어가 누구인가)
+   ▸ 다수설: ... / 소수설: ... / 판단 근거: ...
+- 2. (쟁점 2)
+- 3. (쟁점 3)
+
+🧭 설교자를 위한 정리
+- 1. 강단에서 취할 해석과 그 이유
+- 2. 피해야 할 해석과 그 이유
+- 3. 청중에게 굳이 설명하지 않아도 될 학문적 쟁점
+
+📌 주석가 구성 규칙
+- 개혁주의 계열(칼빈, 매튜 헨리, 헨드릭슨, 존 머레이 등) 최소 2명
+- 현대 비평·주해 계열(F.F. 브루스, 고든 피, 더글라스 무, N.T. 라이트, 크레이그 키너 등) 최소 2명
+- 설교자 계열(스펄전, 로이드 존스, 존 스토트 등) 최소 1명
+
+⚠️ 실제로 그 주석가가 그 본문을 다루었는지 확신이 없으면 다른 주석가로 대체하십시오.
+⚠️ 존재하지 않는 책 제목이나 직접 인용문을 만들지 마십시오. 요지 서술로 대신하십시오.""",
+        topic, theology, temp=0.35, tokens=12000)
+
+    # 6) 추천 찬양
+    render_praise_section(scripture, topic, theology)
+
+    # 7) 설교 제목
+    _research_block(
+        "🏷️ 설교 제목 추천 5개 — 참신하고 인상적인 제목", "titles5b", scripture,
+        """[출력 형식 — 아래 틀 그대로]
+
+🏷️ 설교 제목 추천 5개
+
+- 1. 「제목」  (유형: 은유·이미지형)
+   ▸ 근거 구절: (본문 안의 어느 구절에서 나왔는지)
+   ▸ 왜 참신한가: (한 문장)
+   ▸ 부제: (선택)
+- 2. 「제목」  (유형: 역설·반전형)
+- 3. 「제목」  (유형: 질문형)
+- 4. 「제목」  (유형: 명령·초청형)
+- 5. 「제목」  (유형: 본문 핵심어 인용형)
+
+🎯 가장 추천하는 제목 1개와 그 이유 (3문장)
+
+[제목 작성 규칙 — 반드시 지킬 것]
+- 8~14자 사이. 길면 강단 스크린에서 힘을 잃습니다.
+- 본문에 실제로 등장하는 단어·이미지·동사를 한 개 이상 살릴 것.
+- 다음과 같은 상투적 제목은 절대 금지: '은혜의 삶', '축복의 통로', '믿음의 승리',
+  '주님과 동행하는 삶', '감사의 능력', '기도의 힘'.
+- 낯설게 하기: 익숙한 신앙 용어 대신 구체적 명사·동사를 쓰십시오.
+  (예: '기도합시다' 대신 '무릎이 먼저 도착했다')
+- 다섯 제목이 서로 다른 각도여야 합니다. 같은 말의 변주 금지.""",
+        topic, theology, temp=0.9, tokens=6000)
+
+
+def render_praise_section(scripture: str, topic: str, theology: str):
+    """추천 찬양 15곡 + 곡마다 인도용 멘트"""
+    key = _rkey("praise15", scripture)
+    with st.expander("🎵 추천 찬양 15곡 — 곡마다 인도용 멘트 포함", expanded=False):
+        if st.button("🎶 찬양 15곡 + 인도 멘트 생성", type="primary",
+                     key=f"btn_praise_{abs(hash(scripture)) % 99999}"):
+            with st.spinner("본문에 맞는 찬양을 고르고 인도 멘트를 쓰는 중..."):
+                task = """[출력 형식 — 아래 JSON 하나만. 설명 문장 금지]
+{
+ "hymns": [{"title":"새찬송가 000장 - 제목","ment":"인도자가 이 곡 직전에 할 멘트 2문장"}],
+ "gospel_songs": [{"title":"복음성가 제목 - 가수/작곡가","ment":"인도 멘트 2문장"}],
+ "ccm": [{"title":"CCM 제목 - 아티스트","ment":"인도 멘트 2문장"}]
+}
+각 갈래 정확히 5곡씩, 총 15곡.
+- 곡은 이 본문·주제의 정서와 실제로 맞아야 합니다.
+- 새찬송가는 장수를 정확히 쓰십시오. 확실하지 않으면 장수를 빼고 제목만 쓰십시오.
+- 인도 멘트는 회중에게 말하듯 구어체로, 본문 내용을 한 줄 얹어 자연스럽게 곡으로 넘어가게 쓰십시오.
+- 멘트는 곡마다 서로 달라야 합니다. 같은 문장을 반복하지 마십시오."""
+                st.session_state[key] = get_ai_response(
+                    build_research_prompt(task, scripture, topic, theology),
+                    is_json=True, temperature=0.55, kind="praise", max_tokens=10000)
+            st.rerun()
+
+        data = st.session_state.get(key)
+        if not data:
+            st.caption("위 버튼을 눌러 찬양을 추천받으세요.")
+            return
+
+        show_ai_status()
+        lines = [f"🎵 추천 찬양 15곡 · {scripture}", ""]
+        for label, k in (("📖 새찬송가", "hymns"), ("🕊️ 복음성가", "gospel_songs"), ("🎸 현대 CCM", "ccm")):
+            items = data.get(k, []) or []
+            st.markdown(f"#### {label}")
+            lines.append(label)
+            for i, it in enumerate(items, start=1):
+                if isinstance(it, str):
+                    it = {"title": it, "ment": ""}
+                t = str(it.get("title", ""))
+                m = str(it.get("ment", ""))
+                q = urllib.parse.quote(t)
+                st.markdown(
+                    f"<div class='lib-card' style='padding:12px 16px;margin-bottom:8px;'>"
+                    f"<div style='font-weight:800;color:#fde047;'>{i}. {_esc(t)}</div>"
+                    f"<div class='leader-block' style='margin-top:8px;'>"
+                    f"<b>💡 인도 멘트</b><br>{_esc(m)}</div>"
+                    f"<div style='margin-top:6px;font-size:12.5px;'>"
+                    f"<a href='https://www.youtube.com/results?search_query={q}' target='_blank'>▶️ 듣기</a>　"
+                    f"<a href='https://www.google.com/search?q={q}' target='_blank'>🔍 악보·가사</a>"
+                    f"</div></div>", unsafe_allow_html=True)
+                lines.append(f"- {i}. {t}")
+                if m:
+                    lines.append(f"   [인도자 팁 / 가이드]: {m}")
+            lines.append("")
+        render_section_top_toolbar(f"{scripture}_추천찬양15곡", "\n".join(lines),
+                                   f"praise_{abs(hash(scripture)) % 9999}")
+
+
 def editable_section(state_key: str, session_field: str, label: str, height: int = 350,
                      persist_summary: bool = False):
     """수정 모드 공통 처리"""
@@ -3019,163 +3628,6 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             f"🔑 원고 자동 추출 키워드: {', '.join(_an['keywords'][:10]) or '(없음)'}　|　"
             f"📖 원고 인용 성구: {', '.join(_an['refs'][:6]) or '(없음)'}"
         )
-
-    with st.expander("🏷️ 설교 제목 추천 5개 — 본문·원고 기반", expanded=False):
-        if st.button("🏷️ 이 본문에 맞는 설교 제목 5개 뽑기", key="btn_gen_titles5"):
-            with st.spinner("설교 제목 후보를 뽑는 중..."):
-                task = """[출력 형식 - 아래 틀 그대로]
-🏷️ 설교 제목 추천 5개
-
-- 1. 「제목」 (유형: 선포형)
-   ▸ 이유: (이 원고의 어느 대목에서 나온 제목인지 한 문장)
-- 2. 「제목」 (유형: 질문형)
-   ▸ 이유: ...
-- 3. 「제목」 (유형: 이미지·은유형)
-   ▸ 이유: ...
-- 4. 「제목」 (유형: 본문 구절 인용형)
-   ▸ 이유: ...
-- 5. 「제목」 (유형: 적용·초청형)
-   ▸ 이유: ...
-
-📌 부제(서브타이틀) 제안 3개
-- 1. ...
-- 2. ...
-- 3. ...
-
-※ 제목은 12자 내외로 짧고 강하게. 이 설교 원고의 고유 단어를 반드시 살릴 것.
-※ '은혜의 삶', '축복의 통로' 같이 어느 설교에나 붙는 제목은 금지."""
-                st.session_state.title_ideas = get_ai_response(
-                    build_grounded_prompt(task, ctx_chars=6000), is_json=False,
-                    kind="titles5", temperature=0.8)
-                st.rerun()
-
-        if st.session_state.get("title_ideas"):
-            show_ai_status()
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교제목추천",
-                                       st.session_state.title_ideas, "title_ideas")
-            render_body(st.session_state.title_ideas)
-
-    with st.expander("💎 설교 예화 3종 — 성경 · 역사 · 현대", expanded=False):
-        st.caption("원고 안의 예화만이 아니라, 이 본문에 어울리는 예화를 AI가 새로 찾아 정리합니다.")
-        if st.button("💎 성경예화 · 역사예화 · 현대예화 생성", key="btn_gen_illust"):
-            with st.spinner("세 종류의 예화를 발굴하는 중..."):
-                task = """[출력 형식 - 아래 틀 그대로. 각 예화는 강단에서 바로 읽을 수 있는 완성 문장으로]
-
-📖 성경 예화 (성경 속 인물·사건에서) — 3개
-- 1. 「예화 제목」 (본문: 성경 장절)
-   ▸ 내용: (4~6문장. 인물, 상황, 전환점, 결말)
-   ▸ 설교 연결: (오늘 본문/원고의 어느 대목과 어떻게 이어지는지 2문장)
-- 2. (동일 형식)
-- 3. (동일 형식)
-
-🏛️ 역사 · 교회사 예화 (실존 인물·사건) — 3개
-- 1. 「예화 제목」 (인물/사건, 연도)
-   ▸ 내용: (4~6문장. 검증 가능한 사실만. 연도·지명·이름을 분명히)
-   ▸ 설교 연결: ...
-- 2. (동일 형식)
-- 3. (동일 형식)
-
-🌍 현대 예화 (오늘 성도의 일상·사회에서) — 3개
-- 1. 「예화 제목」
-   ▸ 내용: (4~6문장. 한국 성도가 공감할 구체적 상황)
-   ▸ 설교 연결: ...
-- 2. (동일 형식)
-- 3. (동일 형식)
-
-※ 역사 예화는 사실이 확실한 것만 쓰고, 불확실하면 '전해지는 이야기'라고 명시하십시오.
-※ 9개 예화가 서로 다른 논점을 지원해야 합니다. 같은 이야기를 변주하지 마십시오."""
-                st.session_state.illustrations = get_ai_response(
-                    build_grounded_prompt(task, ctx_chars=7000), is_json=False,
-                    kind="illust", temperature=0.65)
-                st.rerun()
-
-        if st.session_state.get("illustrations"):
-            show_ai_status()
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교예화3종",
-                                       st.session_state.illustrations, "illust")
-            render_body(st.session_state.illustrations)
-
-    with st.expander("🗣️ 설교 명언 — 신학자 · 목회자 · 고전 5인 이상", expanded=False):
-        if st.button("🗣️ 이 설교에 쓸 명언 5인 이상 뽑기", key="btn_gen_quotes"):
-            with st.spinner("명언을 선별하는 중..."):
-                task = """[출력 형식 - 아래 틀 그대로. 최소 5명, 서로 다른 인물]
-
-🗣️ 이 설교를 살리는 명언
-
-- 1. "명언 원문" — 인물 이름 (생몰연대 / 직함)
-   ▸ 출처: (책 제목이나 설교·문헌. 불확실하면 '출처 불확실'이라고 정직하게)
-   ▸ 활용 위치: (서론/제1대지/결론 중 어디에, 어떻게 인용할지 2문장)
-- 2. (동일 형식)
-- 3. (동일 형식)
-- 4. (동일 형식)
-- 5. (동일 형식)
-
-📌 인물 구성 규칙
-- 교부·종교개혁자(어거스틴, 칼빈, 루터 등) 최소 1명
-- 근현대 설교자·신학자(스펄전, 로이드 존스, 본회퍼, 팀 켈러, 존 스토트 등) 최소 2명
-- 한국 교회 목회자 또는 기독교 문학·사상가 최소 1명
-
-⚠️ 인물에게 하지 않은 말을 지어내지 마십시오. 확신이 없으면 그 인물을 빼고 다른 인물을 쓰십시오."""
-                st.session_state.sermon_quotes = get_ai_response(
-                    build_grounded_prompt(task, ctx_chars=6000), is_json=False,
-                    kind="quotes", temperature=0.5)
-                st.rerun()
-
-        if st.session_state.get("sermon_quotes"):
-            show_ai_status()
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_설교명언",
-                                       st.session_state.sermon_quotes, "quotes")
-            render_body(st.session_state.sermon_quotes)
-
-    with st.expander("📖 참고 성구 & 원고 자료", expanded=False):
-        if st.button("✨ 본문 연관 참고 성구 생성하기", key="btn_gen_rich"):
-            with st.spinner("본문과 연관된 성구 분석 중..."):
-                task = """[출력 형식]
-📖 본문 연관 참고 성구 5가지
-- 1. (성경 장절) "구절 전문"
-   ▸ 연결점: (이 설교 원고의 어느 대목과 어떻게 연결되는지 — 원고 문장 인용 필수)
-- 2. (동일 형식)
-- 3. (동일 형식)
-- 4. (동일 형식)
-- 5. (동일 형식)
-
-🔎 본문 배경 메모
-- 1. (역사적·문화적 배경 한 가지)
-- 2. (원어·용어 관련 메모 한 가지)
-- 3. (구속사적 위치 한 가지)"""
-                res = get_ai_response(build_grounded_prompt(task), is_json=False, kind="rich")
-                st.session_state.rich_materials = res
-                st.rerun()
-
-        if st.session_state.get("rich_materials"):
-            show_ai_status()
-            render_section_top_toolbar(f"{st.session_state.sermon_title}_참고성구",
-                                       st.session_state.rich_materials, "rich_mat")
-            render_body(st.session_state.rich_materials)
-
-    with st.expander("🎵 추천 찬양 — 새찬송가 · 복음성가 · CCM", expanded=False):
-        if st.button("🎶 맞춤 찬양 15곡 추천받기", key="btn_gen_praise"):
-            with st.spinner("설교 메시지와 어울리는 찬양 선곡 중..."):
-                task = """[출력 형식 - JSON만]
-{"hymns": ["새찬송가 000장 - 제목", ...5곡],
- "gospel_songs": ["복음성가 제목", ...5곡],
- "ccm": ["CCM 제목", ...5곡]}
-이 설교 원고의 정서·주제와 실제로 맞는 곡만 고르십시오."""
-                res = get_ai_response(build_grounded_prompt(task, ctx_chars=4000), is_json=True, kind="praise")
-                st.session_state.praise_list = res
-                st.rerun()
-
-        if st.session_state.get("praise_list"):
-            show_ai_status()
-            p = st.session_state.praise_list
-            c1, c2, c3 = st.columns(3)
-            for col, key, label in ((c1, "hymns", "📖 새찬송가"), (c2, "gospel_songs", "🕊️ 복음성가"), (c3, "ccm", "🎸 CCM")):
-                with col:
-                    st.markdown(f"#### {label}")
-                    for song in p.get(key, []):
-                        q = urllib.parse.quote(song)
-                        st.markdown(f"- {song} [🔍](https://www.google.com/search?q={q}) "
-                                    f"[▶️](https://www.youtube.com/results?search_query={q})")
 
     with st.expander("🖼️ 카드뉴스 · PPT 배경 이미지 설정 (무한 생성)", expanded=False):
         bg1, bg2 = st.columns([2, 1])
@@ -3704,6 +4156,14 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                 st.rerun()
 
     with t3:
+        st.markdown(
+            "<div class='hero' style='padding:16px 22px;'><h1 style='font-size:22px;'>"
+            "📖 본문 연구실 &amp; 강해설교문 작성</h1>"
+            "<div style='margin-top:8px;color:#c3cdf5;font-size:13.5px;'>"
+            "본문·주제를 정하면 아래 <b>연구 도구</b>들이 성경 66권 전체·역사·문학·현대 자료에서 "
+            "설교 준비 자료를 만들어 옵니다.</div></div>",
+            unsafe_allow_html=True)
+
         a1, a2, a3 = st.columns([1.2, 1.5, 1.3])
         with a1:
             sel_book = st.selectbox("성경 66권", BIBLE_BOOKS, index=44, key="sel_ai_book")
@@ -3713,14 +4173,16 @@ elif app_mode == "📤 새 설교 등록/원고작성":
             theology = st.selectbox("신학적 관점", list(THEOLOGY_LENSES.keys()), key="sel_ai_theology")
         st.caption(f"🔎 {THEOLOGY_LENSES[theology]['desc']}")
 
-        b1, b2, b3 = st.columns([2, 1, 1])
+        b1, b2, b3, b4 = st.columns([2, 1, 1, 1])
         with b1:
-            topic = st.text_input("설교 주제 / 강조 포인트",
-                                  value="고난 속에서도 흔들리지 않는 하나님의 사랑과 구원의 확신",
+            topic = st.text_input("설교 주제 / 강조 포인트 (비워두면 본문이 말하는 주제를 AI가 잡습니다)",
+                                  value="", placeholder="예: 고난 중에도 끊을 수 없는 하나님의 사랑",
                                   key="sel_ai_topic")
         with b2:
             outline_key = st.selectbox("대지 구조", list(OUTLINE_SHAPES.keys()), index=2, key="sel_ai_outline")
         with b3:
+            length_key = st.selectbox("설교 분량", list(SERMON_LENGTHS.keys()), index=5, key="sel_ai_length")
+        with b4:
             style = st.selectbox("설교 형태", ["본문중심 강해설교", "구속사적 복음설교",
                                             "원어 주해 중심 강해설교", "주제(토픽) 설교"],
                                  key="sel_ai_style")
@@ -3728,12 +4190,21 @@ elif app_mode == "📤 새 설교 등록/원고작성":
         full_scrip = f"{sel_book} {sel_cv}"
         lens = THEOLOGY_LENSES[theology]
         shape = OUTLINE_SHAPES[outline_key]
+        length = SERMON_LENGTHS[length_key]
 
-        if st.button("🚀 강해설교문 전문 작성 (25~30분 분량)", type="primary", key="btn_gen_ai_sermon"):
+        # ------------------------------------------------------------------
+        # 본문 연구 도구 7종
+        # ------------------------------------------------------------------
+        render_research_tools(full_scrip, topic, theology)
+
+        st.write("---")
+        st.markdown("### ✍️ 강해설교문 전문 작성")
+
+        if st.button(f"🚀 강해설교문 전문 작성 ({length_key})", type="primary", key="btn_gen_ai_sermon"):
             if not get_resolved_api_key():
                 st.error("이 기능은 AI 생성 전용입니다. 사이드바 [⚙️ AI 연결 설정]에서 Gemini API 키를 먼저 등록해 주세요.")
             else:
-                with st.spinner(f"[{theology}] 관점 · {outline_key} 구조로 집필 중... (1~2분 소요)"):
+                with st.spinner(f"[{theology}] · {outline_key} · {length_key} 분량으로 집필 중... (1~2분 소요)"):
                     body_struct = "\n".join(
                         f"{i+5}. {name} — (대지 제목) / 본문 주해 / 예화 / 적용"
                         for i, name in enumerate(shape["points"]))
@@ -3746,13 +4217,16 @@ elif app_mode == "📤 새 설교 등록/원고작성":
 - 신학적 관점: {theology}
 - 설교 형태: {style}
 - 대지 구조: {outline_key}
-- 분량: 한국어 {shape['chars']}자 이상 ({shape['minutes']} 선포 분량)
+- 분량: 한국어 {length['chars']:,}자 내외 ({length_key} 선포 분량) — 이 분량을 반드시 지키십시오.
 
 [신학적 관점 지침 — 이 설교 전체를 지배해야 합니다]
 {lens['guide']}
 
 [대지 구조 지침]
 {shape['guide']}
+
+[분량 지침]
+{length['guide']}
 
 [반드시 지킬 구조]
 1. 제목
@@ -3769,7 +4243,8 @@ elif app_mode == "📤 새 설교 등록/원고작성":
 - '은혜가 충만하기를' 같은 상투적 문구로 분량을 채우지 말 것.
 - 100% 한국어. 영어 메모나 머리말 없이 설교 원고 본문만 출력.
 - 마크다운 기호(#, **) 없이 평문으로 작성."""
-                    res = get_ai_response(prompt, is_json=False, temperature=0.7, kind="sermon_write")
+                    res = get_ai_response(prompt, is_json=False, temperature=0.7,
+                                          kind="sermon_write", max_tokens=length["tokens"])
                     st.session_state.temp_generated_sermon = res
                     st.session_state.temp_ai_title = f"{sel_book} 강해: {topic[:30]}"
                     st.session_state.temp_ai_scrip = full_scrip
@@ -3792,7 +4267,7 @@ elif app_mode == "📤 새 설교 등록/원고작성":
                          "testament": testament, "book": book, "topic": sel_book,
                          "theology": theology.split(' (')[0],
                          "date": datetime.now().strftime("%Y-%m-%d"),
-                         "tags": [sel_book, theology.split(' (')[0], outline_key, "강해설교"],
+                         "tags": [sel_book, theology.split(' (')[0], outline_key, length_key, "강해설교"],
                          "summary": "", "text": edited}
                 saved = add_sermon_to_db(entry)
                 load_sermon_to_workspace(saved, idx=len(st.session_state.sermon_library) - 1)
