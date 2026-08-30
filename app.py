@@ -1171,35 +1171,124 @@ def get_resolved_api_key():
 
 
 # 2026년 기준 사용 가능한 모델 우선순위 (구형 1.5 계열은 마지막 예비용)
-PREFERRED_MODELS = [
-    "gemini-2.5-flash",
+# 목록 조회가 실패했을 때만 쓰는 예비 후보 (최신 세대를 앞에)
+FALLBACK_MODELS = [
     "gemini-flash-latest",
-    "gemini-2.0-flash",
-    "gemini-2.5-pro",
+    "gemini-3-flash",
+    "gemini-3-pro-preview",
     "gemini-pro-latest",
-    "gemini-2.0-flash-001",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-2.0-flash",
+    "gemini-flash-lite-latest",
 ]
 
+# 생성용이 아닌 모델(임베딩·이미지·음성 등)을 걸러내기 위한 키워드
+_MODEL_EXCLUDE = ("embedding", "aqa", "vision", "image", "imagen", "tts",
+                  "audio", "live", "veo", "learnlm", "gemma")
 
-@st.cache_data(show_spinner=False, ttl=1800)
+
+def _model_rank(name: str):
+    """
+    모델 이름만 보고 '새롭고 빠른 순'으로 점수를 매긴다.
+    구형(2.5 등)이 신형(3)보다 앞서지 않도록 하는 것이 핵심.
+    """
+    n = name.lower()
+    if any(x in n for x in _MODEL_EXCLUDE):
+        return None
+    if not n.startswith("gemini"):
+        return None
+
+    m = re.search(r'gemini-(\d+(?:\.\d+)?)', n)
+    if m:
+        try:
+            ver = float(m.group(1))
+        except Exception:
+            ver = 0.0
+    else:
+        # gemini-flash-latest 처럼 버전 없는 별칭 = 항상 최신을 가리키므로 최상위
+        ver = 99.0 if "latest" in n else 0.0
+
+    tier = 2.0 if "flash" in n else (1.0 if "pro" in n else 0.0)
+    if "lite" in n:
+        tier -= 0.6                      # 품질이 낮아 후순위
+    if "preview" in n or "-exp" in n or "experimental" in n:
+        tier -= 0.4                      # 불안정할 수 있어 후순위
+    if "thinking" in n:
+        tier -= 0.3
+    return (ver, tier)
+
+
+@st.cache_data(show_spinner=False, ttl=900)
 def discover_available_models(key_fingerprint: str):
-    """계정에서 실제로 호출 가능한 모델을 조회해 우선순위와 교차한다."""
+    """계정이 실제로 호출 가능한 모델을 조회해 '최신 우선'으로 정렬한다."""
     try:
         names = []
         for m in genai.list_models():
             methods = getattr(m, "supported_generation_methods", []) or []
             if "generateContent" in methods:
                 names.append(m.name.replace("models/", ""))
-        if not names:
-            return PREFERRED_MODELS
-        ordered = [m for m in PREFERRED_MODELS if m in names]
-        extras = [n for n in names if n.startswith("gemini") and n not in ordered
-                  and "vision" not in n and "embedding" not in n]
-        return (ordered + extras)[:8] or PREFERRED_MODELS
+        scored = [(n, _model_rank(n)) for n in names]
+        scored = [(n, r) for n, r in scored if r is not None]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        ordered = [n for n, _ in scored]
+        return ordered[:10] if ordered else list(FALLBACK_MODELS)
     except Exception:
-        return PREFERRED_MODELS
+        return list(FALLBACK_MODELS)
+
+
+def candidate_models(fingerprint: str):
+    """
+    실제로 시도할 모델 순서를 만든다.
+      ① 사이드바에서 목사님이 직접 고른 모델
+      ② 이번 세션에서 마지막으로 성공한 모델
+      ③ 계정에서 조회한 최신 모델들
+    이미 '없어진 모델'로 판명된 것은 제외한다.
+    """
+    dead = set(st.session_state.get("_dead_models", []))
+    order = []
+
+    picked = st.session_state.get("ai_model_choice", "")
+    if picked and picked != "자동 선택 (권장)":
+        order.append(picked)
+
+    last_good = st.session_state.get("_last_good_model", "")
+    if last_good and last_good not in order:
+        order.append(last_good)
+
+    for m in discover_available_models(fingerprint):
+        if m not in order:
+            order.append(m)
+
+    result = [m for m in order if m not in dead]
+    return result or [m for m in FALLBACK_MODELS if m not in dead] or list(FALLBACK_MODELS)
+
+
+def _classify_api_error(msg: str) -> str:
+    m = (msg or "").lower()
+    if "429" in m or "quota" in m or "rate limit" in m or "resource_exhausted" in m or "exceeded" in m:
+        return "quota"
+    if "404" in m or "not found" in m or "no longer available" in m or "not supported" in m:
+        return "gone"
+    if "403" in m or "permission" in m or "denied" in m:
+        return "perm"
+    if "api key" in m or "api_key" in m or "invalid argument" in m and "key" in m:
+        return "key"
+    return "other"
+
+
+ERROR_HELP = {
+    "quota": ("무료 등급 사용량 한도를 넘었습니다 (분당 또는 하루 한도).",
+              "1~2분 기다렸다가 다시 눌러 보세요. 계속 뜨면 오늘 하루 한도를 다 쓴 것이니 "
+              "내일 다시 시도하시거나, Google AI Studio에서 결제를 연결하면 한도가 크게 늘어납니다. "
+              "사이드바에서 **가벼운 모델(flash-lite)** 로 바꾸면 한도가 덜 소모됩니다."),
+    "gone": ("선택된 모델이 더 이상 제공되지 않는 구형 모델입니다.",
+             "사이드바 [⚙️ AI 연결 설정] → [🔌 연결 테스트] 를 눌러 모델 목록을 새로 고쳐 주세요."),
+    "perm": ("API 키에 이 모델을 쓸 권한이 없습니다.",
+             "Google AI Studio에서 키를 새로 발급받아 다시 넣어 주세요."),
+    "key": ("API 키가 올바르지 않습니다.",
+            "사이드바 [⚙️ AI 연결 설정]에서 키를 다시 확인해 주세요."),
+    "other": ("AI 서버 호출에 실패했습니다.",
+              "잠시 후 다시 시도해 주세요. 계속되면 [🔌 연결 테스트]로 어떤 모델이 되는지 확인해 보세요."),
+}
 
 
 SYSTEM_INSTRUCTION = (
@@ -1352,10 +1441,14 @@ def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35
     """
     st.session_state.ai_fallback_used = False
     st.session_state.ai_last_error = ""
+    st.session_state.ai_error_kind = ""
+    st.session_state.ai_error_detail = []
 
     active_key = get_resolved_api_key()
     if not active_key:
         st.session_state.ai_fallback_used = True
+        st.session_state.ai_error_kind = "key"
+        st.session_state.ai_error_detail = ["API 키가 비어 있습니다."]
         st.session_state.ai_last_error = "Gemini API 키가 설정되지 않았습니다. (사이드바 ⚙️ AI 연결 설정)"
         r = grounded_fallback(kind, is_json, card_count)
         return r if is_json else fix_list_numbering(r)
@@ -1366,23 +1459,25 @@ def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35
         os.environ["GEMINI_API_KEY"] = active_key
     except Exception as e:
         st.session_state.ai_fallback_used = True
+        st.session_state.ai_error_kind = "key"
+        st.session_state.ai_error_detail = [str(e)[:200]]
         st.session_state.ai_last_error = f"API 키 설정 오류: {e}"
         r = grounded_fallback(kind, is_json, card_count)
         return r if is_json else fix_list_numbering(r)
 
     fingerprint = hashlib.sha256(active_key.encode()).hexdigest()[:16]
-    models = discover_available_models(fingerprint)
+    models = candidate_models(fingerprint)
 
-    errors = []
-    for model_name in models:
+    errors, kinds = [], []
+    for model_name in models[:5]:                    # 너무 많이 시도하면 한도만 낭비된다
         try:
             try:
                 model = genai.GenerativeModel(model_name, system_instruction=SYSTEM_INSTRUCTION)
             except Exception:
                 model = genai.GenerativeModel(model_name)
 
-            def _gen(cfg, with_search):
-                """검색 근거를 붙여 먼저 시도하고, 안 되면 검색 없이."""
+            def _call(cfg, with_search):
+                """검색 근거 → 검색 없이 → 토큰 한도 제거, 순서로 물러나며 시도."""
                 if with_search:
                     for tv in SEARCH_TOOL_VARIANTS:
                         try:
@@ -1392,35 +1487,67 @@ def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35
                         except Exception:
                             continue
                 st.session_state.ai_search_used = False
-                return model.generate_content(prompt, generation_config=cfg)
+                try:
+                    return model.generate_content(prompt, generation_config=cfg)
+                except Exception as e1:
+                    # 모델이 지원하지 않는 옵션(max_output_tokens, response_mime_type)이면 빼고 재시도
+                    if _classify_api_error(str(e1)) in ("gone", "quota", "perm", "key"):
+                        raise
+                    slim = {"temperature": cfg.get("temperature", 0.4)}
+                    return model.generate_content(prompt, generation_config=slim)
 
             if is_json:
                 cfg = {"response_mime_type": "application/json", "temperature": temperature,
                        "max_output_tokens": max_tokens}
-                try:
-                    # 검색 도구와 JSON 강제 출력은 함께 못 쓰는 모델이 있어 JSON 은 검색 없이
-                    res = _gen(cfg, False)
-                except Exception:
-                    res = _gen({"temperature": temperature}, False)
+                res = _call(cfg, False)   # JSON 강제 출력과 검색 도구는 함께 못 쓰는 모델이 많다
                 parsed = extract_json_from_text(getattr(res, "text", ""))
                 if parsed:
                     st.session_state.ai_model_used = model_name
+                    st.session_state["_last_good_model"] = model_name
                     return parsed
-                errors.append(f"{model_name}: JSON 파싱 실패")
+                errors.append(f"{model_name}: JSON 형식으로 응답하지 못함")
+                kinds.append("other")
             else:
-                res = _gen({"temperature": temperature, "max_output_tokens": max_tokens}, use_search)
+                res = _call({"temperature": temperature, "max_output_tokens": max_tokens}, use_search)
                 txt = getattr(res, "text", "") or ""
                 cleaned = clean_korean_output(txt)
                 if cleaned and len(cleaned.strip()) > 60:
                     st.session_state.ai_model_used = model_name
+                    st.session_state["_last_good_model"] = model_name
                     return fix_list_numbering(cleaned)
-                errors.append(f"{model_name}: 응답이 너무 짧음")
+                errors.append(f"{model_name}: 응답이 비었거나 너무 짧음")
+                kinds.append("other")
+
         except Exception as e:
-            errors.append(f"{model_name}: {str(e)[:120]}")
+            msg = str(e)
+            k = _classify_api_error(msg)
+            kinds.append(k)
+            errors.append(f"{model_name} → {msg[:150]}")
+            if k == "gone":
+                # 폐기된 모델은 이번 세션 동안 다시 시도하지 않는다
+                dead = set(st.session_state.get("_dead_models", []))
+                dead.add(model_name)
+                st.session_state["_dead_models"] = list(dead)
+                try:
+                    discover_available_models.clear()
+                except Exception:
+                    pass
+            if k in ("key", "perm"):
+                break                     # 키 문제면 다른 모델도 소용없다
+            if kinds.count("quota") >= 3:
+                break                     # 한도 초과가 반복되면 더 부르지 않는다(한도만 더 깎임)
             continue
 
     st.session_state.ai_fallback_used = True
-    st.session_state.ai_last_error = " / ".join(errors[:3]) or "알 수 없는 오류"
+    # 가장 많이 나온 오류 유형으로 안내 문구를 정한다
+    main_kind = "other"
+    for k in ("key", "perm", "quota", "gone"):
+        if k in kinds:
+            main_kind = k
+            break
+    st.session_state.ai_error_kind = main_kind
+    st.session_state.ai_error_detail = errors
+    st.session_state.ai_last_error = ERROR_HELP[main_kind][0]
     res = grounded_fallback(kind, is_json, card_count)
     return res if is_json else fix_list_numbering(res)
 
@@ -2976,13 +3103,15 @@ def st_image_full(data, caption=None):
 
 
 def show_ai_status():
-    """AI 폴백이 쓰였으면 숨기지 않고 알린다."""
+    """AI 호출이 실패했으면 원인과 해결책을 한국어로 정확히 알려준다."""
     if st.session_state.get("ai_fallback_used"):
-        st.warning(
-            "⚠️ **AI 서버 응답을 받지 못해, 설교 원고에서 직접 추출한 결과를 표시했습니다.**\n\n"
-            f"사유: `{st.session_state.get('ai_last_error', '알 수 없음')}`\n\n"
-            "→ 사이드바 **[⚙️ AI 연결 설정]** 에서 Gemini API 키를 확인해 주세요."
-        )
+        kind = st.session_state.get("ai_error_kind", "other")
+        title, howto = ERROR_HELP.get(kind, ERROR_HELP["other"])
+        icon = {"quota": "⏳", "gone": "🔄", "perm": "🔒", "key": "🔑"}.get(kind, "⚠️")
+        st.warning(f"{icon} **{title}**\n\n{howto}")
+        with st.expander("🔎 자세한 오류 내용 보기"):
+            for line in st.session_state.get("ai_error_detail", []) or ["(상세 없음)"]:
+                st.code(line, language="text")
     elif st.session_state.get("ai_model_used"):
         st.caption(f"✅ 생성 모델: `{st.session_state.ai_model_used}`")
 
@@ -3210,11 +3339,7 @@ def render_context_section(scripture: str, topic: str, theology: str):
         d = st.session_state.get(key) or {}
         if not d:
             if st.session_state.get("ai_fallback_used"):
-                st.warning(
-                    "⚠️ 문맥 연구는 AI 전용 기능입니다. 성경 배경·역사 자료를 찾아와야 하므로 "
-                    "Gemini API 키가 필요합니다.\n\n"
-                    f"사유: `{st.session_state.get('ai_last_error','연결 실패')}`\n\n"
-                    "→ 사이드바 [⚙️ AI 연결 설정]에서 키를 등록해 주세요.")
+                show_ai_status()
             else:
                 st.caption("위 버튼을 눌러 문맥 연구를 시작하세요.")
             return
@@ -3535,16 +3660,63 @@ with st.sidebar.expander("⚙️ AI 연결 설정", expanded=not bool(get_resolv
                   help="Google AI Studio(aistudio.google.com)에서 발급받은 키를 입력하세요.")
     if get_resolved_api_key():
         st.markdown("<span class='badge-ok'>키 등록됨</span>", unsafe_allow_html=True)
-        if st.button("🔌 연결 테스트", key="btn_test_api"):
-            with st.spinner("모델 조회 중..."):
+
+        _fp = hashlib.sha256(get_resolved_api_key().encode()).hexdigest()[:16]
+        try:
+            genai.configure(api_key=get_resolved_api_key())
+        except Exception:
+            pass
+        _avail = discover_available_models(_fp)
+        st.selectbox("사용할 모델", ["자동 선택 (권장)"] + _avail, key="ai_model_choice",
+                     help="자동 선택이 안 될 때만 직접 고르세요. 목록이 이상하면 아래 [모델 목록 새로고침]을 누르세요.")
+
+        cga, cgb = st.columns(2)
+        with cga:
+            if st.button("🔌 실제 작동 테스트", key="btn_test_api"):
+                st.session_state["_dead_models"] = []
                 try:
-                    genai.configure(api_key=get_resolved_api_key())
-                    fp = hashlib.sha256(get_resolved_api_key().encode()).hexdigest()[:16]
                     discover_available_models.clear()
-                    ms = discover_available_models(fp)
-                    st.success("사용 가능 모델: " + ", ".join(ms[:5]))
-                except Exception as e:
-                    st.error(f"연결 실패: {e}")
+                except Exception:
+                    pass
+                with st.spinner("모델마다 실제로 호출해 보는 중... (20초)"):
+                    rows = []
+                    for mname in discover_available_models(_fp)[:6]:
+                        try:
+                            mm = genai.GenerativeModel(mname)
+                            r = mm.generate_content(
+                                "한국어로 '연결됨' 이라고만 답하세요.",
+                                generation_config={"temperature": 0, "max_output_tokens": 20})
+                            ok = bool(getattr(r, "text", ""))
+                            rows.append((mname, "✅ 사용 가능" if ok else "⚠️ 빈 응답"))
+                        except Exception as e:
+                            k = _classify_api_error(str(e))
+                            label = {"quota": "⏳ 한도 초과", "gone": "❌ 폐기된 모델",
+                                     "perm": "🔒 권한 없음", "key": "🔑 키 오류"}.get(k, "⚠️ 오류")
+                            rows.append((mname, label))
+                    st.session_state["_model_test_rows"] = rows
+                st.rerun()
+        with cgb:
+            if st.button("🔄 목록 새로고침", key="btn_refresh_models"):
+                st.session_state["_dead_models"] = []
+                st.session_state.pop("_last_good_model", None)
+                try:
+                    discover_available_models.clear()
+                except Exception:
+                    pass
+                st.rerun()
+
+        if st.session_state.get("_model_test_rows"):
+            st.markdown("**테스트 결과**")
+            for mname, status in st.session_state["_model_test_rows"]:
+                st.markdown(f"- `{mname}` → {status}")
+            usable = [m for m, s in st.session_state["_model_test_rows"] if s.startswith("✅")]
+            if usable:
+                st.success(f"사용 가능한 모델: {usable[0]}")
+            else:
+                st.error("지금은 쓸 수 있는 모델이 없습니다. 대부분 ⏳ 한도 초과라면 "
+                         "1~2분 뒤 다시 시도해 주세요.")
+        if st.session_state.get("_last_good_model"):
+            st.caption(f"최근 성공 모델: {st.session_state['_last_good_model']}")
     else:
         st.markdown("<span class='badge-bad'>키 없음 · AI 기능 제한</span>", unsafe_allow_html=True)
 
