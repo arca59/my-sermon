@@ -3892,13 +3892,19 @@ def render_manna_section():
         render_body(txt)
 
 
+def _safe_filename(prefix: str, date_iso: str, name: str = "", ext: str = "png") -> str:
+    """파일명에 쓸 수 없는 문자를 정리한다."""
+    tail = re.sub(r'[\\/:*?"<>|\s]+', "", str(name or ""))[:20]
+    return f"{prefix}_{date_iso}" + (f"_{tail}" if tail else "") + f".{ext}"
+
+
 def render_today_word_section():
     with st.expander("📖 오늘의 말씀 — 말씀카드 이미지 자동 생성", expanded=False):
         st.caption("버튼을 누르면 그날 날짜가 적힌 말씀카드가 배경 사진과 함께 만들어집니다. "
                    "교회 SNS나 단톡방에 그대로 올리실 수 있습니다.")
 
         today = _today_str()
-        c1, c2, c3, c4 = st.columns([1, 1.1, 1, 1.2])
+        c1, c2, c3 = st.columns([1, 1.2, 1])
         with c1:
             sel_date = st.date_input("날짜", value=datetime.strptime(today, "%Y-%m-%d").date(),
                                      key="tw_date")
@@ -3907,7 +3913,17 @@ def render_today_word_section():
             tw_theme = st.selectbox("배경 분위기", list(BG_THEMES.keys()), index=0, key="tw_theme")
         with c3:
             tw_size = st.selectbox("규격", ["1:1 정사각형", "4:5 세로형"], key="tw_size")
-        with c4:
+
+        n1, n2 = st.columns([2.2, 1])
+        with n1:
+            tw_church = st.text_input(
+                "카드 하단에 넣을 이름 (교회 · 단체 · 부서 · 개인 무엇이든)",
+                value=st.session_state.get("tw_church_name",
+                                           st.session_state.get("cn_church_name", "")),
+                placeholder="예: 화광교회 / 청년부 / 사랑의교회 새벽기도 / 비워두면 표시 안 함",
+                key="tw_church_input")
+            st.session_state["tw_church_name"] = tw_church
+        with n2:
             st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
             go = st.button("📖 오늘의 말씀 생성", type="primary", key="btn_gen_today_word")
 
@@ -3966,7 +3982,7 @@ def render_today_word_section():
             st.caption(f"오늘 이 말씀을 나누는 이유 — {data['why']}")
 
         png = render_today_verse_png(
-            date_iso, verse, ref, st.session_state.get("cn_church_name", ""),
+            date_iso, verse, ref, tw_church.strip(),
             seed=f"today|{date_iso}|{st.session_state.get('bg_shuffle', 0)}",
             theme=tw_theme, size_key=tw_size)
 
@@ -3975,7 +3991,8 @@ def render_today_word_section():
             st_image_full(png, caption=f"오늘의 말씀 · {date_iso}")
         with p2:
             st.download_button("📥 말씀카드 PNG 내려받기", data=png,
-                               file_name=f"오늘의말씀_{date_iso}.png", mime="image/png",
+                               file_name=_safe_filename("오늘의말씀", date_iso, tw_church, "png"),
+                               mime="image/png",
                                key=f"dl_tw_{date_iso}")
             if st.button("🔀 배경 사진 바꾸기", key=f"tw_shuffle_{date_iso}"):
                 st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
