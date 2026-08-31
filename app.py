@@ -2438,102 +2438,399 @@ def create_txt_bytes(title: str, content: str) -> bytes:
     return "\n".join(lines).encode("utf-8")
 
 
+# ==============================================================================
+# ★ 설교 PPT 디자인 시스템 (업로드해 주신 「믿음의 경주를 달려가라」 템플릿 기준)
+#   10 × 5.625 inch(16:9) · 밝은 아이보리 배경 · 네이비 세리프 제목 · 블루 라벨
+# ==============================================================================
+TPL = {
+    "W": 10.0, "H": 5.625,
+    "M": 0.71, "CW": 8.58,          # 좌우 여백 / 본문 폭
+    "bg":      "FBFCFD",            # 배경
+    "white":   "FFFFFF",
+    "ink":     "1B2B3D",            # 제목 네이비
+    "body":    "455567",            # 본문 회색
+    "muted":   "8A96A3",            # 보조 텍스트
+    "accent":  "2B527A",            # 포인트 블루 (라벨·번호)
+    "accent2": "7B9CC0",            # 연블루 (숫자·구분선)
+    "line":    "DCE2EB",            # 구분선
+    "card":    "F5F6F9",            # 연회색 카드
+    "gold":    "C4A26B",            # 기도 금색
+    "cream":   "F1E2C6",            # 기도 본문
+    "sand":    "EEE8DA",
+    "serif":   "Noto Serif KR",     # 제목용 세리프
+    "sans":    "Pretendard",        # 라벨·본문용 산세리프
+}
+
+
+def _c(hex_str):
+    return RGBColor.from_string(hex_str)
+
+
+def _set_font(run, name):
+    """라틴·한글(EastAsia) 글꼴을 함께 지정해야 한글에도 서체가 먹는다."""
+    try:
+        run.font.name = name
+        rPr = run.font._rPr
+        for tag in ("a:ea", "a:cs"):
+            el = rPr.find(qn(tag))
+            if el is None:
+                el = etree.SubElement(rPr, qn(tag))
+            el.set("typeface", name)
+    except Exception:
+        pass
+
+
+def _letter_spacing(run, hundredths_pt: int):
+    try:
+        run.font._rPr.set("spc", str(int(hundredths_pt)))
+    except Exception:
+        pass
+
+
+def _slide(prs, bg=None):
+    s = prs.slides.add_slide(prs.slide_layouts[6])
+    rect = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0,
+                              Inches(TPL["W"]), Inches(TPL["H"]))
+    rect.fill.solid()
+    rect.fill.fore_color.rgb = _c(bg or TPL["bg"])
+    rect.line.fill.background()
+    rect.shadow.inherit = False
+    return s
+
+
+def _bar(s, x, y, w, h, color):
+    r = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h))
+    r.fill.solid()
+    r.fill.fore_color.rgb = _c(color)
+    r.line.fill.background()
+    r.shadow.inherit = False
+    return r
+
+
+def _oval(s, x, y, d, color):
+    o = s.shapes.add_shape(MSO_SHAPE.OVAL, Inches(x), Inches(y), Inches(d), Inches(d))
+    o.fill.solid()
+    o.fill.fore_color.rgb = _c(color)
+    o.line.fill.background()
+    o.shadow.inherit = False
+    return o
+
+
+def _tb(s, x, y, w, h, lines, size=16, bold=False, color=None, font=None,
+        align=PP_ALIGN.LEFT, line_spacing=1.35, space_after=6, spc=None):
+    """lines: 문자열 또는 문자열 리스트(문단별)"""
+    box = s.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
+    tf = box.text_frame
+    tf.word_wrap = True
+    tf.margin_left = tf.margin_right = tf.margin_top = tf.margin_bottom = 0
+    if isinstance(lines, str):
+        lines = [lines]
+    lines = [l for l in lines if str(l).strip() != ""] or [""]
+    color = color or TPL["body"]
+    font = font or TPL["sans"]
+    for i, txt in enumerate(lines):
+        p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
+        run = p.add_run()
+        run.text = str(txt)
+        run.font.size = Pt(size)
+        run.font.bold = bold
+        run.font.color.rgb = _c(color)
+        _set_font(run, font)
+        if spc:
+            _letter_spacing(run, spc)
+        p.alignment = align
+        try:
+            p.line_spacing = line_spacing
+            p.space_after = Pt(space_after)
+        except Exception:
+            pass
+    return box
+
+
+def _eyebrow(s, label):
+    """상단 작은 라벨 + 짧은 파란 밑줄"""
+    _tb(s, TPL["M"], 0.55, TPL["CW"], 0.28, label, size=11, bold=True,
+        color=TPL["accent"], font=TPL["sans"], space_after=0)
+    _bar(s, TPL["M"], 0.87, 0.44, 0.02, TPL["accent"])
+
+
+def _headline(s, text, size=32, y=1.15, h=0.98):
+    _tb(s, TPL["M"], y, TPL["CW"], h, text, size=size, bold=True,
+        color=TPL["ink"], font=TPL["serif"], line_spacing=1.25, space_after=0)
+
+
+def _photo_bg(s, seed_key, theme, alpha=0.72):
+    """사진 배경 + 흰색 반투명 오버레이 (템플릿의 표지·핵심말씀 스타일)"""
+    try:
+        b = get_background_bytes(seed_key, theme, size=(1280, 720))
+        if b:
+            s.shapes.add_picture(io.BytesIO(b), 0, 0,
+                                 width=Inches(TPL["W"]), height=Inches(TPL["H"]))
+    except Exception:
+        pass
+    ov = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(TPL["W"]), Inches(TPL["H"]))
+    ov.fill.solid()
+    ov.fill.fore_color.rgb = _c(TPL["white"])
+    set_shape_fill_alpha(ov, alpha)
+    ov.line.fill.background()
+    ov.shadow.inherit = False
+
+
+def _wrap_for_slide(text, per_line=46, max_lines=9):
+    """슬라이드에 넣기 좋게 문단을 자른다."""
+    t = re.sub(r'\s+', ' ', str(text or "")).strip()
+    limit = per_line * max_lines
+    return t[:limit] + ("…" if len(t) > limit else "")
+
+
+# ---------- 슬라이드 종류별 빌더 ----------
+def sl_cover(prs, title, subtitle, scripture, seed, theme, kicker="주 일 설 교"):
+    s = _slide(prs, TPL["bg"])
+    _photo_bg(s, f"{seed}|cover", theme, 0.70)
+    _tb(s, 0, 1.20, TPL["W"], 0.33, kicker, size=12, bold=True, color=TPL["accent"],
+        font=TPL["sans"], align=PP_ALIGN.CENTER, space_after=0, spc=400)
+    _tb(s, TPL["M"], 1.86, TPL["CW"], 1.31, _wrap_for_slide(title, 22, 2),
+        size=42 if len(str(title)) <= 18 else 34, bold=True, color=TPL["ink"],
+        font=TPL["serif"], align=PP_ALIGN.CENTER, line_spacing=1.25, space_after=0)
+    if subtitle:
+        _tb(s, TPL["M"], 3.28, TPL["CW"], 0.62, _wrap_for_slide(subtitle, 32, 2),
+            size=17, color=TPL["body"], font=TPL["serif"], align=PP_ALIGN.CENTER,
+            line_spacing=1.35, space_after=0)
+    _bar(s, 4.67, 3.99, 0.66, 0.012, TPL["accent2"])
+    _tb(s, TPL["M"], 4.21, TPL["CW"], 0.44, f"본문 · {scripture}", size=13,
+        color=TPL["body"], font=TPL["sans"], align=PP_ALIGN.CENTER, space_after=0)
+    return s
+
+
+def sl_text(prs, eyebrow, headline, body, head_size=34):
+    s = _slide(prs)
+    _eyebrow(s, eyebrow)
+    _headline(s, headline, size=head_size, y=1.20)
+    paras = [p for p in str(body or "").split("\n") if p.strip()][:4]
+    _tb(s, TPL["M"], 2.30, TPL["CW"], 3.06,
+        [_wrap_for_slide(p, 46, 4) for p in paras] or [""],
+        size=17, color=TPL["body"], font=TPL["sans"], line_spacing=1.5, space_after=10)
+    return s
+
+
+def sl_outline(prs, points, eyebrow="오늘의 말씀", headline="설교의 흐름"):
+    s = _slide(prs)
+    _eyebrow(s, eyebrow)
+    _headline(s, headline, size=32, y=1.18, h=0.79)
+    y = 2.35
+    for i, t in enumerate(points[:4], start=1):
+        _tb(s, TPL["M"], y, 0.87, 0.62, f"{i:02d}", size=26, bold=True,
+            color=TPL["accent2"], font=TPL["serif"], space_after=0)
+        _tb(s, 1.75, y + 0.05, 7.54, 0.62, _wrap_for_slide(t, 34, 1), size=18, bold=True,
+            color=TPL["ink"], font=TPL["serif"], space_after=0)
+        if i < min(4, len(points)):
+            _bar(s, TPL["M"], y + 0.64, TPL["CW"], 0.012, TPL["line"])
+        y += 0.69
+    return s
+
+
+def sl_scripture(prs, scripture, verses):
+    s = _slide(prs)
+    _eyebrow(s, f"본문 말씀  ·  {scripture}")
+    lines = [v for v in verses if str(v).strip()][:5]
+    _tb(s, TPL["M"], 1.48, TPL["CW"], 3.49,
+        [_wrap_for_slide(v, 44, 3) for v in lines] or [scripture],
+        size=16, color=TPL["ink"], font=TPL["serif"], line_spacing=1.6, space_after=12)
+    return s
+
+
+def sl_point(prs, order, label, headline, quote, quote_ref, body, cards=None):
+    s = _slide(prs)
+    _eyebrow(s, f"{order:02d}   ·   {label}")
+    _headline(s, _wrap_for_slide(headline, 24, 2), size=30, y=1.15)
+
+    top = 2.41
+    if quote:
+        _bar(s, TPL["M"], top, 0.014, 0.77, TPL["accent2"])
+        _tb(s, 0.93, top, 8.36, 0.49, f"“{_wrap_for_slide(quote, 44, 1)}”",
+            size=15, color=TPL["body"], font=TPL["serif"], space_after=0)
+        _tb(s, 0.93, top + 0.52, 8.36, 0.27, f"— {quote_ref}" if quote_ref else "",
+            size=11, color=TPL["muted"], font=TPL["sans"], space_after=0)
+        top = 3.34
+    else:
+        top = 2.50
+
+    cards = [c for c in (cards or []) if c and str(c[0]).strip()]
+    if len(cards) >= 2:
+        n = min(3, len(cards))
+        gap = 0.22
+        cw = (TPL["CW"] - gap * (n - 1)) / n
+        for i, (ct, cd) in enumerate(cards[:n]):
+            x = TPL["M"] + i * (cw + gap)
+            dark = (i == 0)
+            box = _bar(s, x, top, cw, 1.80, TPL["accent"] if dark else TPL["white"])
+            if not dark:
+                box.line.color.rgb = _c(TPL["line"])
+                box.line.width = Pt(0.75)
+            _bar(s, x, top, cw, 0.035, TPL["white"] if dark else TPL["accent"])
+            _tb(s, x + 0.27, top + 0.72, cw - 0.54, 0.46, _wrap_for_slide(ct, 14, 1),
+                size=17, bold=True, color=TPL["white"] if dark else TPL["accent"],
+                font=TPL["serif"], space_after=0)
+            _tb(s, x + 0.27, top + 1.20, cw - 0.54, 0.50, _wrap_for_slide(cd, 20, 2),
+                size=10.5, color="D8DEE7" if dark else TPL["body"],
+                font=TPL["sans"], line_spacing=1.35, space_after=0)
+    else:
+        paras = [p for p in str(body or "").split("\n") if p.strip()][:3]
+        _tb(s, TPL["M"], top, TPL["CW"], 5.30 - top,
+            [_wrap_for_slide(p, 46, 3) for p in paras] or [""],
+            size=16, color=TPL["body"], font=TPL["sans"], line_spacing=1.5, space_after=10)
+    return s
+
+
+def sl_keyverse(prs, quote, ref, caption, seed, theme):
+    s = _slide(prs, TPL["bg"])
+    _photo_bg(s, f"{seed}|key", theme, 0.74)
+    _tb(s, 0, 0.87, TPL["W"], 0.33, "핵  심  말  씀", size=12, bold=True,
+        color=TPL["accent"], font=TPL["sans"], align=PP_ALIGN.CENTER, space_after=0, spc=400)
+    _tb(s, TPL["M"], 1.75, TPL["CW"], 2.19, f"“{_wrap_for_slide(quote, 30, 3)}”",
+        size=32 if len(str(quote)) <= 46 else 26, bold=True, color=TPL["ink"],
+        font=TPL["serif"], align=PP_ALIGN.CENTER, line_spacing=1.45, space_after=0)
+    _bar(s, 4.67, 4.16, 0.66, 0.012, TPL["accent2"])
+    _tb(s, TPL["M"], 4.37, TPL["CW"], 0.38, ref, size=16, color=TPL["ink"],
+        font=TPL["serif"], align=PP_ALIGN.CENTER, space_after=0)
+    if caption:
+        _tb(s, TPL["M"], 4.95, TPL["CW"], 0.33, _wrap_for_slide(caption, 44, 1),
+            size=11, color=TPL["muted"], font=TPL["sans"], align=PP_ALIGN.CENTER, space_after=0)
+    return s
+
+
+def sl_numbered(prs, eyebrow, headline, items):
+    s = _slide(prs)
+    _eyebrow(s, eyebrow)
+    _headline(s, headline, size=32, y=1.18, h=0.79)
+    y = 2.32
+    for i, t in enumerate(items[:3], start=1):
+        _bar(s, TPL["M"], y, TPL["CW"], 0.75, TPL["card"])
+        _tb(s, 0.84, y + 0.10, 0.77, 0.55, str(i), size=24, bold=True,
+            color=TPL["accent"], font=TPL["serif"], align=PP_ALIGN.CENTER, space_after=0)
+        _tb(s, 1.72, y + 0.10, 7.40, 0.60, _wrap_for_slide(t, 52, 2), size=14,
+            color=TPL["body"], font=TPL["sans"], line_spacing=1.4, space_after=0)
+        y += 0.85
+    return s
+
+
+def sl_prayer(prs, prayer_text, heading="기  도"):
+    s = _slide(prs, TPL["ink"])
+    _tb(s, TPL["M"], 1.31, 2.41, 0.55, heading, size=30, bold=True,
+        color=TPL["gold"], font=TPL["serif"], space_after=0, spc=300)
+    _bar(s, TPL["M"], 2.05, 0.44, 0.02, TPL["gold"])
+    lines = [l.strip() for l in re.split(r'(?<=[.!?])\s+|\n', str(prayer_text or "")) if l.strip()][:8]
+    _tb(s, 3.12, 0.61, 6.34, 4.47, [_wrap_for_slide(l, 40, 3) for l in lines] or ["아멘."],
+        size=14, color=TPL["cream"], font=TPL["serif"], line_spacing=1.85, space_after=8)
+    return s
+
+
+def _new_deck():
+    prs = Presentation()
+    prs.slide_width = Inches(TPL["W"])
+    prs.slide_height = Inches(TPL["H"])
+    return prs
+
+
 # ---------------------------- PPT (문서형) ----------------------------
 @st.cache_data(show_spinner=False, max_entries=32)
-def create_document_pptx_bytes(title: str, content: str) -> bytes:
-    """일반 문서형 PPT (QT/나눔지/가이드 등) — 색상 구분 포함"""
+def create_document_pptx_bytes(title: str, content: str, seed_base: str = "",
+                               bg_theme: str = "자연 · 풍경") -> bytes:
+    """
+    일반 문서형 PPT (QT·나눔지·가이드·칼럼 등) — 설교 PPT와 같은 디자인 언어.
+    표지 → 내용 슬라이드(라벨 + 세리프 제목 + 본문/카드/인용) 구조.
+    """
     try:
-        prs = Presentation()
-        prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
-        blank = prs.slide_layouts[6]
-
-        # 표지
-        s1 = prs.slides.add_slide(blank)
-        s1.background.fill.solid()
-        s1.background.fill.fore_color.rgb = RGBColor(23, 16, 60)
-        bar = s1.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(1.2), Inches(2.6),
-                                  Inches(10.9), Inches(2.3))
-        bar.fill.solid()
-        bar.fill.fore_color.rgb = RGBColor(76, 29, 149)
-        set_shape_fill_alpha(bar, 0.55)
-        bar.line.color.rgb = RGBColor(167, 139, 250)
-        bar.shadow.inherit = False
-        tp = bar.text_frame.paragraphs[0]
-        tp.text = title
-        tp.font.size, tp.font.bold = Pt(34), True
-        tp.font.color.rgb, tp.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
-
+        prs = _new_deck()
         blocks = [b for b in parse_doc_blocks(content) if b[0] != "blank"]
 
-        # 실제 줄바꿈 수를 예측해 슬라이드를 채운다 (여백이 크게 남지 않도록)
-        CPL = 44          # 한 줄에 들어가는 대략의 글자 수
-        BUDGET = 15       # 슬라이드당 허용 줄 수
+        # 표지
+        sl_cover(prs, title, "", datetime.now().strftime("%Y-%m-%d"),
+                 seed_base or title, bg_theme, kicker="사 역 자 료")
 
-        def weight_of(kind, val):
-            txt = val[1] if kind == "item" else (val if isinstance(val, str) else str(val))
-            lines = max(1, (len(txt) // CPL) + 1)
-            if kind in ("head", "leader"):
-                lines += 1          # 위아래 여백 몫
-            return lines
-
-        pages, cur, used = [], [], 0
+        # 섹션(head) 단위로 슬라이드를 나눈다
+        sections, cur_head, cur = [], "", []
         for kind, val in blocks:
-            w = weight_of(kind, val)
-            if used + w > BUDGET and cur:
-                pages.append(cur)
-                cur, used = [], 0
-            cur.append((kind, val))
-            used += w
-        if cur:
-            pages.append(cur)
+            if kind == "head":
+                if cur or cur_head:
+                    sections.append((cur_head, cur))
+                cur_head, cur = val, []
+            else:
+                cur.append((kind, val))
+        if cur or cur_head:
+            sections.append((cur_head, cur))
+        if not sections:
+            sections = [("", blocks)]
 
-        for pg in pages:
-            slide = prs.slides.add_slide(blank)
-            slide.background.fill.solid()
-            slide.background.fill.fore_color.rgb = RGBColor(250, 250, 255)
+        def weight(kind, val):
+            txt = val[1] if kind == "item" else str(val)
+            return max(1, len(txt) // 42 + 1) + (1 if kind == "leader" else 0)
 
-            top_bar = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(0.16))
-            top_bar.fill.solid()
-            top_bar.fill.fore_color.rgb = RGBColor(124, 58, 237)
-            top_bar.line.fill.background()
-            top_bar.shadow.inherit = False
+        sections = [(h, b) for h, b in sections if b] or sections
+        idx = 0
+        for head, body in sections:
+            pages, cur_p, used = [], [], 0
+            for kind, val in body:
+                w = weight(kind, val)
+                if used + w > 8 and cur_p:
+                    pages.append(cur_p)
+                    cur_p, used = [], 0
+                cur_p.append((kind, val))
+                used += w
+            if cur_p or not pages:
+                pages.append(cur_p)
 
-            htx = slide.shapes.add_textbox(Inches(0.8), Inches(0.36), Inches(11.8), Inches(0.7))
-            hp = htx.text_frame.paragraphs[0]
-            hp.text = title
-            hp.font.size, hp.font.bold = Pt(18), True
-            hp.font.color.rgb = RGBColor(91, 33, 182)
+            for pi, pg in enumerate(pages):
+                idx += 1
+                s2 = _slide(prs)
+                raw_head = strip_emoji(re.sub(r'^\s*\d+[\.\)]\s*', '', head)) or title
+                raw_head = re.split(r'\s*·\s*', raw_head)[0].strip() or title
+                label = _wrap_for_slide(raw_head, 26, 1)
+                _eyebrow(s2, f"{idx:02d}   ·   {label}")
+                _headline(s2, _wrap_for_slide(label, 20, 2)
+                          + (f"  ({pi+1})" if len(pages) > 1 else ""),
+                          size=30 if len(label) <= 16 else 25, y=1.12, h=0.9)
 
-            btx = slide.shapes.add_textbox(Inches(0.8), Inches(1.25), Inches(11.8), Inches(5.9))
-            tf = btx.text_frame
-            tf.word_wrap = True
-            first = True
-            for kind, val in pg:
-                p = tf.paragraphs[0] if first else tf.add_paragraph()
-                first = False
-                if kind == "head":
-                    p.text = "▌ " + val
-                    p.font.size, p.font.bold = Pt(19), True
-                    p.font.color.rgb = RGBColor(91, 33, 182)
-                    p.space_before = Pt(10)
-                elif kind == "leader":
-                    p.text = "💡 인도자 가이드 — " + val
-                    p.font.size, p.font.bold = Pt(15), True
-                    p.font.color.rgb = RGBColor(2, 132, 199)
-                    p.space_before = Pt(6)
-                elif kind == "quote":
-                    p.text = "   ▸ " + val
-                    p.font.size, p.font.italic = Pt(13), True
-                    p.font.color.rgb = RGBColor(67, 56, 202)
-                elif kind == "item":
-                    num, text = val
-                    p.text = f"   {num}. {text}"
-                    p.font.size = Pt(15)
-                    p.font.color.rgb = RGBColor(30, 41, 59)
-                else:
-                    p.text = val
-                    p.font.size = Pt(15)
-                    p.font.color.rgb = RGBColor(30, 41, 59)
+                y = 2.22
+                for kind, val in pg:
+                    if kind == "leader":
+                        h = 0.30 + 0.22 * max(1, len(str(val)) // 50 + 1)
+                        card = _bar(s2, TPL["M"], y, TPL["CW"], h, "EAF4FB")
+                        card.line.color.rgb = _c("9FC7E3")
+                        card.line.width = Pt(0.75)
+                        _bar(s2, TPL["M"], y, 0.05, h, TPL["accent"])
+                        _tb(s2, TPL["M"] + 0.22, y + 0.09, TPL["CW"] - 0.44, 0.22,
+                            "인도자 가이드", size=10.5, bold=True, color=TPL["accent"],
+                            font=TPL["sans"], space_after=0)
+                        _tb(s2, TPL["M"] + 0.22, y + 0.33, TPL["CW"] - 0.44, h - 0.42,
+                            _wrap_for_slide(val, 54, 3), size=13, bold=True,
+                            color="1D4F73", font=TPL["sans"], line_spacing=1.4, space_after=0)
+                        y += h + 0.14
+                    elif kind == "quote":
+                        _bar(s2, TPL["M"], y, 0.014, 0.42, TPL["accent2"])
+                        _tb(s2, TPL["M"] + 0.22, y, TPL["CW"] - 0.22, 0.42,
+                            _wrap_for_slide(val, 54, 2), size=12.5, color=TPL["muted"],
+                            font=TPL["serif"], line_spacing=1.35, space_after=0)
+                        y += 0.52
+                    elif kind == "item":
+                        num, text = val
+                        h = 0.42 + 0.18 * (len(text) // 52)
+                        _bar(s2, TPL["M"], y, TPL["CW"], h, TPL["card"])
+                        _tb(s2, 0.84, y + 0.06, 0.55, 0.34, str(num), size=16, bold=True,
+                            color=TPL["accent"], font=TPL["serif"], align=PP_ALIGN.CENTER,
+                            space_after=0)
+                        _tb(s2, 1.50, y + 0.07, 7.60, h - 0.14, _wrap_for_slide(text, 54, 2),
+                            size=13.5, color=TPL["body"], font=TPL["sans"],
+                            line_spacing=1.4, space_after=0)
+                        y += h + 0.10
+                    else:
+                        h = 0.30 + 0.22 * (len(str(val)) // 50)
+                        _tb(s2, TPL["M"], y, TPL["CW"], h + 0.2, _wrap_for_slide(val, 52, 3),
+                            size=14, color=TPL["body"], font=TPL["sans"],
+                            line_spacing=1.5, space_after=0)
+                        y += h + 0.14
+                    if y > 5.05:
+                        break
 
         bio = io.BytesIO()
         prs.save(bio)
@@ -2600,134 +2897,134 @@ def parse_sermon_content(title, scripture, summary_content, full_sermon=""):
             f"주님, 오늘 [{title}] 말씀({scripture})을 마음에 새기고 순종하게 하옵소서. "
             f"예수님의 이름으로 기도드립니다. 아멘.")
 
-    while len(points) < 4:
-        idx = len(points)
-        extra = a["key_sentences"][idx] if len(a["key_sentences"]) > idx else prop
-        points.append(extra)
+    # 대지가 하나도 없을 때만 원고에서 보충한다 (적용문을 대지로 잘못 올리지 않도록)
+    if not points:
+        for sec in a["sections"][:3]:
+            points.append(f"{_trim_title(sec['headline'])}\n\u25b8 원고 근거: {sec['evidence'][:200]}")
+    if not points:
+        points = [prop]
 
-    return {"prop": prop, "points": points, "app": app_text, "prayer": prayer_text}
+    # 본문 말씀 인용 (📜 섹션)
+    verses = []
+    mv = re.search(r'📜[^\n]*\n(.+?)(?=\n\s*[🎯🔑📌💡🙏]|\Z)', text, re.DOTALL)
+    if mv:
+        for ln in mv.group(1).split("\n"):
+            ln = ln.strip()
+            if len(ln) > 5:
+                verses.append(ln)
+    if not verses:
+        for sent in a["sentences"]:
+            if ('"' in sent or '“' in sent) and SCRIPTURE_REF_RE.search(sent):
+                verses.append(sent)
+            if len(verses) >= 3:
+                break
+
+    return {"prop": prop, "points": points, "app": app_text,
+            "prayer": prayer_text, "verses": verses[:5]}
+
+
+def _split_point(raw: str):
+    """대지 한 덩어리에서 제목 / 인용구 / 출처 / 본문 / 카드를 뽑아낸다."""
+    lines = [l.strip() for l in str(raw or "").split("\n") if l.strip()]
+    if not lines:
+        return "", "", "", "", []
+    head = lines[0]
+    ref = ""
+    m = re.search(r'\[\s*근거\s*성구\s*[:：]\s*([^\]]+)\]', head)
+    if m:
+        ref = m.group(1).strip()
+        head = head[:m.start()].strip()
+    head = re.sub(r'^\s*\d+[\.\)]\s*', '', head).strip(' .')
+
+    quote, body_parts, cards = "", [], []
+    for l in lines[1:]:
+        t = re.sub(r'^▸\s*', '', l)
+        if t.startswith("원고 근거"):
+            q = t.split(":", 1)[-1].strip().strip('"“”')
+            if not quote:
+                quote = q
+        elif t.startswith("주해") or t.startswith("설명"):
+            body_parts.append(t.split(":", 1)[-1].strip())
+        else:
+            mm = re.match(r'^(.{2,16}?)\s*[—\-–:]\s*(.+)$', t)
+            if mm and len(t) < 90:
+                cards.append((mm.group(1).strip(), mm.group(2).strip()))
+            else:
+                body_parts.append(t)
+
+    if not quote and body_parts:
+        quote = body_parts[0][:70]
+    body = "\n".join(body_parts) or head
+    return head, quote, ref, body, cards
 
 
 @st.cache_data(show_spinner=False, max_entries=24)
 def generate_sermon_structure_pptx_bytes(title: str, scripture: str, summary_content: str,
                                          full_sermon: str = "", seed_base: str = "",
                                          bg_theme: str = "자연 · 풍경") -> bytes:
+    """
+    설교 요약 PPT — 업로드해 주신 템플릿과 같은 구성.
+    표지 → 들어가며 → 설교의 흐름 → 본문 말씀 → 대지 1~3 → 핵심 말씀 → 삶의 적용 → 나가며 → 기도
+    """
     try:
-        prs = Presentation()
-        prs.slide_width, prs.slide_height = Inches(13.333), Inches(7.5)
-        blank = prs.slide_layouts[6]
+        prs = _new_deck()
+        parsed = parse_sermon_content(title, scripture, summary_content, full_sermon)
+        a = analyze_manuscript(full_sermon)
+        points = parsed["points"]
+        seed = seed_base or f"{title}|{scripture}"
 
-        def image_dim_slide(slide, seed_key="", dim=0.62):
-            slide.background.fill.solid()
-            slide.background.fill.fore_color.rgb = RGBColor(15, 23, 42)
-            b = get_background_bytes(f"{seed_base}|{seed_key}", bg_theme, size=(1280, 720))
-            if b:
-                slide.shapes.add_picture(io.BytesIO(b), 0, 0, width=Inches(13.333), height=Inches(7.5))
-            ov = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(13.333), Inches(7.5))
-            ov.fill.solid()
-            ov.fill.fore_color.rgb = RGBColor(10, 15, 30)
-            set_shape_fill_alpha(ov, dim)          # ★ 이미지가 완전히 가려지던 버그 수정
-            ov.line.fill.background()
-            ov.shadow.inherit = False
+        heads, blocks = [], []
+        for p_raw in points[:4]:
+            h, q, r, b, cs = _split_point(p_raw)
+            heads.append(h or title)
+            blocks.append((h or title, q, r or scripture, b, cs))
 
-        def light_slide(slide):
-            slide.background.fill.solid()
-            slide.background.fill.fore_color.rgb = RGBColor(248, 250, 252)
+        # 1. 표지
+        sub = re.split(r'(?<=[.!?])\s+', str(parsed.get("prop") or ""))[0]
+        sl_cover(prs, title, sub[:56], scripture, seed, bg_theme)
 
-        def body_slide(idx_label, heading, body, bg=None):
-            s = prs.slides.add_slide(blank)
-            light_slide(s)
-            tb = s.shapes.add_textbox(Inches(0.9), Inches(0.7), Inches(11.5), Inches(6.0))
-            tf = tb.text_frame
-            tf.word_wrap = True
-            h = tf.paragraphs[0]
-            h.text = f"▌ {idx_label} {heading}".strip()
-            h.font.size, h.font.bold = Pt(29), True
-            h.font.color.rgb = RGBColor(91, 33, 182)
+        # 2. 들어가며
+        intro = (a["paragraphs"][0] if a["paragraphs"] else parsed["prop"]) or parsed["prop"]
+        sl_text(prs, "들어가며", "말씀 앞에 서며", intro, head_size=32)
 
-            for kind, val in parse_doc_blocks(body or ""):
-                if kind == "blank":
-                    continue
-                bp = tf.add_paragraph()
-                if kind == "leader":
-                    bp.text = "💡 인도자 가이드 — " + val
-                    bp.font.size, bp.font.bold = Pt(16), True
-                    bp.font.color.rgb = RGBColor(2, 132, 199)
-                elif kind == "quote":
-                    bp.text = "   ▸ " + val
-                    bp.font.size, bp.font.italic = Pt(15), True
-                    bp.font.color.rgb = RGBColor(67, 56, 202)
-                elif kind == "head":
-                    bp.text = val
-                    bp.font.size, bp.font.bold = Pt(19), True
-                    bp.font.color.rgb = RGBColor(91, 33, 182)
-                elif kind == "item":
-                    num, text = val
-                    bp.text = f"   {num}. {text}"
-                    bp.font.size = Pt(17)
-                    bp.font.color.rgb = RGBColor(30, 41, 59)
-                else:
-                    bp.text = val
-                    bp.font.size = Pt(18)
-                    bp.font.color.rgb = RGBColor(30, 41, 59)
-            return s
+        # 3. 설교의 흐름
+        sl_outline(prs, heads or [title])
 
-        p = parse_sermon_content(title, scripture, summary_content, full_sermon)
-        points = p["points"]
+        # 4. 본문 말씀
+        verses = parsed.get("verses") or []
+        if not verses:
+            verses = [s2 for s2 in a["key_sentences"][:3] if s2] or [parsed["prop"]]
+        sl_scripture(prs, scripture, verses)
 
-        # 1 표지
-        s1 = prs.slides.add_slide(blank)
-        image_dim_slide(s1, "cover", dim=0.66)
-        tb1 = s1.shapes.add_textbox(Inches(1.2), Inches(2.2), Inches(10.9), Inches(3.6))
-        tb1.text_frame.word_wrap = True
-        pp = tb1.text_frame.paragraphs[0]
-        pp.text = f"주 일 설 교\n\n{title}\n\n본문 · {scripture}"
-        pp.font.size, pp.font.bold = Pt(36), True
-        pp.font.color.rgb, pp.alignment = RGBColor(253, 224, 71), PP_ALIGN.CENTER
+        # 5~7. 대지
+        labels = ["첫 번째 대지", "두 번째 대지", "세 번째 대지", "네 번째 대지"]
+        for i, (h, q, r, b, cs) in enumerate(blocks[:4]):
+            sl_point(prs, i + 1, labels[i], h, q, r, b, cs)
 
-        # 2 핵심 메시지
-        body_slide("들어가며 ·", f"핵심 메시지 ({scripture})", p["prop"])
+        # 8. 핵심 말씀
+        vlist = [re.sub(r'^\s*\d+\s+', '', v).strip() for v in (parsed.get("verses") or [])]
+        vlist = [v for v in vlist if v]
+        keyq = min(vlist, key=lambda v: abs(len(v) - 45)) if vlist else parsed["prop"]
+        if len(keyq) > 90:
+            keyq = re.split(r'(?<=[.!?])\s+|,\s+', keyq)[0][:90]
+        sl_keyverse(prs, _wrap_for_slide(keyq, 30, 3), scripture,
+                    (a["applications"][0] if a["applications"] else ""), seed, bg_theme)
 
-        # 3 흐름
-        s3 = prs.slides.add_slide(blank)
-        light_slide(s3)
-        h3 = s3.shapes.add_textbox(Inches(0.9), Inches(0.7), Inches(11.5), Inches(0.9))
-        hp3 = h3.text_frame.paragraphs[0]
-        hp3.text = "설교의 흐름 (Sermon Outline)"
-        hp3.font.size, hp3.font.bold = Pt(30), True
-        hp3.font.color.rgb = RGBColor(30, 58, 138)
-        for i in range(min(4, len(points))):
-            shp = s3.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE, Inches(0.9),
-                                      Inches(2.0 + i * 1.15), Inches(11.5), Inches(0.95))
-            shp.fill.solid()
-            shp.fill.fore_color.rgb = RGBColor(255, 255, 255)
-            shp.line.color.rgb = RGBColor(203, 213, 225)
-            shp.shadow.inherit = False
-            cp = shp.text_frame.paragraphs[0]
-            cp.text = f"  0{i+1}   {_trim_title(points[i].split(chr(10))[0], 52)}"
-            cp.font.size, cp.font.bold = Pt(18), True
-            cp.font.color.rgb = RGBColor(30, 41, 59)
+        # 9. 삶의 적용
+        apps = [re.sub(r'^\s*[-•]?\s*\d+[\.\)]\s*', '', x).strip()
+                for x in str(parsed["app"]).split("\n") if x.strip()]
+        sl_numbered(prs, "삶의 적용", "이렇게 살아갑시다", apps or [parsed["prop"]])
 
-        # 4~7 대지
-        for i in range(min(4, len(points))):
-            body_slide(f"0{i+1}.", "", points[i])
+        # 10. 나가며
+        outro = ""
+        for para in reversed(a["paragraphs"][-4:] if a["paragraphs"] else []):
+            if not PRAYER_HINT_RE.search(para):
+                outro = para
+                break
+        sl_text(prs, "나가며", "말씀을 품고 나아가며", outro or parsed["prop"], head_size=32)
 
-        # 8 적용
-        body_slide("삶의 적용 ·", "이렇게 살아갑시다", p["app"])
-
-        # 9 기도
-        s9 = prs.slides.add_slide(blank)
-        image_dim_slide(s9, "prayer", dim=0.70)
-        tb9 = s9.shapes.add_textbox(Inches(1.1), Inches(1.3), Inches(11.1), Inches(5.0))
-        tb9.text_frame.word_wrap = True
-        h9 = tb9.text_frame.paragraphs[0]
-        h9.text = "결단과 마침 기도문"
-        h9.font.size, h9.font.bold = Pt(28), True
-        h9.font.color.rgb = RGBColor(253, 224, 71)
-        b9 = tb9.text_frame.add_paragraph()
-        b9.text = "\n" + p["prayer"]
-        b9.font.size = Pt(18)
-        b9.font.color.rgb = RGBColor(241, 245, 249)
+        # 11. 기도
+        sl_prayer(prs, parsed["prayer"])
 
         bio = io.BytesIO()
         prs.save(bio)
@@ -2738,54 +3035,63 @@ def generate_sermon_structure_pptx_bytes(title: str, scripture: str, summary_con
 
 @st.cache_data(show_spinner=False, max_entries=16)
 def generate_cardnews_pptx_bytes(cards_json: str, church_name: str = "",
-                                 seed_base: str = "", bg_theme: str = "자연 · 풍경") -> bytes:
-    slides_data = json.loads(cards_json)
+                                 seed_base: str = "", bg_theme: str = "자연 · 풍경",
+                                 scripture: str = "") -> bytes:
+    """카드뉴스 PPT — 설교 PPT와 같은 디자인 언어(밝은 배경 · 네이비 세리프 · 블루 라벨)"""
+    cards = json.loads(cards_json)
     prs = Presentation()
-    prs.slide_width, prs.slide_height = Inches(10), Inches(10)
+    prs.slide_width = prs.slide_height = Inches(10)          # 1:1 정사각형
     blank = prs.slide_layouts[6]
 
-    for idx, item in enumerate(slides_data):
-        slide = prs.slides.add_slide(blank)
+    for idx, item in enumerate(cards):
+        s = prs.slides.add_slide(blank)
+        base = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(10), Inches(10))
+        base.fill.solid()
+        base.fill.fore_color.rgb = _c(TPL["bg"])
+        base.line.fill.background()
+        base.shadow.inherit = False
+
         b = get_background_bytes(f"{seed_base}|{idx}", bg_theme)
         if b:
-            slide.shapes.add_picture(io.BytesIO(b), Inches(0), Inches(0), width=Inches(10), height=Inches(10))
-        else:
-            slide.background.fill.solid()
-            slide.background.fill.fore_color.rgb = RGBColor(15, 23, 42)
-
-        ov = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(10))
+            s.shapes.add_picture(io.BytesIO(b), 0, 0, width=Inches(10), height=Inches(10))
+        ov = s.shapes.add_shape(MSO_SHAPE.RECTANGLE, 0, 0, Inches(10), Inches(10))
         ov.fill.solid()
-        ov.fill.fore_color.rgb = RGBColor(10, 15, 30)
-        set_shape_fill_alpha(ov, 0.72)             # ★ 배경이 보이도록 반투명 처리
+        ov.fill.fore_color.rgb = _c(TPL["white"])
+        set_shape_fill_alpha(ov, 0.80)
         ov.line.fill.background()
         ov.shadow.inherit = False
 
-        bd = slide.shapes.add_textbox(Inches(0.8), Inches(0.8), Inches(2.4), Inches(0.6))
-        bp = bd.text_frame.paragraphs[0]
-        bp.text = f"CARD {item.get('card_number', idx + 1)}"
-        bp.font.size, bp.font.bold = Pt(14), True
-        bp.font.color.rgb = RGBColor(129, 140, 248)
+        head = strip_emoji(str(item.get("headline", "")))
+        body = strip_emoji(str(item.get("body_text", "")))
 
-        tbox = slide.shapes.add_textbox(Inches(0.8), Inches(1.7), Inches(8.4), Inches(2.4))
-        tbox.text_frame.word_wrap = True
-        tp = tbox.text_frame.paragraphs[0]
-        tp.text = item.get("headline", "")
-        tp.font.size, tp.font.bold = Pt(30), True
-        tp.font.color.rgb = RGBColor(253, 224, 71)
+        _tb(s, 1.0, 1.0, 8.0, 0.35, f"CARD {item.get('card_number', idx + 1):02d}",
+            size=13, bold=True, color=TPL["accent"], font=TPL["sans"], space_after=0, spc=400)
+        _bar(s, 1.0, 1.48, 0.5, 0.02, TPL["accent"])
 
-        bbox = slide.shapes.add_textbox(Inches(0.8), Inches(4.2), Inches(8.4), Inches(4.6))
-        bbox.text_frame.word_wrap = True
-        bb = bbox.text_frame.paragraphs[0]
-        bb.text = item.get("body_text", "")
-        bb.font.size = Pt(20)
-        bb.font.color.rgb = RGBColor(241, 245, 249)
+        h_size = 36 if len(head) <= 16 else (30 if len(head) <= 26 else 25)
+        h_lines = min(3, max(1, len(head) // 18 + 1))
+        paras = [p for p in body.split("\n") if p.strip()][:4]
+        b_lines = sum(min(3, max(1, len(p) // 28 + 1)) for p in paras) or 1
 
+        h_h = h_lines * (h_size / 72 * 1.35)
+        b_h = b_lines * (18 / 72 * 1.75)
+        gap = 0.62
+        top = 2.15 + max(0.0, ((7.55 - 2.15) - (h_h + gap + b_h)) / 2)
+
+        _tb(s, 1.0, top, 8.0, h_h + 0.3, _wrap_for_slide(head, 18, 3),
+            size=h_size, bold=True, color=TPL["ink"], font=TPL["serif"],
+            line_spacing=1.35, space_after=0)
+        _tb(s, 1.0, top + h_h + gap, 8.0, b_h + 0.4,
+            [_wrap_for_slide(p, 28, 3) for p in paras] or [""],
+            size=18, color=TPL["body"], font=TPL["sans"], line_spacing=1.75, space_after=14)
+
+        _bar(s, 1.0, 8.10, 0.66, 0.012, TPL["accent2"])
+        if scripture:
+            _tb(s, 1.0, 8.32, 8.0, 0.4, f"「 {scripture} 」", size=15, bold=True,
+                color=TPL["accent"], font=TPL["serif"], space_after=0)
         if church_name:
-            cbox = slide.shapes.add_textbox(Inches(0.8), Inches(9.0), Inches(8.4), Inches(0.6))
-            cp = cbox.text_frame.paragraphs[0]
-            cp.text = church_name
-            cp.font.size = Pt(14)
-            cp.font.color.rgb, cp.alignment = RGBColor(147, 197, 253), PP_ALIGN.CENTER
+            _tb(s, 1.0, 8.80, 8.0, 0.4, church_name, size=13, color=TPL["muted"],
+                font=TPL["sans"], space_after=0)
 
     bio = io.BytesIO()
     prs.save(bio)
@@ -3081,7 +3387,8 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
                     bg_seed(0), current_bg_theme()
                 )
             else:
-                ppt_bytes = create_document_pptx_bytes(title, content)
+                ppt_bytes = create_document_pptx_bytes(title, content,
+                                                       bg_seed(0), current_bg_theme())
             st.download_button("📥 PPT", data=ppt_bytes, file_name=f"{title}.pptx",
                                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                                key=f"dl_ppt_{state_key}")
@@ -3853,6 +4160,9 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 🔑 이 설교의 핵심 키워드
 (원고에 실제로 반복 등장한 단어 6~8개, 쉼표 구분)
 
+📜 본문 말씀 (인용)
+(설교 본문 구절을 개역개정으로 1~3절 인용. 각 줄 맨 앞에 절 번호를 쓸 것)
+
 📌 강해적 3대지
 1. (대지 제목 — 원고에 나온 표현으로. 상투어 금지) [근거 성구: 원고에 인용된 구절]
    ▸ 원고 근거: "원고에서 그대로 가져온 문장 1~2개"
@@ -4036,7 +4346,8 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                     with e2:
                         st.download_button("📥 PPT 전체",
                                            data=generate_cardnews_pptx_bytes(cj, st.session_state.cn_church_name,
-                                                                             bg_seed(0), current_bg_theme()),
+                                                                             bg_seed(0), current_bg_theme(),
+                                                                             st.session_state.sermon_scripture),
                                            file_name=f"{st.session_state.sermon_title}_카드뉴스.pptx",
                                            mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                                            key="cn_dl_ppt")
