@@ -36,7 +36,7 @@ import zipfile
 import urllib.parse
 import urllib.request
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from docx import Document
 from docx.shared import Pt as DocxPt, RGBColor as DocxRGB
@@ -383,6 +383,86 @@ THEOLOGY_LENSES = {
             "- 문제 → 복음 → 그러므로 그리스도 안에서, 이 흐름을 유지하십시오.\n"
             "- 반드시 그리스도께서 '우리 대신' 하신 일로 착지하십시오. 도덕적 권면으로 끝내지 마십시오.\n"
             "- 회의하는 사람도 끝까지 들을 수 있게, 반론을 먼저 공정하게 말한 뒤 답하십시오."
+        ),
+    },
+    "마틴 로이드 존스 관점 (강해설교 · 교리적 논증)": {
+        "desc": "본문을 논리적으로 논증하며 죄와 은혜를 깊이 파고들고, 성령의 능력 있는 선포를 지향합니다.",
+        "guide": (
+            "- 본문을 한 절 한 절 논리적으로 논증하십시오. '무엇을 말하는가 → 왜 그러한가 → 그러므로 무엇인가' 순서로.\n"
+            "- 인간의 죄와 무능력을 회피하지 말고 정면으로 다룬 뒤, 그 위에 은혜를 세우십시오.\n"
+            "- 교리(칭의·중생·성화)를 설교 안에서 분명히 가르치되, 청중의 영혼을 향해 말하십시오.\n"
+            "- 감정에 호소하기 전에 진리로 설득하고, 마지막에 성령의 역사하심을 간구하는 선포로 맺으십시오.\n"
+            "- '논리에 불이 붙은 것'이 설교라는 원칙대로, 뜨겁되 논리가 흐트러지지 않게 하십시오."
+        ),
+    },
+    "존 스토트 관점 (강해 · 이중 경청 · 균형)": {
+        "desc": "본문 세계와 오늘의 세계를 잇는 '다리 놓기' 설교로, 균형과 통합을 중시합니다.",
+        "guide": (
+            "- '이중 경청' — 성경 본문의 세계와 오늘의 세상을 함께 들으십시오. 두 세계를 잇는 다리를 세우는 것이 목표입니다.\n"
+            "- 본문이 말하는 것 이상도 이하도 말하지 마십시오. 본문의 지배를 받는 설교여야 합니다.\n"
+            "- 복음 전도와 사회적 책임을 대립시키지 말고 함께 다루십시오.\n"
+            "- 회의하는 사람도 납득할 수 있도록, 반론을 공정하게 소개한 뒤 성경으로 답하십시오.\n"
+            "- 절제된 문장, 명확한 구조, 지적 정직성을 유지하십시오."
+        ),
+    },
+    "매튜 헨리 관점 (본문 축자 주석 · 실천적 적용)": {
+        "desc": "본문을 구절 단위로 세밀히 주석하고, 각 구절마다 경건한 적용을 붙입니다.",
+        "guide": (
+            "- 본문을 구절 단위로 나누어 차례대로 주석하십시오. 건너뛰지 마십시오.\n"
+            "- 각 구절마다 '관찰 → 의미 → 우리에게 주는 교훈' 세 걸음을 붙이십시오.\n"
+            "- 성경으로 성경을 해석하십시오. 관련 구절을 자주 연결하십시오.\n"
+            "- 문장은 따뜻하고 경건하게, 독자의 마음을 살피듯 쓰십시오.\n"
+            "- 사변적 논쟁보다 실천적 경건과 위로를 앞세우십시오."
+        ),
+    },
+    "해돈 로빈슨 관점 (빅 아이디어 강해설교)": {
+        "desc": "본문의 '큰 개념(Big Idea)' 하나를 찾아, 설교 전체를 그 하나로 통일시킵니다.",
+        "guide": (
+            "- 먼저 본문의 주해적 개념을 '주제(무엇을 말하는가) + 보충어(무엇이라 말하는가)' 한 문장으로 규정하십시오.\n"
+            "- 그 한 문장(빅 아이디어)을 설교 전체가 섬기게 하십시오. 대지는 그 개념을 설명·증명·적용하는 도구입니다.\n"
+            "- 설교 목적을 분명히 하십시오: 이 설교를 들은 청중이 무엇을 알고, 느끼고, 행하기를 원하는가.\n"
+            "- 빅 아이디어를 설교 안에서 최소 3회 같은 문장으로 반복하십시오.\n"
+            "- 곁가지 정보는 아무리 흥미로워도 빅 아이디어를 섬기지 않으면 잘라내십시오."
+        ),
+    },
+    "존 맥아더 관점 (절별 강해 · 원어 주해)": {
+        "desc": "본문을 절별로 철저히 주해하며 원어와 문법을 근거로 정확한 의미를 밝힙니다.",
+        "guide": (
+            "- 본문을 절별로 순서대로 강해하십시오. 각 절의 핵심 단어를 원어로 짚고 문법을 설명하십시오.\n"
+            "- 문맥(앞뒤 절, 책 전체)을 근거로 의미를 확정하고, 잘못된 통속적 해석을 분명히 교정하십시오.\n"
+            "- 성경의 무오성과 충족성을 전제로, 본문이 말하는 바를 타협 없이 선포하십시오.\n"
+            "- 예화는 최소화하고 본문 자체의 설명에 지면을 쓰십시오.\n"
+            "- 적용은 순종과 거룩을 향한 분명한 요구로 제시하십시오."
+        ),
+    },
+    "하용조 목사 관점 (성령 · 사도행전적 교회)": {
+        "desc": "성령의 인도하심과 치유·회복, 사도행전적 교회를 향한 열정을 담습니다.",
+        "guide": (
+            "- 본문에서 성령께서 지금 무엇을 하고 계신지를 드러내십시오.\n"
+            "- 상처 입은 영혼을 향한 치유와 회복의 메시지를 담되, 값싼 위로가 아니라 복음의 능력으로 이끄십시오.\n"
+            "- 사도행전적 교회 — 예배·전도·선교·공동체가 살아 있는 교회상을 그리십시오.\n"
+            "- 문장은 따뜻하고 간결하게, 청중과 대화하듯 쓰십시오.\n"
+            "- 개인의 결단을 넘어 공동체와 열방을 향한 헌신으로 확장하십시오."
+        ),
+    },
+    "옥한흠 목사 관점 (제자훈련 · 평신도를 깨운다)": {
+        "desc": "모든 성도를 그리스도의 제자로 세우는 제자훈련의 시각으로 본문을 읽습니다.",
+        "guide": (
+            "- 본문을 '이 말씀이 한 사람을 어떻게 제자로 세우는가'라는 질문으로 읽으십시오.\n"
+            "- 목회자와 평신도의 이분법을 깨십시오. 모든 성도가 사역자임을 본문에서 끌어내십시오.\n"
+            "- 값싼 은혜와 명목상의 신앙을 정직하게 지적하고, 대가를 치르는 제자도로 부르십시오.\n"
+            "- 소그룹·삶공부·순종의 훈련이라는 구체적 통로를 적용에 제시하십시오.\n"
+            "- 한 영혼을 향한 목회자의 진정성이 문장에 배어나게 쓰십시오."
+        ),
+    },
+    "선교적 교회 관점 (보내심 받은 공동체)": {
+        "desc": "교회를 하나님의 선교에 보내심 받은 공동체로 보고, 본문을 그 자리에서 읽습니다.",
+        "guide": (
+            "- 선교의 주체는 교회가 아니라 하나님(Missio Dei)이십니다. 본문에서 보내시는 하나님을 먼저 드러내십시오.\n"
+            "- 교회는 '선교하는 조직'이 아니라 '보내심 받은 백성'입니다. 이 정체성으로 본문을 읽으십시오.\n"
+            "- 성도의 일터·이웃·지역이 곧 선교지임을 구체적으로 짚으십시오.\n"
+            "- 개인 구원에 머물지 말고 하나님 나라의 회복과 이웃 사랑으로 확장하십시오.\n"
+            "- 적용은 '흩어지는 교회'로서 이번 주에 무엇을 할 것인가로 착지시키십시오."
         ),
     },
     "교의학적 관점 (조직신학 주제 중심)": {
@@ -1767,6 +1847,9 @@ def grounded_fallback(kind: str, is_json: bool, card_count: int = 7):
                     f"- 자막 키워드: {', '.join(keys[i*2:i*2+5]) or ', '.join(keys[:5])}", ""]
         return "\n".join(out)
 
+    if kind in ("manna", "today_verse"):
+        return {} if is_json else ""
+
     if kind in ("research", "context"):
         return ("⚠️ 본문 연구 도구는 AI 전용 기능입니다.\n\n"
                 "성경 66권 전체·역사·문학·현대 자료에서 내용을 찾아와야 하므로, "
@@ -3102,6 +3185,212 @@ def generate_cardnews_pptx_bytes(cards_json: str, church_name: str = "",
 # 말씀카드
 # ==============================================================================
 # ==============================================================================
+# 오늘의 만나 / 오늘의 말씀 — 이미지 렌더러
+# ==============================================================================
+SERIF_FONT_PATHS = [
+    "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSerifCJK-Medium.ttc",
+    "/usr/share/fonts/truetype/nanum/NanumMyeongjo.ttf",
+    "C:/Windows/Fonts/batang.ttc",
+    "/System/Library/Fonts/AppleMyungjo.ttf",
+]
+
+
+@st.cache_resource(show_spinner=False)
+def get_serif_font(size: int):
+    for p in SERIF_FONT_PATHS:
+        if os.path.exists(p):
+            try:
+                return PIL.ImageFont.truetype(p, size)
+            except Exception:
+                continue
+    return get_pil_font(size)
+
+
+MONTH_EN = ["January", "February", "March", "April", "May", "June",
+            "July", "August", "September", "October", "November", "December"]
+
+
+@st.cache_data(show_spinner=False, max_entries=48)
+def render_manna_png(date_iso: str, ko_verse: str, ko_ref: str, en_verse: str, en_ref: str,
+                     story_title: str, story_body: str, seed: str = "",
+                     theme: str = "하늘 · 빛") -> bytes:
+    """
+    「365일 성경묵상」 지면과 같은 구성의 '오늘의 만나' 이미지.
+    좌측 큰 박스: 개역개정 + NIV / 우측 패널: 예화 / 상단: 월 이름 + 월/일
+    """
+    W = 1600
+    d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+
+    # ── 먼저 빈 캔버스에 재보고 필요한 높이만큼만 그림을 만든다
+    _m = PIL.ImageDraw.Draw(PIL.Image.new("RGB", (10, 10)))
+    px, pw = W - 430, 360
+    f_st = get_pil_font(27)
+    f_sb = get_pil_font(21)
+    story_t = wrap_korean_text(strip_emoji(story_title or ""), f_st, pw - 70, _m)
+    story_b = wrap_korean_text(strip_emoji(story_body or ""), f_sb, pw - 56, _m)
+    tb_h = _m.multiline_textbbox((0, 0), story_t, font=f_st, spacing=8)[3]
+    bb_h = _m.multiline_textbbox((0, 0), story_b, font=f_sb, spacing=13)[3]
+    panel_h = 60 + tb_h + 26 + bb_h + 40
+
+    bx0, bx1 = 60, px - 60
+    inner_w = bx1 - bx0 - 110
+    ko = str(ko_verse or "").strip()
+    size = 46 if len(ko) <= 60 else (40 if len(ko) <= 100 else 34)
+    f_ko = get_serif_font(size)
+    f_ref = get_serif_font(26)
+    f_en = get_serif_font(27)
+    f_enref = get_serif_font(23)
+    ko_wrapped = wrap_korean_text(ko, f_ko, inner_w, _m)
+    en_wrapped = wrap_korean_text(str(en_verse or "").strip(), f_en, inner_w, _m)
+    ko_h = _m.multiline_textbbox((0, 0), ko_wrapped, font=f_ko, spacing=int(size * 0.55))[3]
+    en_h = _m.multiline_textbbox((0, 0), en_wrapped, font=f_en, spacing=14)[3]
+    ref_h = _m.textbbox((0, 0), "고후 5:17", font=f_ref)[3]
+    content_h = ko_h + 22 + ref_h + 62 + en_h + 16 + ref_h
+    box_h = content_h + 130
+
+    TOP = 250
+    H = TOP + max(box_h, panel_h) + 110
+
+    # ── 배경: 사진을 아주 옅은 푸른 톤으로 깔기
+    img = PIL.Image.new("RGB", (W, H), (245, 248, 253))
+    try:
+        b = get_background_bytes(seed or date_iso, theme, size=(1080, 1080))
+        if b:
+            photo = PIL.Image.open(io.BytesIO(b)).convert("RGB").resize((W, H))
+            photo = photo.filter(PIL.ImageFilter.GaussianBlur(radius=3))
+            tint = PIL.Image.new("RGB", (W, H), (226, 236, 250))
+            img = PIL.Image.blend(photo, tint, 0.80)
+    except Exception:
+        pass
+
+    d = PIL.ImageDraw.Draw(img, "RGBA")
+
+    NAVY = (36, 58, 96)
+    BLUE = (78, 108, 168)
+    SOFT = (120, 146, 194)
+    PANEL = (222, 232, 247, 235)
+
+    # ── 상단: 월 이름 + 날짜
+    f_month = get_serif_font(72)
+    f_day = get_serif_font(88)
+    mtxt = MONTH_EN[d0.month - 1]
+    mb = d.textbbox((0, 0), mtxt, font=f_month)
+    d.text((W - 560 - (mb[2] - mb[0]) // 2, 66), mtxt, fill=(140, 166, 210), font=f_month)
+    daytxt = f"{d0.month}/{d0.day}"
+    db = d.textbbox((0, 0), daytxt, font=f_day)
+    d.text((W - 90 - (db[2] - db[0]), 58), daytxt, fill=(150, 174, 214), font=f_day)
+    d.line([(70, 210), (W - 70, 210)], fill=(180, 200, 228, 180), width=2)
+
+    # ── 우측 예화 패널
+    d.rounded_rectangle([px, TOP, px + pw, TOP + panel_h], radius=10, fill=PANEL)
+    d.rectangle([px + 24, TOP + 38, px + 33, TOP + 47], fill=BLUE)
+    d.multiline_text((px + 44, TOP + 30), story_t, fill=NAVY, font=f_st, spacing=8)
+    d.multiline_text((px + 28, TOP + 30 + tb_h + 26), story_b, fill=(58, 78, 118),
+                     font=f_sb, spacing=13)
+
+    # ── 좌측 말씀 박스
+    by0, by1 = TOP, TOP + box_h
+    d.rectangle([bx0, by0, bx1, by1], fill=(255, 255, 255, 168), outline=BLUE, width=4)
+
+    y = by0 + max(50, (box_h - content_h) // 2)
+    d.multiline_text((bx0 + 55, y), ko_wrapped, fill=(26, 34, 52),
+                     font=f_ko, spacing=int(size * 0.55))
+    y += ko_h + 22
+    d.text((bx0 + 55, y), f"– {ko_ref}", fill=(70, 92, 132), font=f_ref)
+    y += ref_h + 62
+    d.multiline_text((bx0 + 55, y), en_wrapped, fill=SOFT, font=f_en, spacing=14)
+    y += en_h + 16
+    d.text((bx0 + 55, y), f"– {en_ref}", fill=SOFT, font=f_enref)
+
+    # ── 하단 날짜
+    f_small = get_pil_font(22)
+    d.text((70, H - 58), d0.strftime("%Y년 %m월 %d일") + "  ·  오늘의 만나",
+           fill=(130, 152, 190), font=f_small)
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=48)
+def render_today_verse_png(date_iso: str, verse: str, ref: str, church: str = "",
+                           seed: str = "", theme: str = "자연 · 풍경",
+                           size_key: str = "1:1 정사각형") -> bytes:
+    """오늘의 말씀 카드 — 배경 사진 + 성경 구절 + 날짜"""
+    W, H = (1080, 1080) if size_key.startswith("1:1") else (1080, 1350)
+    d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+
+    base = PIL.Image.new("RGBA", (W, H), (15, 23, 42, 255))
+    try:
+        b = get_background_bytes(seed or f"today|{date_iso}", theme, size=(1080, 1080))
+        if b:
+            base = PIL.Image.open(io.BytesIO(b)).convert("RGBA").resize((W, H))
+    except Exception:
+        pass
+
+    overlay = PIL.Image.new("RGBA", (W, H), (7, 12, 28, 130))
+    img = PIL.Image.alpha_composite(base, overlay)
+
+    # 위·아래 스크림
+    scrim = PIL.Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sd = PIL.ImageDraw.Draw(scrim)
+    for yy in range(H):
+        if yy < int(H * 0.30):
+            a = int(120 * (1 - yy / (H * 0.30)))
+        elif yy > int(H * 0.72):
+            a = int(140 * ((yy - H * 0.72) / (H * 0.28)))
+        else:
+            a = 0
+        if a:
+            sd.line([(0, yy), (W, yy)], fill=(4, 8, 20, a))
+    img = PIL.Image.alpha_composite(img, scrim)
+    d = PIL.ImageDraw.Draw(img)
+
+    # 상단 날짜
+    f_date = get_pil_font(30)
+    dtxt = d0.strftime("%Y. %m. %d")
+    wtxt = ["월", "화", "수", "목", "금", "토", "일"][d0.weekday()] + "요일"
+    line = f"{dtxt}  {wtxt}"
+    bb = d.textbbox((0, 0), line, font=f_date)
+    d.text(((W - (bb[2] - bb[0])) // 2, 92), line, fill=(253, 224, 71, 255), font=f_date)
+    d.line([(W // 2 - 46, 148), (W // 2 + 46, 148)], fill=(253, 224, 71, 220), width=3)
+
+    # 본문
+    txt = strip_emoji(str(verse or "").strip())
+    fs = 54 if len(txt) <= 45 else (46 if len(txt) <= 80 else 38)
+    f_v = get_serif_font(fs)
+    wrapped = wrap_korean_text(txt, f_v, W - 190, d)
+    vb = d.multiline_textbbox((0, 0), wrapped, font=f_v, spacing=int(fs * 0.62))
+    vw, vh = vb[2] - vb[0], vb[3] - vb[1]
+    vy = max(230, (H - vh) // 2 - 20)
+    for dx in (-2, -1, 0, 1, 2):
+        for dy in (-2, -1, 0, 1, 2):
+            if dx or dy:
+                d.multiline_text(((W - vw) // 2 + dx, vy + dy), wrapped, font=f_v,
+                                 fill=(0, 0, 0, 210), align="center", spacing=int(fs * 0.62))
+    d.multiline_text(((W - vw) // 2, vy), wrapped, font=f_v, fill=(255, 255, 255, 255),
+                     align="center", spacing=int(fs * 0.62))
+
+    # 출처
+    f_r = get_serif_font(34)
+    rtxt = f"「 {ref} 」"
+    rb = d.textbbox((0, 0), rtxt, font=f_r)
+    d.text(((W - (rb[2] - rb[0])) // 2, min(vy + vh + 60, H - 200)), rtxt,
+           fill=(253, 224, 71, 255), font=f_r)
+
+    if church:
+        f_c = get_pil_font(26)
+        cb = d.textbbox((0, 0), church, font=f_c)
+        d.text(((W - (cb[2] - cb[0])) // 2, H - 96), church,
+               fill=(190, 210, 245, 255), font=f_c)
+
+    out = io.BytesIO()
+    img.convert("RGB").save(out, format="PNG")
+    return out.getvalue()
+
+
+# ==============================================================================
 # 문맥 연구용 도해(圖解) 이미지 — 본문 단락 구조 · 연대표를 그림으로
 # ==============================================================================
 @st.cache_data(show_spinner=False, max_entries=32)
@@ -3493,6 +3782,208 @@ def render_body(text: str):
 
     st.markdown("<div class='content-box'>" + "".join(html_parts) + "</div>",
                 unsafe_allow_html=True)
+
+
+# ==============================================================================
+# 오늘의 만나 · 오늘의 말씀 (설교 대시보드 하단 섹션)
+# ==============================================================================
+MANNA_THEMES = [
+    "새로운 시작과 변화", "하나님을 신뢰함", "고난 중의 연단", "말이 아닌 행함의 사랑",
+    "감사와 기쁨", "인내와 견딤", "겸손", "용서", "말의 능력", "지혜",
+    "기도의 능력", "이웃 사랑", "정직과 성실", "두려움 대신 담대함", "섬김",
+    "가정과 세대", "물질과 청지기", "회개와 돌이킴", "성령의 인도", "소망과 부활",
+]
+
+
+def _today_str():
+    """한국 시간 기준 오늘 날짜"""
+    try:
+        return (datetime.utcnow() + timedelta(hours=9)).strftime("%Y-%m-%d")
+    except Exception:
+        return datetime.now().strftime("%Y-%m-%d")
+
+
+def render_manna_section():
+    with st.expander("🍞 오늘의 만나 — 날짜별 말씀 · NIV · 예화 한 장", expanded=False):
+        st.caption("버튼을 누른 날짜 기준으로 개역개정 구절, NIV 영어 구절, "
+                   "그리고 그 구절과 맞물리는 실제 예화(역사·문학·사건·인물·성경)를 한 장으로 만듭니다.")
+
+        today = _today_str()
+        c1, c2, c3 = st.columns([1, 1.1, 1.4])
+        with c1:
+            sel_date = st.date_input("날짜", value=datetime.strptime(today, "%Y-%m-%d").date(),
+                                     key="manna_date")
+            date_iso = sel_date.strftime("%Y-%m-%d")
+        with c2:
+            manna_theme = st.selectbox("배경 분위기", list(BG_THEMES.keys()),
+                                       index=1, key="manna_bg_theme")
+        with c3:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            go = st.button("🍞 오늘의 만나 생성", type="primary", key="btn_gen_manna")
+
+        key = f"manna::{date_iso}"
+        if go:
+            with st.spinner("오늘의 말씀과 예화를 준비하는 중..."):
+                d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+                seed_topic = MANNA_THEMES[(d0.timetuple().tm_yday) % len(MANNA_THEMES)]
+                task = f"""[출력 형식 — 아래 JSON 하나만. 설명 문장 금지]
+{{
+ "topic": "오늘의 주제를 한 낱말~한 구절로",
+ "ko_verse": "개역개정 성경 구절 본문 (2~4줄 분량, 40~90자)",
+ "ko_ref": "예: 고후 5:17",
+ "en_verse": "같은 구절의 NIV 영어 본문",
+ "en_ref": "예: 2Co 5:17",
+ "story_title": "예화 제목 (8~14자)",
+ "story_body": "예화 본문 (280~380자, 한 문단). 실제로 있었던 일만 쓸 것."
+}}
+
+[오늘의 조건]
+- 날짜: {d0.strftime('%Y년 %m월 %d일')}
+- 오늘의 주제 방향: {seed_topic}
+
+[반드시 지킬 것]
+1. ko_verse 는 개역개정 성경 본문을 정확히 인용하십시오. 지어내지 마십시오.
+   확실히 아는 구절만 쓰고, 장절(ko_ref)을 정확히 표기하십시오.
+2. en_verse 는 같은 구절의 NIV 본문입니다. 한국어 번역이 아니라 실제 영어 본문이어야 합니다.
+3. story_body 는 **실제 예화**여야 합니다. 다음 중 하나에서 고르십시오.
+   ① 실제 역사적 사건·전쟁·사고  ② 실존 인물의 일화(연도·이름 명시)
+   ③ 문학·예술 작품과 그 창작 배경  ④ 성경 속 실제 에피소드
+   지어낸 '어떤 성도의 이야기'는 절대 금지입니다.
+4. 예화는 반드시 오늘의 구절이 말하는 바와 맞물려야 합니다.
+5. 예화 마지막 한 문장은 구절과의 연결을 담담하게 맺으십시오. 설교조로 훈계하지 마십시오.
+6. 100% 한국어(en_verse 제외)."""
+                data = get_ai_response(
+                    build_research_prompt(task, "오늘의 말씀", seed_topic),
+                    is_json=True, temperature=0.85, kind="manna", max_tokens=4000)
+                st.session_state[key] = data if isinstance(data, dict) else {}
+            st.rerun()
+
+        data = st.session_state.get(key)
+        if not data:
+            if st.session_state.get("ai_fallback_used"):
+                show_ai_status()
+            else:
+                st.caption("위 버튼을 눌러 오늘의 만나를 만들어 보세요.")
+            return
+
+        show_ai_status()
+        png = render_manna_png(date_iso, data.get("ko_verse", ""), data.get("ko_ref", ""),
+                               data.get("en_verse", ""), data.get("en_ref", ""),
+                               data.get("story_title", ""), data.get("story_body", ""),
+                               seed=f"manna|{date_iso}|{st.session_state.get('bg_shuffle', 0)}",
+                               theme=manna_theme)
+        st_image_full(png, caption=f"오늘의 만나 · {date_iso}")
+
+        dl1, dl2 = st.columns(2)
+        with dl1:
+            st.download_button("📥 이미지(PNG) 내려받기", data=png,
+                               file_name=f"오늘의만나_{date_iso}.png", mime="image/png",
+                               key=f"dl_manna_{date_iso}")
+        with dl2:
+            if st.button("🔀 배경 이미지 바꾸기", key=f"manna_shuffle_{date_iso}"):
+                st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
+                st.rerun()
+
+        txt = (f"🍞 오늘의 만나 · {date_iso}\n\n"
+               f"📖 {data.get('ko_ref','')}\n{data.get('ko_verse','')}\n\n"
+               f"🌍 {data.get('en_ref','')}\n{data.get('en_verse','')}\n\n"
+               f"▪ {data.get('story_title','')}\n{data.get('story_body','')}")
+        render_section_top_toolbar(f"오늘의만나_{date_iso}", txt, f"manna_{date_iso}")
+        render_body(txt)
+
+
+def render_today_word_section():
+    with st.expander("📖 오늘의 말씀 — 말씀카드 이미지 자동 생성", expanded=False):
+        st.caption("버튼을 누르면 그날 날짜가 적힌 말씀카드가 배경 사진과 함께 만들어집니다. "
+                   "교회 SNS나 단톡방에 그대로 올리실 수 있습니다.")
+
+        today = _today_str()
+        c1, c2, c3, c4 = st.columns([1, 1.1, 1, 1.2])
+        with c1:
+            sel_date = st.date_input("날짜", value=datetime.strptime(today, "%Y-%m-%d").date(),
+                                     key="tw_date")
+            date_iso = sel_date.strftime("%Y-%m-%d")
+        with c2:
+            tw_theme = st.selectbox("배경 분위기", list(BG_THEMES.keys()), index=0, key="tw_theme")
+        with c3:
+            tw_size = st.selectbox("규격", ["1:1 정사각형", "4:5 세로형"], key="tw_size")
+        with c4:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            go = st.button("📖 오늘의 말씀 생성", type="primary", key="btn_gen_today_word")
+
+        src = st.radio("구절 가져오기", ["AI 추천 구절", "오늘의 만나 구절 사용", "직접 입력"],
+                       horizontal=True, key="tw_src")
+
+        key = f"todayword::{date_iso}"
+        manna = st.session_state.get(f"manna::{date_iso}") or {}
+
+        if src == "직접 입력":
+            v = st.text_area("말씀 문구", value=st.session_state.get(f"{key}_v", ""),
+                             height=90, key=f"{key}_vin")
+            r = st.text_input("성경 구절", value=st.session_state.get(f"{key}_r", ""),
+                              key=f"{key}_rin")
+            if go:
+                st.session_state[key] = {"verse": v, "ref": r}
+                st.rerun()
+        elif src == "오늘의 만나 구절 사용":
+            if go:
+                if manna.get("ko_verse"):
+                    st.session_state[key] = {"verse": manna["ko_verse"], "ref": manna.get("ko_ref", "")}
+                else:
+                    st.warning("먼저 위의 [🍞 오늘의 만나]를 생성해 주세요.")
+                st.rerun()
+        else:
+            if go:
+                with st.spinner("오늘 나눌 말씀을 고르는 중..."):
+                    d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+                    seed_topic = MANNA_THEMES[(d0.timetuple().tm_yday + 7) % len(MANNA_THEMES)]
+                    task = f"""[출력 형식 — 아래 JSON 하나만]
+{{"verse": "개역개정 성경 구절 본문 (30~70자, 카드에 넣기 좋은 길이)",
+  "ref": "예: 시편 23:1",
+  "why": "오늘 이 구절을 나누는 이유 한 문장"}}
+
+- 날짜: {d0.strftime('%Y년 %m월 %d일')}
+- 오늘의 주제 방향: {seed_topic}
+- 개역개정 본문을 정확히 인용하십시오. 확실히 아는 구절만 쓰십시오.
+- 너무 긴 구절은 피하고, 한 화면에 들어오는 길이로 고르십시오."""
+                    data = get_ai_response(
+                        build_research_prompt(task, "오늘의 말씀", seed_topic),
+                        is_json=True, temperature=0.9, kind="today_verse", max_tokens=1500)
+                    st.session_state[key] = data if isinstance(data, dict) else {}
+                st.rerun()
+
+        data = st.session_state.get(key) or {}
+        verse, ref = data.get("verse", ""), data.get("ref", "")
+        if not verse:
+            if st.session_state.get("ai_fallback_used"):
+                show_ai_status()
+            else:
+                st.caption("위 버튼을 눌러 오늘의 말씀 카드를 만들어 보세요.")
+            return
+
+        show_ai_status()
+        if data.get("why"):
+            st.caption(f"오늘 이 말씀을 나누는 이유 — {data['why']}")
+
+        png = render_today_verse_png(
+            date_iso, verse, ref, st.session_state.get("cn_church_name", ""),
+            seed=f"today|{date_iso}|{st.session_state.get('bg_shuffle', 0)}",
+            theme=tw_theme, size_key=tw_size)
+
+        p1, p2 = st.columns([1.2, 1])
+        with p1:
+            st_image_full(png, caption=f"오늘의 말씀 · {date_iso}")
+        with p2:
+            st.download_button("📥 말씀카드 PNG 내려받기", data=png,
+                               file_name=f"오늘의말씀_{date_iso}.png", mime="image/png",
+                               key=f"dl_tw_{date_iso}")
+            if st.button("🔀 배경 사진 바꾸기", key=f"tw_shuffle_{date_iso}"):
+                st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
+                st.rerun()
+            st.markdown(f"<div class='lib-card' style='padding:14px;margin-top:10px;'>"
+                        f"<div style='color:#fde047;font-weight:800;'>「 {_esc(ref)} 」</div>"
+                        f"<div style='color:#e8ecff;margin-top:8px;line-height:1.7;'>"
+                        f"{_esc(verse)}</div></div>", unsafe_allow_html=True)
 
 
 # ==============================================================================
@@ -4122,6 +4613,9 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                    "누를 때마다 완전히 새로운 이미지 조합이 나옵니다. "
                    "사진을 받아오지 못하는 환경에서는 자동으로 고급 그라데이션 배경이 생성됩니다.")
 
+    render_manna_section()
+    render_today_word_section()
+
     st.write("---")
     left, right = st.columns([1, 2.5])
 
@@ -4649,9 +5143,10 @@ elif app_mode == "📤 새 설교 등록/원고작성":
 
         a1, a2, a3 = st.columns([1.2, 1.5, 1.3])
         with a1:
-            sel_book = st.selectbox("성경 66권", BIBLE_BOOKS, index=44, key="sel_ai_book")
+            sel_book = st.selectbox("성경 66권", BIBLE_BOOKS,
+                                    index=BIBLE_BOOKS.index("시편"), key="sel_ai_book")
         with a2:
-            sel_cv = st.text_input("장·절", value="8장 28절~39절", key="sel_ai_cv")
+            sel_cv = st.text_input("장·절", value="1편 1-6절", key="sel_ai_cv")
         with a3:
             theology = st.selectbox("신학적 관점", list(THEOLOGY_LENSES.keys()), key="sel_ai_theology")
         st.caption(f"🔎 {THEOLOGY_LENSES[theology]['desc']}")
@@ -4666,8 +5161,9 @@ elif app_mode == "📤 새 설교 등록/원고작성":
         with b3:
             length_key = st.selectbox("설교 분량", list(SERMON_LENGTHS.keys()), index=5, key="sel_ai_length")
         with b4:
-            style = st.selectbox("설교 형태", ["본문중심 강해설교", "구속사적 복음설교",
-                                            "원어 주해 중심 강해설교", "주제(토픽) 설교"],
+            style = st.selectbox("설교 형태", ["본문중심 강해설교", "절별 주해설교",
+                                            "구속사적 복음설교", "원어 주해 중심 강해설교",
+                                            "주제(토픽) 설교"],
                                  key="sel_ai_style")
 
         full_scrip = f"{sel_book} {sel_cv}"
