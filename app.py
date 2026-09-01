@@ -1381,7 +1381,9 @@ SYSTEM_INSTRUCTION = (
     "반드시 이 원고에만 등장하는 고유한 단어·지명·인물·숫자·예화를 포함시킵니다.\n"
     "3) 영어 사고 과정, 기획 메모, 인사말, 서두 설명 없이 요청된 결과물 본문만 출력합니다.\n"
     "4) 인도자(리더/구역장/셀리더/부모)용 안내는 '[인도자 팁 / 가이드]: ...' 형식으로 씁니다.\n"
-    "5) 100% 한국어로 작성합니다."
+    "5) 100% 한국어로 작성합니다.\n"
+    "6) 한글 성경 인용은 언제나 **개역개정판**을 기본으로 씁니다. "
+    "다른 번역(새번역·쉬운성경·메시지 등)을 쓸 때는 반드시 괄호로 역본명을 밝힙니다."
 )
 
 
@@ -1400,7 +1402,9 @@ RESEARCH_RULES = """[절대 준수 규칙]
 4. 어느 본문에나 붙일 수 있는 일반론('은혜가 충만하기를', '믿음의 결단')로 항목을 채우지 마십시오.
    반드시 이 본문·이 주제에만 해당하는 구체적 내용이어야 합니다.
 5. 100% 한국어. 영어 사고 과정·머리말·마무리 인사 없이 지정한 형식 그대로만 출력하십시오.
-6. 번호는 각 항목(섹션) 안에서 1번부터 다시 시작합니다."""
+6. 번호는 각 항목(섹션) 안에서 1번부터 다시 시작합니다.
+7. 한글 성경 인용은 언제나 **개역개정판**이 기본입니다. 다른 역본을 쓸 경우 반드시
+   괄호로 역본명을 밝히십시오. (예: "…" (새번역))"""
 
 
 def build_research_prompt(task_block: str, scripture: str, topic: str = "",
@@ -1456,6 +1460,7 @@ def build_grounded_prompt(task_block: str, ctx_chars: int = 9000, extra: str = "
 - 위 '고유 키워드' 중 최소 5개 이상을 결과물에 자연스럽게 반영하십시오.
 - 모든 항목은 이 설교에만 해당되어야 합니다. 다른 설교에도 그대로 쓸 수 있는 일반론 문장은 금지입니다.
 - 대표 성구는 {scripture} 입니다. 원고에 인용되지 않은 다른 성경 구절을 임의로 끌어오지 마십시오.
+- 한글 성경 인용은 개역개정판을 기본으로 씁니다. 다른 역본은 괄호로 역본명을 밝히십시오.
 - 100% 한국어. 영어 메모·머리말·마무리 인사 금지. 아래 형식 그대로만 출력.
 
 {task_block}
@@ -1847,7 +1852,7 @@ def grounded_fallback(kind: str, is_json: bool, card_count: int = 7):
                     f"- 자막 키워드: {', '.join(keys[i*2:i*2+5]) or ', '.join(keys[:5])}", ""]
         return "\n".join(out)
 
-    if kind in ("manna", "today_verse"):
+    if kind in ("manna", "today_verse", "versions"):
         return {} if is_json else ""
 
     if kind in ("research", "context"):
@@ -3214,7 +3219,7 @@ MONTH_EN = ["January", "February", "March", "April", "May", "June",
 @st.cache_data(show_spinner=False, max_entries=48)
 def render_manna_png(date_iso: str, ko_verse: str, ko_ref: str, en_verse: str, en_ref: str,
                      story_title: str, story_body: str, seed: str = "",
-                     theme: str = "하늘 · 빛") -> bytes:
+                     theme: str = "하늘 · 빛", org_name: str = "") -> bytes:
     """
     「365일 성경묵상」 지면과 같은 구성의 '오늘의 만나' 이미지.
     좌측 큰 박스: 개역개정 + NIV / 우측 패널: 예화 / 상단: 월 이름 + 월/일
@@ -3303,10 +3308,15 @@ def render_manna_png(date_iso: str, ko_verse: str, ko_ref: str, en_verse: str, e
     y += en_h + 16
     d.text((bx0 + 55, y), f"– {en_ref}", fill=SOFT, font=f_enref)
 
-    # ── 하단 날짜
+    # ── 하단 날짜 · 단체명
     f_small = get_pil_font(22)
     d.text((70, H - 58), d0.strftime("%Y년 %m월 %d일") + "  ·  오늘의 만나",
            fill=(130, 152, 190), font=f_small)
+    if str(org_name or "").strip():
+        f_org = get_serif_font(26)
+        ob = d.textbbox((0, 0), org_name, font=f_org)
+        d.text((W - 70 - (ob[2] - ob[0]), H - 62), org_name,
+               fill=(96, 124, 172), font=f_org)
 
     out = io.BytesIO()
     img.save(out, format="PNG")
@@ -3809,7 +3819,7 @@ def render_manna_section():
                    "그리고 그 구절과 맞물리는 실제 예화(역사·문학·사건·인물·성경)를 한 장으로 만듭니다.")
 
         today = _today_str()
-        c1, c2, c3 = st.columns([1, 1.1, 1.4])
+        c1, c2, c3 = st.columns([1, 1.2, 1.6])
         with c1:
             sel_date = st.date_input("날짜", value=datetime.strptime(today, "%Y-%m-%d").date(),
                                      key="manna_date")
@@ -3818,10 +3828,24 @@ def render_manna_section():
             manna_theme = st.selectbox("배경 분위기", list(BG_THEMES.keys()),
                                        index=1, key="manna_bg_theme")
         with c3:
-            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
-            go = st.button("🍞 오늘의 만나 생성", type="primary", key="btn_gen_manna")
+            manna_org = st.text_input(
+                "교회 · 공동체 · 단체 이름 (자유 기입)",
+                value=st.session_state.get("manna_org_name",
+                                           st.session_state.get("cn_church_name", "")),
+                placeholder="예: 화광교회 / 사랑의공동체 / 새벽기도회 — 비워두면 표시 안 함",
+                key="manna_org_input")
+            st.session_state["manna_org_name"] = manna_org
 
         key = f"manna::{date_iso}"
+
+        b1, b2 = st.columns([1, 1])
+        with b1:
+            go = st.button("✨ AI로 오늘의 만나 생성", type="primary", key="btn_gen_manna")
+        with b2:
+            write_mode = st.toggle("✍️ 직접 작성 / 수정하기", key="manna_write_mode",
+                                   value=False)
+
+        # ── AI 생성
         if go:
             with st.spinner("오늘의 말씀과 예화를 준비하는 중..."):
                 d0 = datetime.strptime(date_iso, "%Y-%m-%d")
@@ -3842,7 +3866,7 @@ def render_manna_section():
 - 오늘의 주제 방향: {seed_topic}
 
 [반드시 지킬 것]
-1. ko_verse 는 개역개정 성경 본문을 정확히 인용하십시오. 지어내지 마십시오.
+1. ko_verse 는 **개역개정판** 본문을 정확히 인용하십시오. 다른 역본을 쓰지 마십시오.
    확실히 아는 구절만 쓰고, 장절(ko_ref)을 정확히 표기하십시오.
 2. en_verse 는 같은 구절의 NIV 본문입니다. 한국어 번역이 아니라 실제 영어 본문이어야 합니다.
 3. story_body 는 **실제 예화**여야 합니다. 다음 중 하나에서 고르십시오.
@@ -3855,15 +3879,45 @@ def render_manna_section():
                 data = get_ai_response(
                     build_research_prompt(task, "오늘의 말씀", seed_topic),
                     is_json=True, temperature=0.85, kind="manna", max_tokens=4000)
-                st.session_state[key] = data if isinstance(data, dict) else {}
+                if isinstance(data, dict) and data:
+                    st.session_state[key] = data
             st.rerun()
 
-        data = st.session_state.get(key)
+        data = st.session_state.get(key) or {}
+
+        # ── 직접 작성 / 수정 폼
+        if write_mode:
+            st.markdown("#### ✍️ 직접 작성 · 수정")
+            st.caption("AI로 만든 내용을 고치거나, 목사님이 준비하신 말씀과 예화를 직접 적어 넣으세요.")
+            with st.form(f"manna_form_{date_iso}"):
+                f1, f2 = st.columns([2.4, 1])
+                with f1:
+                    kv = st.text_area("개역개정 본문", value=data.get("ko_verse", ""), height=100)
+                with f2:
+                    kr = st.text_input("성경 구절 (예: 고후 5:17)", value=data.get("ko_ref", ""))
+                g1, g2 = st.columns([2.4, 1])
+                with g1:
+                    ev = st.text_area("NIV 영어 본문", value=data.get("en_verse", ""), height=100)
+                with g2:
+                    er = st.text_input("영문 약어 (예: 2Co 5:17)", value=data.get("en_ref", ""))
+                sttl = st.text_input("예화 제목", value=data.get("story_title", ""))
+                sbody = st.text_area("예화 본문", value=data.get("story_body", ""), height=190)
+                saved = st.form_submit_button("💾 저장하고 다시 그리기", type="primary")
+            if saved:
+                st.session_state[key] = {
+                    "ko_verse": kv, "ko_ref": kr, "en_verse": ev, "en_ref": er,
+                    "story_title": sttl, "story_body": sbody,
+                    "topic": data.get("topic", ""),
+                }
+                st.success("저장했습니다. 아래 이미지가 새로 그려집니다.")
+                st.rerun()
+
         if not data:
             if st.session_state.get("ai_fallback_used"):
                 show_ai_status()
             else:
-                st.caption("위 버튼을 눌러 오늘의 만나를 만들어 보세요.")
+                st.caption("위 버튼을 눌러 오늘의 만나를 만들거나, "
+                           "[✍️ 직접 작성 / 수정하기]를 켜서 직접 적어 넣으세요.")
             return
 
         show_ai_status()
@@ -3871,22 +3925,23 @@ def render_manna_section():
                                data.get("en_verse", ""), data.get("en_ref", ""),
                                data.get("story_title", ""), data.get("story_body", ""),
                                seed=f"manna|{date_iso}|{st.session_state.get('bg_shuffle', 0)}",
-                               theme=manna_theme)
+                               theme=manna_theme, org_name=manna_org.strip())
         st_image_full(png, caption=f"오늘의 만나 · {date_iso}")
 
         dl1, dl2 = st.columns(2)
         with dl1:
             st.download_button("📥 이미지(PNG) 내려받기", data=png,
-                               file_name=f"오늘의만나_{date_iso}.png", mime="image/png",
-                               key=f"dl_manna_{date_iso}")
+                               file_name=_safe_filename("오늘의만나", date_iso, manna_org, "png"),
+                               mime="image/png", key=f"dl_manna_{date_iso}")
         with dl2:
             if st.button("🔀 배경 이미지 바꾸기", key=f"manna_shuffle_{date_iso}"):
                 st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
                 st.rerun()
 
-        txt = (f"🍞 오늘의 만나 · {date_iso}\n\n"
-               f"📖 {data.get('ko_ref','')}\n{data.get('ko_verse','')}\n\n"
-               f"🌍 {data.get('en_ref','')}\n{data.get('en_verse','')}\n\n"
+        txt = (f"🍞 오늘의 만나 · {date_iso}"
+               + (f" · {manna_org}" if manna_org.strip() else "") + "\n\n"
+               f"📖 {data.get('ko_ref','')} (개역개정)\n{data.get('ko_verse','')}\n\n"
+               f"🌍 {data.get('en_ref','')} (NIV)\n{data.get('en_verse','')}\n\n"
                f"▪ {data.get('story_title','')}\n{data.get('story_body','')}")
         render_section_top_toolbar(f"오늘의만나_{date_iso}", txt, f"manna_{date_iso}")
         render_body(txt)
@@ -4001,6 +4056,29 @@ def render_today_word_section():
                         f"<div style='color:#fde047;font-weight:800;'>「 {_esc(ref)} 」</div>"
                         f"<div style='color:#e8ecff;margin-top:8px;line-height:1.7;'>"
                         f"{_esc(verse)}</div></div>", unsafe_allow_html=True)
+
+        # ── 문서 내려받기 (수정 · 복사 · 워드 · PDF · PPT · txt)
+        d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+        wk = ["월", "화", "수", "목", "금", "토", "일"][d0.weekday()] + "요일"
+        doc_field = f"todayword_doc::{date_iso}"
+        if not st.session_state.get(doc_field):
+            lines = [f"📖 오늘의 말씀 · {d0.strftime('%Y년 %m월 %d일')} {wk}"]
+            if tw_church.strip():
+                lines.append(f"　{tw_church.strip()}")
+            lines += ["", f"1. 오늘의 성구 (개역개정)", f"- 1. {ref}",
+                      f"- 2. {verse}", ""]
+            if data.get("why"):
+                lines += ["2. 오늘 이 말씀을 나누는 이유", f"- 1. {data['why']}", ""]
+            lines += ["3. 함께 드리는 기도",
+                      f"- 1. 주님, 오늘 주신 {ref} 말씀을 마음에 새기고 하루를 살아가게 하옵소서."]
+            st.session_state[doc_field] = "\n".join(lines)
+
+        st.write("")
+        render_section_top_toolbar(
+            _safe_filename("오늘의말씀", date_iso, tw_church, "").rstrip("."),
+            st.session_state[doc_field], f"tw_doc_{date_iso}")
+        if editable_section(f"tw_doc_{date_iso}", doc_field, "오늘의 말씀 내용 편집", height=260):
+            render_body(st.session_state[doc_field])
 
 
 # ==============================================================================
@@ -4215,7 +4293,10 @@ def render_research_tools(scripture: str, topic: str, theology: str):
     # 1) 문맥
     render_context_section(scripture, topic, theology)
 
-    # 2) 원어 주해
+    # 2) 성경 여러 번역본 비교
+    render_version_compare_section(scripture, topic, theology)
+
+    # 3) 원어 주해
     _research_block(
         "🔤 원어 주해 — 절별 히브리어/헬라어 연구", "original", scripture,
         """[출력 형식 — 본문의 각 절마다 아래 틀 그대로 반복]
@@ -4243,7 +4324,7 @@ def render_research_tools(scripture: str, topic: str, theology: str):
 ※ 절 수가 많으면 의미 단위로 2~3절씩 묶어도 됩니다.""",
         topic, theology, temp=0.3, tokens=14000)
 
-    # 3) 예화 4종
+    # 4) 예화 4종
     _research_block(
         "💎 설교 예화 12개 — 성경 · 역사 · 문학예술 · 현대", "illust4", scripture,
         """[출력 형식 — 네 갈래, 각 3개씩 총 12개. 아래 틀 그대로]
@@ -4284,7 +4365,7 @@ def render_research_tools(scripture: str, topic: str, theology: str):
   확실한 사건이 3개가 안 되면, 확실한 것만 쓰고 부족한 자리에 (추가 확인 필요)라고 적으십시오.""",
         topic, theology, temp=0.6, tokens=14000)
 
-    # 4) 명언
+    # 5) 명언
     _research_block(
         "🗣️ 설교 명언 — 주제 관련 신학자·목회자 5인 이상", "quotes5", scripture,
         """[출력 형식 — 최소 5명, 서로 다른 인물. 설교 원고가 아니라 '본문과 주제'에 맞춰 고르십시오]
@@ -4305,7 +4386,7 @@ def render_research_tools(scripture: str, topic: str, theology: str):
 ⚠️ 그 인물이 하지 않은 말을 절대 지어내지 마십시오. 확신이 없으면 다른 인물로 바꾸십시오.""",
         topic, theology, temp=0.45, tokens=8192)
 
-    # 5) 주석가 관점
+    # 6) 주석가 관점
     _research_block(
         "📚 주석가 관점 — 본문에 대한 주요 주석가 5인 이상 해석", "commentary", scripture,
         """[출력 형식 — 이 본문을 실제로 다룬 주석가·신학자 5인 이상]
@@ -4338,10 +4419,10 @@ def render_research_tools(scripture: str, topic: str, theology: str):
 ⚠️ 존재하지 않는 책 제목이나 직접 인용문을 만들지 마십시오. 요지 서술로 대신하십시오.""",
         topic, theology, temp=0.35, tokens=12000)
 
-    # 6) 추천 찬양
+    # 7) 추천 찬양
     render_praise_section(scripture, topic, theology)
 
-    # 7) 설교 제목
+    # 8) 설교 제목
     _research_block(
         "🏷️ 설교 제목 추천 5개 — 참신하고 인상적인 제목", "titles5b", scripture,
         """[출력 형식 — 아래 틀 그대로]
@@ -4368,6 +4449,140 @@ def render_research_tools(scripture: str, topic: str, theology: str):
   (예: '기도합시다' 대신 '무릎이 먼저 도착했다')
 - 다섯 제목이 서로 다른 각도여야 합니다. 같은 말의 변주 금지.""",
         topic, theology, temp=0.9, tokens=6000)
+
+
+BIBLE_VERSIONS = [
+    ("개역개정", "한국어 · 개역개정판 (기본 역본)"),
+    ("표준새번역(새번역)", "한국어 · 대한성서공회 새번역"),
+    ("새한글성경", "한국어 · 새한글성경"),
+    ("메시지(한글)", "메시지성경 영문을 한국어로 옮긴 의역"),
+    ("메시지(영문)", "The Message (Eugene Peterson)"),
+    ("NIV", "New International Version"),
+    ("NASB", "New American Standard Bible"),
+    ("RSV", "Revised Standard Version"),
+    ("원문(히브리어/헬라어)", "구약=히브리어, 신약=헬라어 원문"),
+    ("원문 음역", "원문의 한글 음역"),
+]
+
+
+def render_version_compare_section(scripture: str, topic: str, theology: str):
+    """성경 여러 번역본 비교 — 행=번역본 / 열=절 표"""
+    key = _rkey("versions", scripture)
+    with st.expander("📚 성경 여러 번역본 비교 — 개역개정 · 새번역 · 메시지 · NIV · 원문", expanded=False):
+        c1, c2 = st.columns([1, 2])
+        with c1:
+            go = st.button("✨ 번역본 비교표 생성", type="primary",
+                           key=f"btn_ver_{abs(hash(scripture)) % 99999}")
+        with c2:
+            st.caption("개역개정 · 표준새번역 · 새한글성경 · 메시지(영/한) · NIV · NASB · RSV · "
+                       "원문(히브리어/헬라어) · 음역을 절별로 나란히 비교합니다.")
+
+        if go:
+            with st.spinner("번역본을 절별로 모으는 중입니다... (1분 내외)"):
+                vlist = "\n".join(f'   - "{n}"' for n, _ in BIBLE_VERSIONS)
+                task = f"""[출력 형식 — 아래 JSON 하나만. 설명 문장 금지]
+{{
+ "verses": ["1", "2", "3"],
+ "rows": [
+   {{"version": "개역개정", "texts": ["1절 본문", "2절 본문", "3절 본문"]}},
+   {{"version": "표준새번역(새번역)", "texts": ["...", "...", "..."]}}
+ ]
+}}
+
+[작업]
+{scripture} 본문을 절 단위로 나누고, 아래 역본을 **정확히 이 순서대로** 모두 채우십시오.
+{vlist}
+
+[반드시 지킬 것]
+1. "verses" 에는 본문에 실제로 포함된 절 번호만 순서대로 넣으십시오 (문자열).
+2. 모든 row 의 "texts" 배열 길이는 "verses" 길이와 정확히 같아야 합니다.
+3. 개역개정은 한 글자도 바꾸지 말고 정확히 인용하십시오. 이 역본이 기준입니다.
+4. "메시지(한글)" 은 메시지성경 영문("메시지(영문)")을 한국어로 자연스럽게 옮긴 의역입니다.
+   직역이 아니라 메시지성경 특유의 구어체 어감을 살리십시오.
+5. "원문(히브리어/헬라어)" 은 구약이면 히브리어(BHS), 신약이면 헬라어(NA28) 본문을 그대로 쓰십시오.
+6. "원문 음역" 은 그 원문을 한글 발음으로 옮긴 것입니다. (예: 아쉬레이 하이쉬 아쉐르)
+7. 확실하지 않은 역본의 절은 지어내지 말고 "(확인 필요)" 라고만 쓰십시오.
+8. 절이 12개를 넘으면 앞의 12절까지만 다루십시오."""
+                data = get_ai_response(
+                    build_research_prompt(task, scripture, topic, theology),
+                    is_json=True, temperature=0.2, kind="versions", max_tokens=16000)
+                st.session_state[key] = data if isinstance(data, dict) else {}
+            st.rerun()
+
+        d = st.session_state.get(key) or {}
+        if not d.get("rows"):
+            if st.session_state.get("ai_fallback_used"):
+                show_ai_status()
+            else:
+                st.caption("위 버튼을 눌러 번역본 비교표를 만들어 보세요.")
+            return
+
+        show_ai_status()
+        verses = [str(v) for v in d.get("verses", [])]
+        rows = d.get("rows", [])
+
+        # ── 표 (행 = 번역본, 열 = 절)
+        table = []
+        for r in rows:
+            row = {"번역본": r.get("version", "")}
+            for i, vno in enumerate(verses):
+                txts = r.get("texts", [])
+                row[f"{vno}절"] = txts[i] if i < len(txts) else ""
+            table.append(row)
+        st.markdown("#### 📊 절별 비교표")
+        st.caption("표 오른쪽 끝으로 스크롤하면 나머지 절이 보입니다. 셀을 클릭하면 전체 문장이 펼쳐집니다.")
+        try:
+            st.dataframe(table, width='stretch', hide_index=True)
+        except Exception:
+            st.dataframe(table, use_container_width=True, hide_index=True)
+
+        # ── 절별로 읽기 좋은 형태
+        st.markdown("#### 📖 절별로 나란히 읽기")
+        for i, vno in enumerate(verses):
+            with st.expander(f"{scripture} · {vno}절", expanded=(i == 0)):
+                for r in rows:
+                    txts = r.get("texts", [])
+                    body = txts[i] if i < len(txts) else ""
+                    if not str(body).strip():
+                        continue
+                    st.markdown(
+                        f"<div style='margin-bottom:9px;'>"
+                        f"<span style='display:inline-block;min-width:150px;color:#fde047;"
+                        f"font-weight:800;font-size:13px;'>{_esc(r.get('version',''))}</span>"
+                        f"<span style='color:#e8ecff;font-size:14.5px;line-height:1.75;'>"
+                        f"{_esc(str(body))}</span></div>", unsafe_allow_html=True)
+
+        # ── 문서 내려받기용 텍스트
+        lines = [f"📚 성경 여러 번역본 비교 · {scripture}", ""]
+        for i, vno in enumerate(verses):
+            lines.append(f"{i+1}. {scripture} {vno}절")
+            n = 0
+            for r in rows:
+                txts = r.get("texts", [])
+                body = txts[i] if i < len(txts) else ""
+                if str(body).strip():
+                    n += 1
+                    lines.append(f"- {n}. [{r.get('version','')}] {body}")
+            lines.append("")
+        doc_text = "\n".join(lines)
+
+        st.write("")
+        render_section_top_toolbar(f"{scripture}_번역본비교", doc_text,
+                                   f"ver_{abs(hash(scripture)) % 9999}")
+
+        # 엑셀로도 받을 수 있게 CSV
+        try:
+            import csv as _csv
+            buf = io.StringIO()
+            w = _csv.DictWriter(buf, fieldnames=list(table[0].keys()))
+            w.writeheader()
+            w.writerows(table)
+            st.download_button("📥 표 그대로 내려받기 (CSV · 엑셀에서 열기)",
+                               data=("﻿" + buf.getvalue()).encode("utf-8"),
+                               file_name=f"{scripture}_번역본비교.csv", mime="text/csv",
+                               key=f"dl_vercsv_{abs(hash(scripture)) % 9999}")
+        except Exception:
+            pass
 
 
 def render_praise_section(scripture: str, topic: str, theology: str):
