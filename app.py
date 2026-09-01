@@ -1852,7 +1852,7 @@ def grounded_fallback(kind: str, is_json: bool, card_count: int = 7):
                     f"- 자막 키워드: {', '.join(keys[i*2:i*2+5]) or ', '.join(keys[:5])}", ""]
         return "\n".join(out)
 
-    if kind in ("manna", "today_verse", "versions"):
+    if kind in ("manna", "today_verse", "versions", "news"):
         return {} if is_json else ""
 
     if kind in ("research", "context"):
@@ -4422,7 +4422,10 @@ def render_research_tools(scripture: str, topic: str, theology: str):
     # 7) 추천 찬양
     render_praise_section(scripture, topic, theology)
 
-    # 8) 설교 제목
+    # 8) 시사주간뉴스
+    render_weekly_news_section(scripture, topic, theology)
+
+    # 9) 설교 제목
     _research_block(
         "🏷️ 설교 제목 추천 5개 — 참신하고 인상적인 제목", "titles5b", scripture,
         """[출력 형식 — 아래 틀 그대로]
@@ -4451,6 +4454,278 @@ def render_research_tools(scripture: str, topic: str, theology: str):
         topic, theology, temp=0.9, tokens=6000)
 
 
+# ==============================================================================
+# 시사주간뉴스 — Google 뉴스 RSS 실시간 수집 (API 키 불필요)
+# ==============================================================================
+NEWS_SECTIONS = [
+    # (그룹, 표시 이름, 검색어, 색상)
+    ("시사·이슈", "이번 주 이슈", "주요 뉴스 화제", "7C3AED"),
+    ("시사·이슈", "정치", "정치 국회 대통령실", "4F46E5"),
+    ("시사·이슈", "경제", "경제 물가 금리 환율 증시", "0EA5E9"),
+    ("시사·이슈", "국내 사건·사고", "사건 사고 경찰 화재 재판", "EF4444"),
+    ("시사·이슈", "칼럼·사설", "사설 칼럼 시론", "64748B"),
+    ("시사·이슈", "통계", "통계청 조사 결과 발표 지표", "0891B2"),
+    ("시사·이슈", "사회·문화", "사회 문화 세대", "8B5CF6"),
+    ("시사·이슈", "트렌드", "트렌드 유행 소비", "DB2777"),
+    ("시사·이슈", "교육", "교육 학교 입시 교사", "0D9488"),
+    ("시사·이슈", "통일·안보·군사", "북한 국방 군사 안보 한미", "1E3A8A"),
+    ("시사·이슈", "날씨·기후·생태", "기후 날씨 폭염 환경 생태", "16A34A"),
+    ("시사·이슈", "패션", "패션 브랜드 컬렉션", "E11D48"),
+
+    ("국제", "세계 사건·사고", "국제 사건 사고 재난 세계", "B91C1C"),
+    ("국제", "국제·세계·해외", "해외 세계 주요 뉴스", "1D4ED8"),
+    ("국제", "외교·국제정세", "외교 정상회담 국제정세 협상", "2563EB"),
+
+    ("신앙·교회", "기독교", "기독교 교회 교단", "B45309"),
+    ("신앙·교회", "목회", "목회 목사 설교 예배", "92400E"),
+    ("신앙·교회", "다음세대", "교회학교 청소년 다음세대 청년부", "CA8A04"),
+    ("신앙·교회", "종교", "종교 불교 천주교 종교계", "78716C"),
+    ("신앙·교회", "교회사·역사", "교회사 기독교 역사", "A16207"),
+
+    ("문화·예술", "책·도서", "출판 신간 도서 베스트셀러", "7E22CE"),
+    ("문화·예술", "음악", "음악 앨범 가수", "9333EA"),
+    ("문화·예술", "클래식", "클래식 오케스트라 지휘자 연주회", "6D28D9"),
+    ("문화·예술", "K-POP", "케이팝 아이돌 컴백", "DB2777"),
+    ("문화·예술", "공연", "공연 콘서트 무대", "C026D3"),
+    ("문화·예술", "뮤지컬", "뮤지컬 배우 초연", "A21CAF"),
+    ("문화·예술", "예술·전시·미술", "전시 미술관 미술 작가", "7C3AED"),
+    ("문화·예술", "그림·회화", "회화 화가 그림 작품", "8B5CF6"),
+    ("문화·예술", "웹툰·만화", "웹툰 만화 작가", "F59E0B"),
+    ("문화·예술", "영화", "영화 개봉 관객", "DC2626"),
+    ("문화·예술", "TV·OTT", "드라마 넷플릭스 OTT 예능", "BE123C"),
+    ("문화·예술", "역사(한국사·세계사)", "역사 한국사 세계사 유적", "78350F"),
+
+    ("스포츠", "해외축구", "해외축구 프리미어리그 손흥민 챔피언스리그", "047857"),
+    ("스포츠", "축구", "축구 K리그 국가대표", "059669"),
+    ("스포츠", "스포츠", "스포츠 야구 배구 올림픽", "10B981"),
+
+    ("지역", "서울", "서울시", "0284C7"),
+    ("지역", "경기", "경기도", "0369A1"),
+    ("지역", "용인", "용인시", "0E7490"),
+    ("지역", "분당·성남", "성남시 분당", "155E75"),
+    ("지역", "부산", "부산시", "1E40AF"),
+    ("지역", "통영", "통영시", "1D4ED8"),
+]
+
+NEWS_DEFAULT = ["이번 주 이슈", "정치", "경제", "국내 사건·사고", "기독교", "목회",
+                "다음세대", "교육", "사회·문화", "국제·세계·해외"]
+
+NEWS_STOP = set("""
+있다 없다 대한 위해 통해 관련 이번 지난 오늘 내일 올해 지난해 최고 최대 최초 국내 우리 관계자
+그리고 하지만 이날 이후 이전 대해 밝혔다 전했다 나섰다 라며 라고 등 및 첫 새 더 것 수 중 년 월 일
+뉴스 기자 종합 속보 단독 인터뷰 사진 영상
+""".split())
+
+
+def news_week_window(deadline_dt=None):
+    """금요일 12:00(KST) 마감 기준의 지난 한 주 구간을 돌려준다."""
+    now = deadline_dt or (datetime.utcnow() + timedelta(hours=9))
+    days_since_fri = (now.weekday() - 4) % 7          # 금=4
+    fri = (now - timedelta(days=days_since_fri)).replace(
+        hour=12, minute=0, second=0, microsecond=0)
+    if fri > now:
+        fri -= timedelta(days=7)
+    return fri - timedelta(days=7), fri
+
+
+def _gnews_url(query: str, days: int = 7) -> str:
+    q = urllib.parse.quote(f"{query} when:{days}d")
+    return f"https://news.google.com/rss/search?q={q}&hl=ko&gl=KR&ceid=KR:ko"
+
+
+def parse_rss(xml_bytes: bytes, limit: int = 12):
+    """Google 뉴스 RSS(XML)를 기사 목록으로 변환"""
+    import xml.etree.ElementTree as ET
+    from email.utils import parsedate_to_datetime
+    out = []
+    try:
+        root = ET.fromstring(xml_bytes)
+    except Exception:
+        return out
+    for item in root.iter("item"):
+        def txt(tag):
+            el = item.find(tag)
+            return (el.text or "").strip() if el is not None else ""
+        title = txt("title")
+        if not title:
+            continue
+        src_el = item.find("source")
+        source = (src_el.text or "").strip() if src_el is not None else ""
+        # Google 뉴스 제목은 "제목 - 매체명" 형태
+        if not source and " - " in title:
+            title, source = title.rsplit(" - ", 1)
+        elif source and title.endswith(f" - {source}"):
+            title = title[: -(len(source) + 3)]
+        when = None
+        try:
+            when = parsedate_to_datetime(txt("pubDate"))
+            if when.tzinfo:
+                when = when.astimezone().replace(tzinfo=None) + timedelta(hours=9) \
+                    if False else when.utctimetuple()
+                when = datetime(*when[:6]) + timedelta(hours=9)   # KST 로 변환
+        except Exception:
+            when = None
+        out.append({"title": title.strip(), "link": txt("link"),
+                    "source": source.strip(), "when": when})
+        if len(out) >= limit:
+            break
+    return out
+
+
+@st.cache_data(show_spinner=False, ttl=1800, max_entries=64)
+def fetch_news_section(query: str, days: int = 7, limit: int = 12):
+    """한 섹션의 기사 목록. 실패하면 빈 목록과 오류 메시지."""
+    try:
+        req = urllib.request.Request(_gnews_url(query, days), headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
+            "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
+        })
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = r.read()
+        return {"items": parse_rss(data, limit), "error": ""}
+    except Exception as e:
+        return {"items": [], "error": f"{type(e).__name__}: {str(e)[:120]}"}
+
+
+def collect_news(section_names, days=7, per_section=8):
+    """선택한 섹션들을 동시에 가져온다."""
+    from concurrent.futures import ThreadPoolExecutor
+    picked = [s for s in NEWS_SECTIONS if s[1] in section_names]
+    results = {}
+    errors = []
+
+    def work(sec):
+        _, name, query, color = sec
+        r = fetch_news_section(query, days, per_section)
+        return name, sec, r
+
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        for name, sec, r in ex.map(work, picked):
+            results[name] = {"group": sec[0], "color": sec[3], "query": sec[2],
+                             "items": r["items"]}
+            if r["error"]:
+                errors.append(f"{name}: {r['error']}")
+    return results, errors
+
+
+def news_keywords(results, top_n=12):
+    """실제 수집된 제목에서 이번 주 키워드 뽑기"""
+    cnt = Counter()
+    for v in results.values():
+        for it in v["items"]:
+            for w in re.findall(r'[가-힣]{2,}', it["title"]):
+                if w in NEWS_STOP or w in KOR_STOPWORDS:
+                    continue
+                cnt[w] += 1
+    return cnt.most_common(top_n)
+
+
+# ---------------------------------------------------------------- 이미지 렌더
+@st.cache_data(show_spinner=False, max_entries=24)
+def render_news_cover_png(start_iso: str, end_iso: str, top_headline: str,
+                          section_names_json: str, total: int,
+                          seed: str = "", theme: str = "도시 · 일상") -> bytes:
+    """시사주간뉴스 표지 이미지"""
+    names = json.loads(section_names_json)
+    W, H = 1600, 760
+    base = PIL.Image.new("RGB", (W, H), (12, 18, 40))
+    try:
+        b = get_background_bytes(seed or start_iso, theme, size=(1280, 720))
+        if b:
+            ph = PIL.Image.open(io.BytesIO(b)).convert("RGB").resize((W, H))
+            ph = ph.filter(PIL.ImageFilter.GaussianBlur(radius=2))
+            base = PIL.Image.blend(ph, PIL.Image.new("RGB", (W, H), (10, 14, 34)), 0.62)
+    except Exception:
+        pass
+    d = PIL.ImageDraw.Draw(base, "RGBA")
+
+    d.rectangle([0, 0, W, 14], fill=(124, 58, 237))
+    f_ttl = get_serif_font(86)
+    f_sub = get_pil_font(28)
+    f_lab = get_pil_font(24)
+    f_head = get_serif_font(40)
+
+    d.text((70, 78), "시사주간뉴스", fill=(255, 255, 255), font=f_ttl)
+    d.text((74, 196), f"{start_iso}  →  {end_iso}   ·   금요일 12시 마감",
+           fill=(147, 197, 253), font=f_sub)
+    d.line([(70, 250), (W - 70, 250)], fill=(90, 110, 165, 200), width=2)
+
+    d.text((70, 292), "이번 주 머리기사", fill=(253, 224, 71), font=f_lab)
+    head = wrap_korean_text(strip_emoji(top_headline or ""), f_head, W - 140, d)
+    d.multiline_text((70, 336), head, fill=(255, 255, 255), font=f_head, spacing=16)
+    hb = d.multiline_textbbox((70, 336), head, font=f_head, spacing=16)
+
+    # 섹션 칩
+    x, y = 70, min(hb[3] + 56, H - 210)
+    f_chip = get_pil_font(22)
+    for nm in names[:14]:
+        tw = d.textbbox((0, 0), nm, font=f_chip)
+        w = (tw[2] - tw[0]) + 34
+        if x + w > W - 70:
+            x, y = 70, y + 52
+        d.rounded_rectangle([x, y, x + w, y + 40], radius=20,
+                            fill=(255, 255, 255, 26), outline=(160, 180, 235, 160))
+        d.text((x + 17, y + 8), nm, fill=(214, 226, 255), font=f_chip)
+        x += w + 12
+
+    d.text((70, y + 92), f"수집 기사 {total}건  ·  MY 설교 AI 스튜디오",
+           fill=(140, 160, 205), font=f_lab)
+    base = base.crop((0, 0, W, min(H, y + 92 + 60)))
+    out = io.BytesIO()
+    base.save(out, format="PNG")
+    return out.getvalue()
+
+
+@st.cache_data(show_spinner=False, max_entries=24)
+def render_news_chart_png(counts_json: str, keywords_json: str) -> bytes:
+    """섹션별 기사 수 막대그래프 + 이번 주 키워드 (실제 수집 데이터)"""
+    counts = json.loads(counts_json)          # [[name, n, color], ...]
+    keywords = json.loads(keywords_json)      # [[word, n], ...]
+    rows = len(counts)
+    W = 1600
+    H = 180 + rows * 52 + 60 + max(1, len(keywords)) * 40 + 90
+
+    img = PIL.Image.new("RGB", (W, H), (250, 250, 255))
+    d = PIL.ImageDraw.Draw(img)
+    for yy in range(96):
+        t = yy / 96
+        d.line([(0, yy), (W, yy)], fill=(int(76 + 48 * t), int(29 + 100 * t), int(149 + 80 * t)))
+    d.text((44, 28), "이번 주 뉴스 통계", fill=(255, 255, 255), font=get_serif_font(38))
+
+    f_lab = get_pil_font(24)
+    f_num = get_pil_font(22)
+    f_h = get_serif_font(28)
+
+    d.text((44, 132), "섹션별 수집 기사 수", fill=(76, 29, 149), font=f_h)
+    mx = max([c[1] for c in counts] or [1])
+    y = 180
+    bar_x, bar_w = 330, W - 330 - 120
+    for name, n, color in counts:
+        d.text((44, y + 8), str(name)[:16], fill=(30, 41, 59), font=f_lab)
+        w = max(6, int(bar_w * (n / mx)))
+        d.rounded_rectangle([bar_x, y, bar_x + w, y + 34], radius=8,
+                            fill=tuple(int(color[i:i + 2], 16) for i in (0, 2, 4)))
+        d.text((bar_x + w + 14, y + 5), f"{n}건", fill=(71, 85, 105), font=f_num)
+        y += 52
+
+    y += 30
+    d.text((44, y), "이번 주 키워드 TOP", fill=(76, 29, 149), font=f_h)
+    y += 48
+    kmx = max([k[1] for k in keywords] or [1])
+    for word, n in keywords:
+        d.text((44, y + 4), str(word)[:12], fill=(30, 41, 59), font=f_lab)
+        w = max(6, int((W - 330 - 120) * (n / kmx)))
+        d.rounded_rectangle([bar_x, y, bar_x + w, y + 26], radius=6, fill=(14, 165, 233))
+        d.text((bar_x + w + 14, y + 1), str(n), fill=(71, 85, 105), font=f_num)
+        y += 40
+
+    d.text((44, H - 46), "출처: Google 뉴스 RSS · 수집 시점 기준",
+           fill=(148, 163, 184), font=get_pil_font(20))
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
 BIBLE_VERSIONS = [
     ("개역개정", "한국어 · 개역개정판 (기본 역본)"),
     ("표준새번역(새번역)", "한국어 · 대한성서공회 새번역"),
@@ -4463,6 +4738,275 @@ BIBLE_VERSIONS = [
     ("원문(히브리어/헬라어)", "구약=히브리어, 신약=헬라어 원문"),
     ("원문 음역", "원문의 한글 음역"),
 ]
+
+
+def render_weekly_news_section(scripture: str, topic: str, theology: str):
+    """시사주간뉴스 — 실시간 수집 + 잡지형 정리 + 설교 연결 포인트"""
+    with st.expander("📰 시사주간뉴스 — 한 주간 이슈를 설교 자료로", expanded=False):
+        st.caption("Google 뉴스에서 지난 한 주(금요일 낮 12시 마감) 기사를 섹션별로 실시간 수집합니다. "
+                   "헤드라인·매체·기사 링크가 모두 실제 기사이며, 설교에 쓸 연결 포인트까지 정리해 드립니다.")
+
+        now_kst = datetime.utcnow() + timedelta(hours=9)
+        auto_s, auto_e = news_week_window(now_kst)
+
+        m1, m2, m3 = st.columns([1.1, 1, 1.2])
+        with m1:
+            mode = st.radio("마감 기준", ["금요일 12시 마감(자동)", "지금까지 최근 7일"],
+                            key="news_mode")
+        with m2:
+            per_section = st.slider("섹션당 기사 수", 3, 12, 6, key="news_per")
+        with m3:
+            news_theme = st.selectbox("표지 이미지 분위기", list(BG_THEMES.keys()),
+                                      index=5, key="news_theme")
+
+        if mode.startswith("금요일"):
+            win_s, win_e = auto_s, auto_e
+        else:
+            win_e = now_kst
+            win_s = now_kst - timedelta(days=7)
+        st.markdown(
+            f"<div class='lib-card' style='padding:12px 16px;'>"
+            f"<b style='color:#fde047;'>수집 기간</b> &nbsp; "
+            f"<span style='color:#e8ecff;'>{win_s.strftime('%Y-%m-%d %H:%M')} "
+            f"→ {win_e.strftime('%Y-%m-%d %H:%M')} (한국시간)</span></div>",
+            unsafe_allow_html=True)
+
+        # ── 섹션 선택
+        groups = []
+        for g, n, q, c in NEWS_SECTIONS:
+            if g not in groups:
+                groups.append(g)
+        st.markdown("##### 📌 담을 섹션 고르기")
+        sel_key = "news_selected"
+        if sel_key not in st.session_state:
+            st.session_state[sel_key] = list(NEWS_DEFAULT)
+
+        bq1, bq2, bq3 = st.columns(3)
+        with bq1:
+            if st.button("✅ 전체 선택", key="news_all"):
+                st.session_state[sel_key] = [n for _, n, _, _ in NEWS_SECTIONS]
+                st.rerun()
+        with bq2:
+            if st.button("🔄 기본값으로", key="news_def"):
+                st.session_state[sel_key] = list(NEWS_DEFAULT)
+                st.rerun()
+        with bq3:
+            if st.button("⬜ 전체 해제", key="news_none"):
+                st.session_state[sel_key] = []
+                st.rerun()
+
+        chosen = []
+        for g in groups:
+            names = [n for gg, n, _, _ in NEWS_SECTIONS if gg == g]
+            picked = st.multiselect(
+                g, names,
+                default=[n for n in st.session_state[sel_key] if n in names],
+                key=f"news_ms_{g}")
+            chosen.extend(picked)
+        st.session_state[sel_key] = chosen
+
+        g1, g2 = st.columns([1, 1])
+        with g1:
+            go = st.button(f"📰 시사주간뉴스 만들기 ({len(chosen)}개 섹션)",
+                           type="primary", key="btn_gen_news",
+                           disabled=(len(chosen) == 0))
+        with g2:
+            with_ai = st.toggle("🧠 AI 요약 · 설교 연결 포인트 함께 만들기",
+                                value=True, key="news_with_ai")
+
+        nkey = f"news::{win_s.strftime('%Y%m%d%H')}::{win_e.strftime('%Y%m%d%H')}"
+
+        if go:
+            days = max(3, min(14, (win_e - win_s).days + 2))
+            with st.spinner(f"{len(chosen)}개 섹션의 기사를 모으는 중입니다..."):
+                results, errors = collect_news(chosen, days=days, per_section=per_section)
+
+            # 수집 기간 안의 기사만 남기기
+            for name, v in results.items():
+                v["items"] = [it for it in v["items"]
+                              if (it["when"] is None) or (win_s <= it["when"] <= win_e + timedelta(hours=6))]
+
+            total = sum(len(v["items"]) for v in results.values())
+            st.session_state[nkey] = {"results": results, "errors": errors,
+                                      "total": total, "ai": ""}
+
+            if total == 0:
+                st.session_state[nkey]["fetch_failed"] = True
+            elif with_ai:
+                brief = []
+                for name, v in results.items():
+                    if not v["items"]:
+                        continue
+                    brief.append(f"[{name}]")
+                    for it in v["items"][:6]:
+                        w = it["when"].strftime("%m/%d") if it["when"] else ""
+                        brief.append(f"- {it['title']} ({it['source']}, {w})")
+                headlines = "\n".join(brief)[:12000]
+                with st.spinner("한 주간 흐름을 읽고 설교 연결 포인트를 뽑는 중..."):
+                    task = f"""[이번 주 실제 수집된 기사 목록]
+{headlines}
+
+[작업]
+위 기사 목록만을 근거로 '시사주간뉴스' 해설을 작성하십시오.
+
+[출력 형식 — 아래 틀 그대로]
+🗞️ 이번 주 한 문장 요약
+(한 주간 흐름을 한 문장으로)
+
+🔎 이번 주 큰 흐름 3가지
+- 1. (제목) — (2~3문장 해설. 위 기사에 실제로 있는 내용만)
+- 2. (동일 형식)
+- 3. (동일 형식)
+
+📋 섹션별 정리
+(수집된 각 섹션마다)
+▪ [섹션명]
+- 1. (그 섹션의 핵심 한 줄)
+- 2. (덧붙일 한 줄, 필요할 때만)
+
+🙏 설교·목회 연결 포인트 5가지
+- 1. (이번 주 사건) → (연결되는 성경 주제·본문) → (강단에서 어떻게 쓸지 한 문장)
+- 2. ~ 5. (동일 형식)
+
+⚠️ 다룰 때 조심할 점
+- 1. (정치적으로 민감해 강단에서 편향되게 들릴 수 있는 지점)
+- 2. (사실관계가 아직 확정되지 않아 단정하면 안 되는 지점)
+
+[반드시 지킬 것]
+- 위 기사 목록에 없는 사건을 지어내지 마십시오.
+- 특정 정당·정파를 지지하거나 비난하는 표현을 쓰지 마십시오.
+- 사망·재난 사건은 선정적으로 다루지 말고 애도와 절제된 표현으로 쓰십시오.
+- 100% 한국어."""
+                    st.session_state[nkey]["ai"] = get_ai_response(
+                        build_research_prompt(task, scripture or "이번 주 시사", topic, theology),
+                        is_json=False, temperature=0.4, kind="news", max_tokens=10000)
+            st.rerun()
+
+        data = st.session_state.get(nkey)
+        if not data:
+            st.caption("섹션을 고르고 위 버튼을 눌러 이번 주 뉴스를 모아 보세요.")
+            return
+
+        results, errors, total = data["results"], data["errors"], data["total"]
+
+        if data.get("fetch_failed") or total == 0:
+            st.error(
+                "⚠️ **뉴스를 가져오지 못했습니다.**\n\n"
+                "이 기능은 Google 뉴스 RSS에 직접 접속해 실제 기사를 가져옵니다. "
+                "앱이 올라가 있는 서버에서 외부 접속이 막혀 있으면 목록이 비게 됩니다.\n\n"
+                "- 잠시 후 다시 눌러 보세요 (일시적 지연일 수 있습니다)\n"
+                "- 섹션 수를 줄여서 다시 시도해 보세요")
+            if errors:
+                with st.expander("🔎 자세한 오류"):
+                    for e in errors[:10]:
+                        st.code(e, language="text")
+            return
+
+        # ── 표지
+        top_head = ""
+        for v in results.values():
+            if v["items"]:
+                top_head = v["items"][0]["title"]
+                break
+        cover = render_news_cover_png(
+            win_s.strftime("%Y.%m.%d"), win_e.strftime("%Y.%m.%d"), top_head,
+            json.dumps([n for n in results.keys()], ensure_ascii=False), total,
+            seed=f"news|{nkey}|{st.session_state.get('bg_shuffle', 0)}", theme=news_theme)
+        st_image_full(cover, caption=f"시사주간뉴스 · {win_s.strftime('%m/%d')}~{win_e.strftime('%m/%d')}")
+
+        cv1, cv2 = st.columns(2)
+        with cv1:
+            st.download_button("📥 표지 이미지(PNG)", data=cover,
+                               file_name=f"시사주간뉴스_표지_{win_e.strftime('%Y%m%d')}.png",
+                               mime="image/png", key=f"dl_newscover_{nkey}")
+        with cv2:
+            if st.button("🔀 표지 배경 바꾸기", key=f"news_shuffle_{nkey}"):
+                st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
+                st.rerun()
+
+        # ── 통계 그래프 (실제 수집 데이터)
+        counts = [[n, len(v["items"]), v["color"]] for n, v in results.items() if v["items"]]
+        counts.sort(key=lambda x: x[1], reverse=True)
+        kws = news_keywords(results, 12)
+        chart = render_news_chart_png(json.dumps(counts, ensure_ascii=False),
+                                      json.dumps(kws, ensure_ascii=False))
+        st.markdown("#### 📊 이번 주 통계")
+        st_image_full(chart, caption="섹션별 기사 수 · 이번 주 키워드")
+        st.download_button("📥 통계 그래프(PNG)", data=chart,
+                           file_name=f"시사주간뉴스_통계_{win_e.strftime('%Y%m%d')}.png",
+                           mime="image/png", key=f"dl_newschart_{nkey}")
+
+        if kws:
+            st.markdown("**이번 주 키워드** &nbsp; " + " ".join(
+                f"<span class='chip chip-vio'>{_esc(w)} {n}</span>" for w, n in kws[:10]),
+                unsafe_allow_html=True)
+
+        # ── AI 해설
+        if data.get("ai"):
+            st.markdown("#### 🧠 이번 주 흐름과 설교 연결 포인트")
+            show_ai_status()
+            render_body(data["ai"])
+
+        # ── 섹션별 기사 (잡지형)
+        st.markdown("#### 🗞️ 섹션별 헤드라인")
+        by_group = {}
+        for name, v in results.items():
+            by_group.setdefault(v["group"], []).append((name, v))
+
+        for g, secs in by_group.items():
+            st.markdown(f"<div class='sec-head'>{_esc(g)}</div>", unsafe_allow_html=True)
+            cols = st.columns(2)
+            for i, (name, v) in enumerate(secs):
+                if not v["items"]:
+                    continue
+                with cols[i % 2]:
+                    art = "".join(
+                        f"<div style='padding:9px 0;border-bottom:1px solid rgba(148,163,255,.14);'>"
+                        f"<a href='{it['link']}' target='_blank' "
+                        f"style='color:#e8ecff;text-decoration:none;font-weight:600;font-size:14px;'>"
+                        f"{_esc(it['title'])}</a>"
+                        f"<div style='color:#93a3d0;font-size:11.5px;margin-top:4px;'>"
+                        f"{_esc(it['source'])}"
+                        f"{' · ' + it['when'].strftime('%m/%d %H:%M') if it['when'] else ''}</div>"
+                        f"</div>"
+                        for it in v["items"])
+                    st.markdown(
+                        f"<div class='lib-card' style='padding:16px 18px;'>"
+                        f"<div style='display:inline-block;padding:4px 12px;border-radius:999px;"
+                        f"background:#{v['color']};color:#fff;font-weight:800;font-size:12px;"
+                        f"margin-bottom:8px;'>{_esc(name)}</div>"
+                        f"<div style='color:#93a3d0;font-size:11px;margin-bottom:4px;'>"
+                        f"기사 {len(v['items'])}건</div>{art}</div>",
+                        unsafe_allow_html=True)
+
+        # ── 문서 내려받기
+        lines = [f"📰 시사주간뉴스 · {win_s.strftime('%Y-%m-%d %H:%M')} → {win_e.strftime('%Y-%m-%d %H:%M')}",
+                 f"수집 기사 {total}건 · 섹션 {len(results)}개 · 출처: Google 뉴스", ""]
+        if kws:
+            lines += ["🔑 이번 주 키워드", "- 1. " + ", ".join(f"{w}({n})" for w, n in kws[:10]), ""]
+        if data.get("ai"):
+            lines += [data["ai"], ""]
+        lines.append("🗞️ 섹션별 헤드라인")
+        for g, secs in by_group.items():
+            lines.append(f"▪ {g}")
+            for name, v in secs:
+                if not v["items"]:
+                    continue
+                lines.append(f"[{name}]")
+                for i, it in enumerate(v["items"], start=1):
+                    w = it["when"].strftime("%m/%d %H:%M") if it["when"] else ""
+                    lines.append(f"- {i}. {it['title']}  ({it['source']} {w})")
+                    lines.append(f"   {it['link']}")
+                lines.append("")
+        doc = "\n".join(lines)
+
+        st.write("")
+        render_section_top_toolbar(f"시사주간뉴스_{win_e.strftime('%Y%m%d')}", doc, f"news_{nkey}")
+
+        if errors:
+            with st.expander("🔎 일부 섹션 수집 오류"):
+                for e in errors[:10]:
+                    st.code(e, language="text")
 
 
 def render_version_compare_section(scripture: str, topic: str, theology: str):
