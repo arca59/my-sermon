@@ -31,6 +31,7 @@ import os
 import io
 import re
 import hashlib
+import time
 import asyncio
 import zipfile
 import urllib.parse
@@ -1344,6 +1345,9 @@ def candidate_models(fingerprint: str):
 
 def _classify_api_error(msg: str) -> str:
     m = (msg or "").lower()
+    if ("deadline" in m or "timeout" in m or "timed out" in m
+            or "504" in m or "deadline_exceeded" in m):
+        return "timeout"
     if "429" in m or "quota" in m or "rate limit" in m or "resource_exhausted" in m or "exceeded" in m:
         return "quota"
     if "404" in m or "not found" in m or "no longer available" in m or "not supported" in m:
@@ -1366,6 +1370,13 @@ ERROR_HELP = {
              "Google AI Studio에서 키를 새로 발급받아 다시 넣어 주세요."),
     "key": ("API 키가 올바르지 않습니다.",
             "사이드바 [⚙️ AI 연결 설정]에서 키를 다시 확인해 주세요."),
+    "timeout": ("AI 서버가 제한 시간 안에 응답하지 않았습니다.",
+                "요청이 너무 크거나 서버가 붐비는 경우입니다. "
+                "① 잠시 후 다시 눌러 보세요 ② 사이드바에서 **가벼운 모델(flash / flash-lite)** 로 바꿔 보세요 "
+                "③ [오늘의 기도]라면 [📰 오늘 뉴스에 근거]를 잠시 꺼 보세요 (요청이 훨씬 가벼워집니다)."),
+    "net": ("인터넷(뉴스) 연결에 실패했습니다.",
+            "앱이 올라가 있는 서버에서 외부 접속이 막혀 있을 수 있습니다. "
+            "[📰 오늘 뉴스에 근거]를 끄면 뉴스 없이도 기도제목을 만들 수 있습니다."),
     "other": ("AI 서버 호출에 실패했습니다.",
               "잠시 후 다시 시도해 주세요. 계속되면 [🔌 연결 테스트]로 어떤 모델이 되는지 확인해 보세요."),
 }
@@ -1511,6 +1522,44 @@ SEARCH_TOOL_VARIANTS = [
     "google_search_retrieval",
 ]
 
+# ------------------------------------------------------------------------------
+# 무한 로딩 방지 — 모든 AI 호출에 '반드시' 시간 제한을 건다.
+#   Gemini SDK 는 기본값에 응답 대기 제한이 없어서, 서버가 응답을 안 주면
+#   화면이 영원히 로딩 상태로 멈춘다(= 결과물이 안 나옴).
+# ------------------------------------------------------------------------------
+AI_CALL_TIMEOUT = 75      # 한 번의 호출을 기다리는 최대 시간(초)
+AI_TOTAL_BUDGET = 150     # 모델을 바꿔가며 재시도해도 이 시간을 넘기지 않는다(초)
+NEWS_REQ_TIMEOUT = 8      # 뉴스 한 건을 기다리는 최대 시간(초)
+NEWS_TOTAL_BUDGET = 35    # 뉴스 전체 수집 최대 시간(초)
+
+
+def _req_opts(timeout: int = AI_CALL_TIMEOUT):
+    """SDK 버전에 따라 request_options 형식이 달라 안전하게 만든다."""
+    try:
+        from google.generativeai.types import RequestOptions
+        return RequestOptions(timeout=timeout)
+    except Exception:
+        try:
+            return {"timeout": timeout}
+        except Exception:
+            return None
+
+
+def _gen(model, prompt, cfg=None, tools=None, timeout: int = AI_CALL_TIMEOUT):
+    """generate_content 를 시간 제한과 함께 호출한다."""
+    kw = {}
+    if cfg is not None:
+        kw["generation_config"] = cfg
+    if tools is not None:
+        kw["tools"] = tools
+    ro = _req_opts(timeout)
+    if ro is not None:
+        try:
+            return model.generate_content(prompt, request_options=ro, **kw)
+        except TypeError:
+            pass                      # 아주 옛 SDK: request_options 미지원
+    return model.generate_content(prompt, **kw)
+
 
 def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35,
                     kind: str = "summary", card_count: int = 7,
@@ -1552,7 +1601,16 @@ def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35
     models = candidate_models(fingerprint)
 
     errors, kinds = [], []
+    _t0 = time.time()
+
+    def _left():
+        return AI_TOTAL_BUDGET - (time.time() - _t0)
+
     for model_name in models[:5]:                    # 너무 많이 시도하면 한도만 낭비된다
+        if _left() <= 5:
+            errors.append(f"제한 시간({AI_TOTAL_BUDGET}초)을 넘겨 재시도를 멈췄습니다.")
+            kinds.append("timeout")
+            break
         try:
             try:
                 model = genai.GenerativeModel(model_name, system_instruction=SYSTEM_INSTRUCTION)
@@ -1561,23 +1619,27 @@ def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35
 
             def _call(cfg, with_search):
                 """검색 근거 → 검색 없이 → 토큰 한도 제거, 순서로 물러나며 시도."""
+                tmo = int(max(15, min(AI_CALL_TIMEOUT, _left())))
                 if with_search:
                     for tv in SEARCH_TOOL_VARIANTS:
+                        if _left() <= 5:
+                            break
                         try:
-                            r = model.generate_content(prompt, generation_config=cfg, tools=tv)
+                            r = _gen(model, prompt, cfg, tools=tv, timeout=tmo)
                             st.session_state.ai_search_used = True
                             return r
                         except Exception:
                             continue
                 st.session_state.ai_search_used = False
                 try:
-                    return model.generate_content(prompt, generation_config=cfg)
+                    return _gen(model, prompt, cfg, timeout=tmo)
                 except Exception as e1:
                     # 모델이 지원하지 않는 옵션(max_output_tokens, response_mime_type)이면 빼고 재시도
-                    if _classify_api_error(str(e1)) in ("gone", "quota", "perm", "key"):
+                    if _classify_api_error(str(e1)) in ("gone", "quota", "perm", "key", "timeout"):
                         raise
                     slim = {"temperature": cfg.get("temperature", 0.4)}
-                    return model.generate_content(prompt, generation_config=slim)
+                    return _gen(model, prompt, slim,
+                                timeout=int(max(15, min(AI_CALL_TIMEOUT, _left()))))
 
             if is_json:
                 cfg = {"response_mime_type": "application/json", "temperature": temperature,
@@ -1624,7 +1686,7 @@ def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35
     st.session_state.ai_fallback_used = True
     # 가장 많이 나온 오류 유형으로 안내 문구를 정한다
     main_kind = "other"
-    for k in ("key", "perm", "quota", "gone"):
+    for k in ("key", "perm", "quota", "timeout", "gone", "net"):
         if k in kinds:
             main_kind = k
             break
@@ -3861,7 +3923,8 @@ def show_ai_status():
     if st.session_state.get("ai_fallback_used"):
         kind = st.session_state.get("ai_error_kind", "other")
         title, howto = ERROR_HELP.get(kind, ERROR_HELP["other"])
-        icon = {"quota": "⏳", "gone": "🔄", "perm": "🔒", "key": "🔑"}.get(kind, "⚠️")
+        icon = {"quota": "⏳", "gone": "🔄", "perm": "🔒", "key": "🔑",
+                "timeout": "⏱️", "net": "🌐"}.get(kind, "⚠️")
         st.warning(f"{icon} **{title}**\n\n{howto}")
         with st.expander("🔎 자세한 오류 내용 보기"):
             for line in st.session_state.get("ai_error_detail", []) or ["(상세 없음)"]:
@@ -4483,6 +4546,78 @@ PRAYER_FIELDS = [
 ]
 
 
+def normalize_prayer_data(data):
+    """AI 응답이 조금씩 달라도 화면이 깨지지 않게 네 항목 구조로 정리한다."""
+    if not isinstance(data, dict):
+        return {}
+    items = data.get("items")
+    if isinstance(items, dict):                       # {"1": {...}} 형태로 올 때
+        items = [items[k] for k in sorted(items.keys())]
+    if not isinstance(items, list):
+        items = []
+    clean = []
+    for i, (dh, _dd) in enumerate(PRAYER_FIELDS):
+        src = items[i] if i < len(items) and isinstance(items[i], dict) else {}
+        body = str(src.get("body") or src.get("prayer") or "").strip()
+        if not body:
+            continue
+        clean.append({
+            "head": str(src.get("head") or dh).strip() or dh,
+            "basis": str(src.get("basis") or "").strip(),
+            "body": body[:200],
+            "verse": str(src.get("verse") or "").strip(),
+        })
+    if not clean:
+        return {}
+    return {
+        "title": str(data.get("title") or "오늘의 기도").strip()[:20],
+        "summary": str(data.get("summary") or "").strip(),
+        "items": clean,
+        "closing": str(data.get("closing") or "").strip(),
+    }
+
+
+# AI 가 실패했을 때 쓸 기본 기도제목 (지어낸 사건 없이, 늘 필요한 기도로만)
+PRAYER_BASE = [
+    ("나라와 민족을 위하여", "딤전 2:1-2",
+     "주님, 이 땅의 위정자들에게 지혜와 정직을 주시고, 낮은 자리의 이웃이 소외되지 않게 하옵소서. "
+     "갈라진 마음들을 화평으로 묶어 주옵소서."),
+    ("세계와 열방을 위하여", "시 46:9",
+     "주님, 전쟁과 재난의 자리에 평화를 주시고, 굶주린 이들에게 일용할 양식을 주옵소서. "
+     "복음이 막힌 땅에도 주의 이름이 전해지게 하옵소서."),
+    ("다음 세대와 한국 교회를 위하여", "신 6:6-7",
+     "주님, 아이들과 청년들이 말씀 위에 서게 하시고, 교회학교와 목회자들에게 새 힘을 주옵소서. "
+     "한국 교회가 세상 앞에 정직하게 하옵소서."),
+    ("우리 교회와 성도를 위하여", "행 2:47",
+     "주님, 우리 교회가 이웃을 섬기는 자리에 서게 하시고, 아픈 지체와 지친 마음을 만져 주옵소서. "
+     "예배가 회복의 자리가 되게 하옵소서."),
+]
+
+
+def build_local_prayer(d0, headlines: str = ""):
+    """
+    AI 호출이 실패하거나 시간이 초과됐을 때에도 화면이 비지 않도록,
+    앱 안에서 직접 네 항목 기도제목을 만든다.
+    ※ 지어낸 사건은 쓰지 않는다. 기사를 실제로 받아왔을 때만 제목을 근거로 붙인다.
+    """
+    heads = []
+    for ln in (headlines or "").split("\n"):
+        ln = ln.strip()
+        if ln.startswith("- ") and len(ln) > 8:
+            heads.append(ln[2:].split(" (")[0].strip())
+    items = []
+    for i, (h, v, body) in enumerate(PRAYER_BASE):
+        items.append({"head": h, "verse": v, "body": body,
+                      "basis": heads[i] if i < len(heads) else ""})
+    return {
+        "title": "오늘의 기도",
+        "summary": f"{d0.strftime('%Y년 %m월 %d일')} — 나라와 열방, 다음 세대와 우리 교회를 위하여",
+        "items": items,
+        "closing": ("주님, 오늘 하루도 주님의 손에 맡깁니다. 우리의 말과 걸음이 주를 드러내게 하시고, "
+                    "곁에 있는 한 사람을 사랑하게 하옵소서. 예수님의 이름으로 기도합니다. 아멘."),
+    }
+
+
 def render_today_prayer_section():
     with open_expander("🙏 오늘의 기도 — 오늘자 뉴스에서 뽑은 기도제목", "prayer"):
         st.caption("오늘의 국내·해외 주요 뉴스와 교회·목회 소식을 실제로 가져와, "
@@ -4524,22 +4659,37 @@ def render_today_prayer_section():
             keep_open("prayer")
             d0 = datetime.strptime(date_iso, "%Y-%m-%d")
             headlines, news_ok, news_err = "", False, []
-            if use_news:
-                with st.spinner("오늘의 국내·해외·교계 소식을 모으는 중..."):
-                    results, errs = collect_news(PRAYER_NEWS_SECTIONS, days=2, per_section=6)
-                    news_err = errs
-                    buf = []
-                    for nm, v in results.items():
-                        if not v["items"]:
-                            continue
-                        buf.append(f"[{nm}]")
-                        for it in v["items"][:6]:
-                            w = it["when"].strftime("%m/%d") if it["when"] else ""
-                            buf.append(f"- {it['title']} ({it['source']}, {w})")
-                    headlines = "\n".join(buf)[:9000]
-                    news_ok = bool(headlines.strip())
+            prog = st.progress(0, text="시작합니다...")
 
-            with st.spinner("오늘의 기도제목을 정리하는 중..."):
+            if use_news:
+                prog.progress(10, text=f"① 오늘의 국내·해외·교계 소식을 모으는 중... "
+                                       f"(최대 {NEWS_TOTAL_BUDGET}초)")
+                try:
+                    results, errs = collect_news(PRAYER_NEWS_SECTIONS, days=2, per_section=5,
+                                                 budget=NEWS_TOTAL_BUDGET,
+                                                 req_timeout=NEWS_REQ_TIMEOUT)
+                except Exception as e:
+                    results, errs = {}, [f"뉴스 수집 실패: {type(e).__name__}: {str(e)[:120]}"]
+                news_err = errs
+                buf = []
+                for nm, v in results.items():
+                    if not v["items"]:
+                        continue
+                    buf.append(f"[{nm}]")
+                    for it in v["items"][:5]:
+                        w = it["when"].strftime("%m/%d") if it["when"] else ""
+                        buf.append(f"- {it['title']} ({it['source']}, {w})")
+                headlines = "\n".join(buf)[:6000]
+                news_ok = bool(headlines.strip())
+                prog.progress(40, text=("① 소식 수집 완료 — 기사 "
+                                        + str(sum(len(v['items']) for v in results.values()))
+                                        + "건" if news_ok else
+                                        "① 뉴스를 가져오지 못했습니다 — 뉴스 없이 계속합니다"))
+            else:
+                prog.progress(40, text="① 뉴스 사용 안 함 — 바로 기도제목을 만듭니다")
+
+            prog.progress(55, text=f"② 오늘의 기도제목을 정리하는 중... (최대 {AI_TOTAL_BUDGET}초)")
+            if True:
                 src_block = (f"[오늘 실제로 수집된 기사 목록]\n{headlines}\n"
                              if news_ok else
                              "[참고] 오늘 기사 목록을 가져오지 못했습니다. "
@@ -4578,13 +4728,27 @@ def render_today_prayer_section():
 7. 100% 한국어.
 
 {KRV_PROMPT_RULE}"""
-                data = get_ai_response(
-                    build_research_prompt(task, "오늘의 기도", "오늘의 시대적 필요"),
-                    is_json=True, temperature=0.6, kind="prayer", max_tokens=6000)
-                if isinstance(data, dict) and data.get("items"):
-                    data["news_ok"] = news_ok
-                    data["news_err"] = news_err[:5]
-                    st.session_state[key] = data
+                try:
+                    data = get_ai_response(
+                        build_research_prompt(task, "오늘의 기도", "오늘의 시대적 필요"),
+                        is_json=True, temperature=0.6, kind="prayer", max_tokens=5000)
+                except Exception as e:
+                    st.session_state.ai_fallback_used = True
+                    st.session_state.ai_error_kind = _classify_api_error(str(e))
+                    st.session_state.ai_error_detail = [f"{type(e).__name__}: {str(e)[:200]}"]
+                    data = {}
+
+                data = normalize_prayer_data(data)
+                if not data.get("items"):
+                    # AI 가 실패해도 화면이 비어 있지 않도록, 오늘 소식으로 기본 기도제목을 만든다
+                    data = build_local_prayer(d0, headlines if news_ok else "")
+                    data["ai_failed"] = True
+
+                prog.progress(100, text="③ 완료")
+                data["news_ok"] = news_ok
+                data["news_err"] = news_err[:5]
+                st.session_state[key] = data
+            prog.empty()
             st.rerun()
 
         data = st.session_state.get(key) or {}
@@ -4635,10 +4799,17 @@ def render_today_prayer_section():
         if st.session_state.pop("__prayer_saved", False):
             st.success("✅ 저장했습니다. 아래 카드와 문서가 새로 그려집니다.")
 
+        if data.get("ai_failed"):
+            st.warning(
+                "⚠️ **AI 응답을 받지 못해, 앱이 직접 만든 기본 기도제목을 먼저 보여 드립니다.**\n\n"
+                "아래 내용은 그대로 쓰셔도 되고, [✍️ 직접 작성 / 수정하기]로 고치셔도 됩니다. "
+                "다시 [🙏 오늘의 기도 생성]을 누르면 AI로 재시도합니다.")
         show_ai_status()
         if use_news and not data.get("news_ok"):
             st.warning("⚠️ 오늘 기사 목록을 가져오지 못해, **특정 사건과 연결하지 않은 "
-                       "일반 기도제목**으로 작성했습니다. 잠시 후 다시 시도해 보세요.")
+                       "일반 기도제목**으로 작성했습니다.\n\n"
+                       "앱이 올라간 서버에서 뉴스 사이트 접속이 막혀 있을 수 있습니다. "
+                       "[📰 오늘 뉴스에 근거]를 꺼 두시면 훨씬 빠르게 만들어집니다.")
         if data.get("summary"):
             st.caption(f"오늘의 기도 한 줄 — {data['summary']}")
 
@@ -5218,40 +5389,90 @@ def parse_rss(xml_bytes: bytes, limit: int = 12):
     return out
 
 
-@st.cache_data(show_spinner=False, ttl=1800, max_entries=64)
-def fetch_news_section(query: str, days: int = 7, limit: int = 12):
-    """한 섹션의 기사 목록. 실패하면 빈 목록과 오류 메시지."""
+def fetch_news_section(query: str, days: int = 7, limit: int = 12,
+                       timeout: int = NEWS_REQ_TIMEOUT):
+    """
+    한 섹션의 기사 목록. 실패하면 빈 목록과 오류 메시지.
+    ※ 스레드에서 부르므로 st.cache_data 를 쓰지 않는다(스레드+캐시는 멈춤 위험).
+       캐시는 collect_news 단계에서 세션에 직접 저장한다.
+    """
     try:
         req = urllib.request.Request(_gnews_url(query, days), headers={
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
             "Accept": "application/rss+xml, application/xml;q=0.9, */*;q=0.8",
         })
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read()
         return {"items": parse_rss(data, limit), "error": ""}
     except Exception as e:
         return {"items": [], "error": f"{type(e).__name__}: {str(e)[:120]}"}
 
 
-def collect_news(section_names, days=7, per_section=8):
-    """선택한 섹션들을 동시에 가져온다."""
-    from concurrent.futures import ThreadPoolExecutor
+def collect_news(section_names, days=7, per_section=8,
+                 budget: int = NEWS_TOTAL_BUDGET, req_timeout: int = NEWS_REQ_TIMEOUT):
+    """
+    선택한 섹션들을 동시에 가져온다.
+    전체 제한 시간(budget)을 반드시 지킨다 — 한 섹션이 응답하지 않아도
+    화면이 영원히 로딩 상태로 멈추지 않는다.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     picked = [s for s in NEWS_SECTIONS if s[1] in section_names]
     results = {}
     errors = []
+    if not picked:
+        return results, errors
 
-    def work(sec):
-        _, name, query, color = sec
-        r = fetch_news_section(query, days, per_section)
-        return name, sec, r
+    # 30분 캐시 (세션 안에서만)
+    cache = st.session_state.setdefault("_news_cache", {})
+    now = time.time()
+    todo = []
+    for sec in picked:
+        ck = f"{sec[2]}|{days}|{per_section}"
+        hit = cache.get(ck)
+        if hit and (now - hit["at"] < 1800):
+            results[sec[1]] = {"group": sec[0], "color": sec[3], "query": sec[2],
+                               "items": hit["items"]}
+        else:
+            todo.append((sec, ck))
 
-    with ThreadPoolExecutor(max_workers=8) as ex:
-        for name, sec, r in ex.map(work, picked):
-            results[name] = {"group": sec[0], "color": sec[3], "query": sec[2],
-                             "items": r["items"]}
-            if r["error"]:
-                errors.append(f"{name}: {r['error']}")
-    return results, errors
+    if todo:
+        # with 문을 쓰면 shutdown 이 모든 스레드를 기다려 버리므로 직접 관리한다.
+        ex = ThreadPoolExecutor(max_workers=min(8, len(todo)))
+        futs = {ex.submit(fetch_news_section, sec[2], days, per_section, req_timeout):
+                (sec, ck) for sec, ck in todo}
+        try:
+            for f in as_completed(futs, timeout=budget):
+                sec, ck = futs[f]
+                try:
+                    r = f.result(timeout=1)
+                except Exception as e:
+                    r = {"items": [], "error": f"{type(e).__name__}: {str(e)[:100]}"}
+                results[sec[1]] = {"group": sec[0], "color": sec[3], "query": sec[2],
+                                   "items": r["items"]}
+                if r["error"]:
+                    errors.append(f"{sec[1]}: {r['error']}")
+                else:
+                    cache[ck] = {"at": time.time(), "items": r["items"]}
+        except Exception:
+            # 제한 시간 초과 — 못 받은 섹션은 빈 목록으로 두고 즉시 넘어간다
+            pass
+        for f, (sec, ck) in futs.items():
+            if sec[1] not in results:
+                f.cancel()
+                results[sec[1]] = {"group": sec[0], "color": sec[3], "query": sec[2],
+                                   "items": []}
+                errors.append(f"{sec[1]}: 제한 시간({budget}초) 초과로 건너뜀")
+        try:
+            ex.shutdown(wait=False, cancel_futures=True)   # 남은 작업을 기다리지 않는다
+        except TypeError:
+            ex.shutdown(wait=False)
+
+    # 원래 선택 순서대로 정리
+    ordered = {}
+    for sec in picked:
+        if sec[1] in results:
+            ordered[sec[1]] = results[sec[1]]
+    return ordered, errors
 
 
 def news_keywords(results, top_n=12):
@@ -5468,8 +5689,11 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
         if go:
             keep_open("news")
             days = max(3, min(14, (win_e - win_s).days + 2))
-            with st.spinner(f"{len(chosen)}개 섹션의 기사를 모으는 중입니다..."):
-                results, errors = collect_news(chosen, days=days, per_section=per_section)
+            _budget = int(min(150, 25 + 3 * len(chosen)))
+            with st.spinner(f"{len(chosen)}개 섹션의 기사를 모으는 중입니다... "
+                            f"(최대 {_budget}초 — 늦게 오는 섹션은 건너뜁니다)"):
+                results, errors = collect_news(chosen, days=days, per_section=per_section,
+                                               budget=_budget)
 
             # 수집 기간 안의 기사만 남기기
             for name, v in results.items():
