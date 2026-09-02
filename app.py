@@ -1382,8 +1382,7 @@ SYSTEM_INSTRUCTION = (
     "3) 영어 사고 과정, 기획 메모, 인사말, 서두 설명 없이 요청된 결과물 본문만 출력합니다.\n"
     "4) 인도자(리더/구역장/셀리더/부모)용 안내는 '[인도자 팁 / 가이드]: ...' 형식으로 씁니다.\n"
     "5) 100% 한국어로 작성합니다.\n"
-    "6) 한글 성경 인용은 언제나 **개역개정판**을 기본으로 씁니다. "
-    "다른 번역(새번역·쉬운성경·메시지 등)을 쓸 때는 반드시 괄호로 역본명을 밝힙니다."
+    "6) 한글 성경 인용은 **무조건 개역개정**입니다(예외 없음). 개역개정 문체는 '…하니라/…이니라/…로다/…할지어다/…아니하며' 이며, '…하십시오/…합니다/…습니다/…하세요' 가 보이면 개역개정이 아니므로 쓰지 마십시오. 개역개정 본문이 확실하지 않은 구절은 아예 인용하지 말고 확실히 아는 구절로 바꾸십시오. 부득이 다른 역본을 쓸 때는 반드시 괄호로 역본명을 밝히십시오(예: 「…」 (새번역))"
 )
 
 
@@ -1403,8 +1402,7 @@ RESEARCH_RULES = """[절대 준수 규칙]
    반드시 이 본문·이 주제에만 해당하는 구체적 내용이어야 합니다.
 5. 100% 한국어. 영어 사고 과정·머리말·마무리 인사 없이 지정한 형식 그대로만 출력하십시오.
 6. 번호는 각 항목(섹션) 안에서 1번부터 다시 시작합니다.
-7. 한글 성경 인용은 언제나 **개역개정판**이 기본입니다. 다른 역본을 쓸 경우 반드시
-   괄호로 역본명을 밝히십시오. (예: "…" (새번역))"""
+7. 한글 성경 인용은 **무조건 개역개정**입니다(예외 없음). 개역개정 문체는 '…하니라/…이니라/…로다/…할지어다/…아니하며' 이며, '…하십시오/…합니다/…습니다/…하세요' 가 보이면 개역개정이 아니므로 쓰지 마십시오. 개역개정 본문이 확실하지 않은 구절은 아예 인용하지 말고 확실히 아는 구절로 바꾸십시오. 부득이 다른 역본을 쓸 때는 반드시 괄호로 역본명을 밝히십시오(예: "…" (새번역))."""
 
 
 def build_research_prompt(task_block: str, scripture: str, topic: str = "",
@@ -1460,7 +1458,7 @@ def build_grounded_prompt(task_block: str, ctx_chars: int = 9000, extra: str = "
 - 위 '고유 키워드' 중 최소 5개 이상을 결과물에 자연스럽게 반영하십시오.
 - 모든 항목은 이 설교에만 해당되어야 합니다. 다른 설교에도 그대로 쓸 수 있는 일반론 문장은 금지입니다.
 - 대표 성구는 {scripture} 입니다. 원고에 인용되지 않은 다른 성경 구절을 임의로 끌어오지 마십시오.
-- 한글 성경 인용은 개역개정판을 기본으로 씁니다. 다른 역본은 괄호로 역본명을 밝히십시오.
+- 한글 성경 인용은 **무조건 개역개정**입니다(예외 없음). 개역개정 문체는 '…하니라/…이니라/…로다/…할지어다/…아니하며' 이며, '…하십시오/…합니다/…습니다/…하세요' 가 보이면 개역개정이 아니므로 쓰지 마십시오. 개역개정 본문이 확실하지 않은 구절은 아예 인용하지 말고 확실히 아는 구절로 바꾸십시오. 부득이 다른 역본을 쓸 때는 반드시 괄호로 역본명을 밝히십시오(예: "…" (새번역)).
 - 100% 한국어. 영어 메모·머리말·마무리 인사 금지. 아래 형식 그대로만 출력.
 
 {task_block}
@@ -3798,7 +3796,8 @@ def extract_youtube_to_shorts(yt_url, start_sec, duration_sec, title, subtitle_t
 # ==============================================================================
 # 공통 툴바
 # ==============================================================================
-def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mode: str = "doc"):
+def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mode: str = "doc",
+                               exp_key: str = ""):
     content = content or "내용 없음"
     c_title, c_btn = st.columns([1.2, 2.8])
     with c_title:
@@ -3808,10 +3807,16 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
         b1, b2, b3, b4, b5, b6 = st.columns([1, 1, 1.1, 1.1, 1.1, 1])
         with b1:
             if st.button("✏️ 수정", key=f"edit_btn_{state_key}"):
+                if exp_key:
+                    keep_open(exp_key)
                 st.session_state[f"edit_mode_{state_key}"] = not st.session_state.get(f"edit_mode_{state_key}", False)
+                st.rerun()
         with b2:
             if st.button("📋 복사", key=f"copy_btn_{state_key}"):
+                if exp_key:
+                    keep_open(exp_key)
                 st.session_state[f"show_copy_{state_key}"] = not st.session_state.get(f"show_copy_{state_key}", False)
+                st.rerun()
         with b3:
             st.download_button("📥 워드", data=create_docx_bytes(title, content), file_name=f"{title}.docx",
                                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -3937,6 +3942,164 @@ def render_body(text: str):
                 unsafe_allow_html=True)
 
 
+# ------------------------------------------------------------------------------
+# 익스팬더 상태 유지 — 안에 있는 버튼을 눌러도 패널이 닫히지 않게 한다.
+#   Streamlit 의 st.expander 는 기본적으로 상태를 기억하지 않아서,
+#   버튼을 누르면 rerun 되면서 접혀 버린다(= 수정 버튼이 안 눌리는 것처럼 보임).
+# ------------------------------------------------------------------------------
+def open_expander(label: str, state_key: str, default: bool = False):
+    """
+    상태가 유지되는 익스팬더. 반환값을 with 로 사용.
+
+    Streamlit 1.40+ 는 expander 에 key=/on_change= 를 주면 열림/닫힘 상태를
+    위젯 상태로 기억한다. 단, expanded= 값이 element_id 계산에 들어가므로
+    expanded 는 '항상 같은 값'을 넘기고, 실제 제어는 session_state[key] 로 한다.
+    (예전처럼 expanded 를 매번 바꿔 넘기면 위젯이 새로 만들어져 상태가 날아간다.)
+    """
+    wkey = f"exp_{state_key}"          # Streamlit 위젯 상태 키
+    force = f"__expforce_{state_key}"  # '다음 실행 때 다시 열어라' 1회성 신호
+    sticky = f"__expopen_{state_key}"  # 구버전 Streamlit 대비 보조 플래그
+    try:
+        # 위젯이 만들어지기 '전'에 써야 실제로 반영된다.
+        if st.session_state.get(force):
+            st.session_state[wkey] = True
+            st.session_state[sticky] = True
+            st.session_state[force] = False
+        elif wkey not in st.session_state:
+            st.session_state[wkey] = bool(st.session_state.get(sticky, default))
+        return st.expander(label, expanded=bool(default), key=wkey, on_change="rerun")
+    except Exception:
+        # 구버전 Streamlit: key/on_change 미지원 → 보조 플래그로만 유지
+        if st.session_state.get(force):
+            st.session_state[sticky] = True
+            st.session_state[force] = False
+        return st.expander(label, expanded=bool(st.session_state.get(sticky, default)))
+
+
+def keep_open(state_key: str):
+    """
+    익스팬더 안에서 무언가를 눌렀을 때(버튼·저장·다운로드) 다시 열린 채로 나오게 예약한다.
+    ※ 위젯이 이미 그려진 뒤에는 위젯 키를 직접 못 바꾸므로, '다음 실행 때 열기' 신호만 남긴다.
+    """
+    st.session_state[f"__expforce_{state_key}"] = True
+    st.session_state[f"__expopen_{state_key}"] = True
+
+
+def sync_doc_field(doc_field: str, signature: str, builder) -> str:
+    """
+    문서 본문 세션 필드를 관리한다.
+      · 처음이거나, 원본 데이터(signature)가 바뀌었으면 builder() 로 새로 만든다.
+      · 사용자가 [수정]으로 고쳐 놓았고 원본이 그대로면 고친 내용을 그대로 지킨다.
+    """
+    sig_field = f"{doc_field}__sig"
+    lock_field = f"{doc_field}__edited"
+    # 사용자가 직접 고쳐 놓았고, 원본 데이터가 그대로면 → 고친 내용을 지킨다.
+    if st.session_state.get(lock_field) and st.session_state.get(lock_field) == signature:
+        return st.session_state.get(doc_field, "")
+    if (not st.session_state.get(doc_field)) or st.session_state.get(sig_field) != signature:
+        st.session_state[doc_field] = builder()
+        st.session_state[sig_field] = signature
+        st.session_state.pop(lock_field, None)
+    return st.session_state[doc_field]
+
+
+def _sig(*parts) -> str:
+    """세션에 저장된 원본이 바뀌었는지 판별할 짧은 지문."""
+    try:
+        raw = "|".join(json.dumps(p, ensure_ascii=False, sort_keys=True)
+                       if isinstance(p, (dict, list)) else str(p) for p in parts)
+    except Exception:
+        raw = "|".join(str(p) for p in parts)
+    return hashlib.sha256(raw.encode("utf-8", "ignore")).hexdigest()[:16]
+
+
+# ------------------------------------------------------------------------------
+# 개역개정 여부 간이 확인
+# ------------------------------------------------------------------------------
+KRV_MODERN = re.compile(r'(십시오|습니다|합니다|입니다|하세요|해요|드립니다|이에요|예요)')
+
+# 한글 역본 이름 정규화 표 — AI 가 어떤 식으로 적어 와도 하나로 모은다.
+VERSION_ALIASES = {
+    "개역개정": ["개역개정", "개역 개정", "개역개정판", "개역개정4판", "krv", "nkrv",
+              "new korean revised", "개정개역"],
+    "개역한글": ["개역한글", "개역", "개역한글판"],
+    "새번역": ["새번역", "표준새번역", "표준 새번역", "rnksv", "nkrsv"],
+    "새한글성경": ["새한글", "새한글성경"],
+    "현대인의성경": ["현대인의 성경", "현대인의성경", "현대인"],
+    "쉬운성경": ["쉬운성경", "쉬운 성경"],
+    "공동번역": ["공동번역", "공동 번역"],
+    "메시지": ["메시지", "the message", "메시지성경"],
+}
+
+KRV_DEFAULT = "개역개정"
+
+# 모든 성경 인용 프롬프트에 공통으로 붙이는 개역개정 고정 규칙
+KRV_PROMPT_RULE = """[한글 성경 역본 — 반드시 지킬 것]
+· 한글 성경 인용은 **무조건 개역개정판** 본문을 그대로 씁니다. 이것이 기본값이며 예외가 없습니다.
+· 개역개정의 문체 표지: 서술은 '…하니라 / …하였더라 / …로다 / …이니라 / …아니하며',
+  명령은 '…하라 / …할지어다 / …하지 말라', 존대는 '…하시니라 / …하옵소서'.
+· 다음 문체가 하나라도 보이면 개역개정이 아니므로 절대 쓰지 마십시오 —
+  '…하십시오 / …합니다 / …습니다 / …입니다 / …하세요 / …해요 / …드립니다'.
+  (이것들은 새번역·새한글성경·현대인의성경·쉬운성경·공동번역·메시지의 문체입니다.)
+· 개역개정 본문이 정확히 기억나지 않는 구절은 **아예 고르지 마십시오.**
+  확실히 아는 구절로 바꾸는 것이 옳습니다. 비슷하게 지어내지 마십시오.
+· 부득이하게 다른 역본을 쓸 수밖에 없다면, version 항목에 그 역본의 이름을
+  정확히 적고(예: '새번역'), 구절 표기 뒤에도 역본명을 밝히십시오."""
+
+
+def normalize_version(name) -> str:
+    """AI 가 돌려준 역본 이름을 표준 이름으로 정리한다. 비어 있으면 개역개정."""
+    t = str(name or "").strip().replace("판", "").replace("성경", "성경")
+    if not t:
+        return KRV_DEFAULT
+    low = t.lower().replace(" ", "")
+    for std, alts in VERSION_ALIASES.items():
+        for a in alts:
+            if a.replace(" ", "").lower() in low or low in a.replace(" ", "").lower():
+                return std
+    return t[:20]
+
+
+def version_label(data: dict, field: str = "version") -> str:
+    """카드·문서에 붙일 '(개역개정)' 같은 역본 표기를 만든다."""
+    return normalize_version((data or {}).get(field)) or KRV_DEFAULT
+
+
+def krv_check(text: str):
+    """개역개정이 아닌 현대 번역체가 섞였는지 확인. (통과여부, 사유)"""
+    t = str(text or "")
+    if not t.strip():
+        return True, ""
+    m = KRV_MODERN.search(t)
+    if m:
+        return False, f"현대 번역체 어미('{m.group(1)}')가 보입니다"
+    return True, ""
+
+
+def krv_warn(text: str, where: str = "본문", declared: str = ""):
+    """
+    개역개정이 아닌 문체가 보이면 알려 준다.
+    declared 에 AI 가 스스로 밝힌 역본 이름이 있으면 그 이름을 함께 보여 준다.
+    """
+    ok, why = krv_check(text)
+    ver = normalize_version(declared) if declared else ""
+    if ok:
+        if ver and ver != KRV_DEFAULT:
+            st.info("ℹ️ 이 " + where + "은(는) **" + ver + "** 본문입니다. "
+                    "개역개정으로 바꾸시려면 [✍️ 직접 작성 / 수정하기]에서 고쳐 주세요.")
+        return True
+
+    named = ("AI 는 이 본문을 **" + ver + "** 이라고 밝혔습니다. " if ver and ver != KRV_DEFAULT else "")
+    st.warning(
+        "⚠️ **" + where + "이 개역개정이 아닌 것 같습니다** — " + why + ". " + named + "\n\n"
+        "개역개정은 '…하니라 / …이니라 / …로다 / …할지어다 / …아니하며' 같은 어미를 씁니다. "
+        "'…하십시오 / …합니다 / …습니다' 는 새번역·현대인의성경 계열 문체입니다.\n\n"
+        "→ 아래 [✍️ 직접 작성 / 수정하기]에서 개역개정 본문으로 고쳐 주시거나, "
+        "다른 역본을 그대로 쓰시려면 역본 이름 칸에 역본명(예: 새번역)을 적어 주세요. "
+        "그러면 카드와 문서에 역본명이 함께 표시됩니다.")
+    return False
+
+
 # ==============================================================================
 # 오늘의 만나 · 오늘의 말씀 (설교 대시보드 하단 섹션)
 # ==============================================================================
@@ -3957,7 +4120,7 @@ def _today_str():
 
 
 def render_manna_section():
-    with st.expander("🍞 오늘의 만나 — 날짜별 말씀 · NIV · 예화 한 장", expanded=False):
+    with open_expander("🍞 오늘의 만나 — 날짜별 말씀 · NIV · 예화 한 장", "manna"):
         st.caption("버튼을 누른 날짜 기준으로 개역개정 구절, NIV 영어 구절, "
                    "그리고 그 구절과 맞물리는 실제 예화(역사·문학·사건·인물·성경)를 한 장으로 만듭니다.")
 
@@ -3990,6 +4153,7 @@ def render_manna_section():
 
         # ── AI 생성
         if go:
+            keep_open("manna")
             with st.spinner("오늘의 말씀과 예화를 준비하는 중..."):
                 d0 = datetime.strptime(date_iso, "%Y-%m-%d")
                 seed_topic = MANNA_THEMES[(d0.timetuple().tm_yday) % len(MANNA_THEMES)]
@@ -3998,6 +4162,7 @@ def render_manna_section():
  "topic": "오늘의 주제를 한 낱말~한 구절로",
  "ko_verse": "개역개정 성경 구절 본문 (2~4줄 분량, 40~90자)",
  "ko_ref": "예: 고후 5:17",
+ "version": "실제로 인용한 한글 역본 이름. 개역개정이면 정확히 '개역개정'",
  "en_verse": "같은 구절의 NIV 영어 본문",
  "en_ref": "예: 2Co 5:17",
  "story_title": "예화 제목 (8~14자)",
@@ -4008,8 +4173,10 @@ def render_manna_section():
 - 날짜: {d0.strftime('%Y년 %m월 %d일')}
 - 오늘의 주제 방향: {seed_topic}
 
+{KRV_PROMPT_RULE}
+
 [반드시 지킬 것]
-1. ko_verse 는 **개역개정판** 본문을 정확히 인용하십시오. 다른 역본을 쓰지 마십시오.
+1. ko_verse 는 위 규칙대로 **개역개정** 본문이어야 하며, version 에 '개역개정'이라고 쓰십시오.
    확실히 아는 구절만 쓰고, 장절(ko_ref)을 정확히 표기하십시오.
 2. en_verse 는 같은 구절의 NIV 본문입니다. 한국어 번역이 아니라 실제 영어 본문이어야 합니다.
 3. story_body 는 **실제 예화**여야 합니다. 다음 중 하나에서 고르십시오.
@@ -4018,11 +4185,13 @@ def render_manna_section():
    지어낸 '어떤 성도의 이야기'는 절대 금지입니다.
 4. 예화는 반드시 오늘의 구절이 말하는 바와 맞물려야 합니다.
 5. 예화 마지막 한 문장은 구절과의 연결을 담담하게 맺으십시오. 설교조로 훈계하지 마십시오.
-6. 100% 한국어(en_verse 제외)."""
+6. 예화 본문(story_body)은 현대 한국어 문어체로 쓰십시오. 개역개정 규칙은 성경 인용문에만 적용됩니다.
+7. 100% 한국어(en_verse 제외)."""
                 data = get_ai_response(
                     build_research_prompt(task, "오늘의 말씀", seed_topic),
                     is_json=True, temperature=0.85, kind="manna", max_tokens=4000)
                 if isinstance(data, dict) and data:
+                    data["version"] = normalize_version(data.get("version"))
                     st.session_state[key] = data
             st.rerun()
 
@@ -4033,11 +4202,18 @@ def render_manna_section():
             st.markdown("#### ✍️ 직접 작성 · 수정")
             st.caption("AI로 만든 내용을 고치거나, 목사님이 준비하신 말씀과 예화를 직접 적어 넣으세요.")
             with st.form(f"manna_form_{date_iso}"):
-                f1, f2 = st.columns([2.4, 1])
+                f1, f2, f3 = st.columns([2.2, 1, 0.9])
                 with f1:
-                    kv = st.text_area("개역개정 본문", value=data.get("ko_verse", ""), height=100)
+                    kv = st.text_area("한글 성경 본문", value=data.get("ko_verse", ""), height=100)
                 with f2:
                     kr = st.text_input("성경 구절 (예: 고후 5:17)", value=data.get("ko_ref", ""))
+                with f3:
+                    vlist = list(VERSION_ALIASES.keys())
+                    cur_v = version_label(data)
+                    vidx = vlist.index(cur_v) if cur_v in vlist else 0
+                    kver = st.selectbox("역본", vlist, index=vidx,
+                                        help="기본값은 개역개정입니다. 다른 역본을 쓰시면 "
+                                             "카드와 문서에 그 역본 이름이 표시됩니다.")
                 g1, g2 = st.columns([2.4, 1])
                 with g1:
                     ev = st.text_area("NIV 영어 본문", value=data.get("en_verse", ""), height=100)
@@ -4047,12 +4223,14 @@ def render_manna_section():
                 sbody = st.text_area("예화 본문", value=data.get("story_body", ""), height=190)
                 saved = st.form_submit_button("💾 저장하고 다시 그리기", type="primary")
             if saved:
+                keep_open("manna")
                 st.session_state[key] = {
                     "ko_verse": kv, "ko_ref": kr, "en_verse": ev, "en_ref": er,
+                    "version": normalize_version(kver),
                     "story_title": sttl, "story_body": sbody,
                     "topic": data.get("topic", ""),
                 }
-                st.success("저장했습니다. 아래 이미지가 새로 그려집니다.")
+                st.session_state["__manna_saved"] = True
                 st.rerun()
 
         if not data:
@@ -4063,13 +4241,22 @@ def render_manna_section():
                            "[✍️ 직접 작성 / 수정하기]를 켜서 직접 적어 넣으세요.")
             return
 
+        if st.session_state.pop("__manna_saved", False):
+            st.success("✅ 저장했습니다. 아래 이미지와 문서가 새로 그려집니다.")
+
         show_ai_status()
-        png = render_manna_png(date_iso, data.get("ko_verse", ""), data.get("ko_ref", ""),
+
+        # ── 역본 확인 : 개역개정이 기본, 다르면 이름을 밝힌다
+        ver = version_label(data)
+        krv_warn(data.get("ko_verse", ""), "오늘의 만나 성경 본문", data.get("version", ""))
+
+        png = render_manna_png(date_iso, data.get("ko_verse", ""),
+                               f"{data.get('ko_ref','')} ({ver})".strip(),
                                data.get("en_verse", ""), data.get("en_ref", ""),
                                data.get("story_title", ""), data.get("story_body", ""),
                                seed=f"manna|{date_iso}|{st.session_state.get('bg_shuffle', 0)}",
                                theme=manna_theme, org_name=manna_org.strip())
-        st_image_full(png, caption=f"오늘의 만나 · {date_iso}")
+        st_image_full(png, caption=f"오늘의 만나 · {date_iso} · {ver}")
 
         dl1, dl2 = st.columns(2)
         with dl1:
@@ -4078,16 +4265,45 @@ def render_manna_section():
                                mime="image/png", key=f"dl_manna_{date_iso}")
         with dl2:
             if st.button("🔀 배경 이미지 바꾸기", key=f"manna_shuffle_{date_iso}"):
+                keep_open("manna")
                 st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
                 st.rerun()
 
-        txt = (f"🍞 오늘의 만나 · {date_iso}"
-               + (f" · {manna_org}" if manna_org.strip() else "") + "\n\n"
-               f"📖 {data.get('ko_ref','')} (개역개정)\n{data.get('ko_verse','')}\n\n"
-               f"🌍 {data.get('en_ref','')} (NIV)\n{data.get('en_verse','')}\n\n"
-               f"▪ {data.get('story_title','')}\n{data.get('story_body','')}")
-        render_section_top_toolbar(f"오늘의만나_{date_iso}", txt, f"manna_{date_iso}")
-        render_body(txt)
+        # ── 문서 (수정 · 복사 · 워드 · PDF · PPT · txt)
+        d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+        wk = ["월", "화", "수", "목", "금", "토", "일"][d0.weekday()] + "요일"
+        doc_field = f"manna_doc::{date_iso}"
+
+        def _build_manna_doc():
+            L = [f"🍞 오늘의 만나 · {d0.strftime('%Y년 %m월 %d일')} {wk}"]
+            if manna_org.strip():
+                L.append(f"　{manna_org.strip()}")
+            if data.get("topic"):
+                L += ["", f"오늘의 주제 — {data['topic']}"]
+            L += ["", f"1. 오늘의 말씀 ({ver})",
+                  f"- 1. {data.get('ko_ref','')} ({ver})",
+                  f"- 2. {data.get('ko_verse','')}", "",
+                  "2. 영어 본문 (NIV)",
+                  f"- 1. {data.get('en_ref','')}",
+                  f"- 2. {data.get('en_verse','')}", "",
+                  f"3. 오늘의 예화 — {data.get('story_title','')}",
+                  f"- 1. {data.get('story_body','')}"]
+            return "\n".join(L)
+
+        txt = sync_doc_field(
+            doc_field,
+            _sig(data.get("ko_verse"), data.get("ko_ref"), ver, data.get("en_verse"),
+                 data.get("en_ref"), data.get("story_title"), data.get("story_body"),
+                 manna_org.strip(), date_iso),
+            _build_manna_doc)
+
+        st.write("")
+        render_section_top_toolbar(
+            _safe_filename("오늘의만나", date_iso, manna_org, "").rstrip("."),
+            txt, f"manna_doc_{date_iso}", exp_key="manna")
+        if editable_section(f"manna_doc_{date_iso}", doc_field, "오늘의 만나 내용 편집",
+                            height=320, exp_key="manna"):
+            render_body(st.session_state[doc_field])
 
 
 def _safe_filename(prefix: str, date_iso: str, name: str = "", ext: str = "png") -> str:
@@ -4097,7 +4313,7 @@ def _safe_filename(prefix: str, date_iso: str, name: str = "", ext: str = "png")
 
 
 def render_today_word_section():
-    with st.expander("📖 오늘의 말씀 — 말씀카드 이미지 자동 생성", expanded=False):
+    with open_expander("📖 오늘의 말씀 — 말씀카드 이미지 자동 생성", "todayword"):
         st.caption("버튼을 누르면 그날 날짜가 적힌 말씀카드가 배경 사진과 함께 만들어집니다. "
                    "교회 SNS나 단톡방에 그대로 올리실 수 있습니다.")
 
@@ -4132,37 +4348,53 @@ def render_today_word_section():
         manna = st.session_state.get(f"manna::{date_iso}") or {}
 
         if src == "직접 입력":
-            v = st.text_area("말씀 문구", value=st.session_state.get(f"{key}_v", ""),
-                             height=90, key=f"{key}_vin")
-            r = st.text_input("성경 구절", value=st.session_state.get(f"{key}_r", ""),
-                              key=f"{key}_rin")
+            iv1, iv2 = st.columns([3, 1])
+            with iv1:
+                v = st.text_area("말씀 문구", value=st.session_state.get(f"{key}_v", ""),
+                                 height=90, key=f"{key}_vin")
+            with iv2:
+                r = st.text_input("성경 구절", value=st.session_state.get(f"{key}_r", ""),
+                                  key=f"{key}_rin")
+                _vl = list(VERSION_ALIASES.keys())
+                mv = st.selectbox("역본", _vl, index=0, key=f"{key}_ver",
+                                  help="기본값은 개역개정입니다.")
             if go:
-                st.session_state[key] = {"verse": v, "ref": r}
+                keep_open("todayword")
+                st.session_state[key] = {"verse": v, "ref": r, "version": normalize_version(mv)}
                 st.rerun()
         elif src == "오늘의 만나 구절 사용":
             if go:
+                keep_open("todayword")
                 if manna.get("ko_verse"):
-                    st.session_state[key] = {"verse": manna["ko_verse"], "ref": manna.get("ko_ref", "")}
+                    st.session_state[key] = {"verse": manna["ko_verse"],
+                                             "ref": manna.get("ko_ref", ""),
+                                             "version": version_label(manna)}
                 else:
                     st.warning("먼저 위의 [🍞 오늘의 만나]를 생성해 주세요.")
                 st.rerun()
         else:
             if go:
+                keep_open("todayword")
                 with st.spinner("오늘 나눌 말씀을 고르는 중..."):
                     d0 = datetime.strptime(date_iso, "%Y-%m-%d")
                     seed_topic = MANNA_THEMES[(d0.timetuple().tm_yday + 7) % len(MANNA_THEMES)]
                     task = f"""[출력 형식 — 아래 JSON 하나만]
 {{"verse": "개역개정 성경 구절 본문 (30~70자, 카드에 넣기 좋은 길이)",
   "ref": "예: 시편 23:1",
+  "version": "실제로 인용한 한글 역본 이름. 개역개정이면 정확히 '개역개정'",
   "why": "오늘 이 구절을 나누는 이유 한 문장"}}
 
 - 날짜: {d0.strftime('%Y년 %m월 %d일')}
 - 오늘의 주제 방향: {seed_topic}
-- 개역개정 본문을 정확히 인용하십시오. 확실히 아는 구절만 쓰십시오.
-- 너무 긴 구절은 피하고, 한 화면에 들어오는 길이로 고르십시오."""
+- 너무 긴 구절은 피하고, 한 화면에 들어오는 길이로 고르십시오.
+- why 는 현대 한국어 문어체로 쓰십시오(개역개정 규칙은 verse 에만 적용).
+
+{KRV_PROMPT_RULE}"""
                     data = get_ai_response(
                         build_research_prompt(task, "오늘의 말씀", seed_topic),
                         is_json=True, temperature=0.9, kind="today_verse", max_tokens=1500)
+                    if isinstance(data, dict):
+                        data["version"] = normalize_version(data.get("version"))
                     st.session_state[key] = data if isinstance(data, dict) else {}
                 st.rerun()
 
@@ -4179,24 +4411,30 @@ def render_today_word_section():
         if data.get("why"):
             st.caption(f"오늘 이 말씀을 나누는 이유 — {data['why']}")
 
+        ver = version_label(data)
+        krv_warn(verse, "오늘의 말씀 본문", data.get("version", ""))
+
         png = render_today_verse_png(
-            date_iso, verse, ref, tw_church.strip(),
+            date_iso, verse, f"{ref} ({ver})".strip(), tw_church.strip(),
             seed=f"today|{date_iso}|{st.session_state.get('bg_shuffle', 0)}",
             theme=tw_theme, size_key=tw_size)
 
         p1, p2 = st.columns([1.2, 1])
         with p1:
-            st_image_full(png, caption=f"오늘의 말씀 · {date_iso}")
+            st_image_full(png, caption=f"오늘의 말씀 · {date_iso} · {ver}")
         with p2:
             st.download_button("📥 말씀카드 PNG 내려받기", data=png,
                                file_name=_safe_filename("오늘의말씀", date_iso, tw_church, "png"),
                                mime="image/png",
                                key=f"dl_tw_{date_iso}")
             if st.button("🔀 배경 사진 바꾸기", key=f"tw_shuffle_{date_iso}"):
+                keep_open("todayword")
                 st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
                 st.rerun()
             st.markdown(f"<div class='lib-card' style='padding:14px;margin-top:10px;'>"
-                        f"<div style='color:#fde047;font-weight:800;'>「 {_esc(ref)} 」</div>"
+                        f"<div style='color:#fde047;font-weight:800;'>「 {_esc(ref)} 」"
+                        f"<span style='color:#93a3d0;font-weight:600;font-size:12px;'>"
+                        f"　{_esc(ver)}</span></div>"
                         f"<div style='color:#e8ecff;margin-top:8px;line-height:1.7;'>"
                         f"{_esc(verse)}</div></div>", unsafe_allow_html=True)
 
@@ -4204,23 +4442,29 @@ def render_today_word_section():
         d0 = datetime.strptime(date_iso, "%Y-%m-%d")
         wk = ["월", "화", "수", "목", "금", "토", "일"][d0.weekday()] + "요일"
         doc_field = f"todayword_doc::{date_iso}"
-        if not st.session_state.get(doc_field):
-            lines = [f"📖 오늘의 말씀 · {d0.strftime('%Y년 %m월 %d일')} {wk}"]
+
+        def _build_tw_doc():
+            L = [f"📖 오늘의 말씀 · {d0.strftime('%Y년 %m월 %d일')} {wk}"]
             if tw_church.strip():
-                lines.append(f"　{tw_church.strip()}")
-            lines += ["", f"1. 오늘의 성구 (개역개정)", f"- 1. {ref}",
-                      f"- 2. {verse}", ""]
+                L.append(f"　{tw_church.strip()}")
+            L += ["", f"1. 오늘의 성구 ({ver})", f"- 1. {ref} ({ver})",
+                  f"- 2. {verse}", ""]
             if data.get("why"):
-                lines += ["2. 오늘 이 말씀을 나누는 이유", f"- 1. {data['why']}", ""]
-            lines += ["3. 함께 드리는 기도",
-                      f"- 1. 주님, 오늘 주신 {ref} 말씀을 마음에 새기고 하루를 살아가게 하옵소서."]
-            st.session_state[doc_field] = "\n".join(lines)
+                L += ["2. 오늘 이 말씀을 나누는 이유", f"- 1. {data['why']}", ""]
+            L += ["3. 함께 드리는 기도",
+                  f"- 1. 주님, 오늘 주신 {ref} 말씀을 마음에 새기고 하루를 살아가게 하옵소서."]
+            return "\n".join(L)
+
+        sync_doc_field(doc_field,
+                       _sig(verse, ref, ver, data.get("why"), tw_church.strip(), date_iso),
+                       _build_tw_doc)
 
         st.write("")
         render_section_top_toolbar(
             _safe_filename("오늘의말씀", date_iso, tw_church, "").rstrip("."),
-            st.session_state[doc_field], f"tw_doc_{date_iso}")
-        if editable_section(f"tw_doc_{date_iso}", doc_field, "오늘의 말씀 내용 편집", height=260):
+            st.session_state[doc_field], f"tw_doc_{date_iso}", exp_key="todayword")
+        if editable_section(f"tw_doc_{date_iso}", doc_field, "오늘의 말씀 내용 편집",
+                            height=280, exp_key="todayword"):
             render_body(st.session_state[doc_field])
 
 
@@ -4240,7 +4484,7 @@ PRAYER_FIELDS = [
 
 
 def render_today_prayer_section():
-    with st.expander("🙏 오늘의 기도 — 오늘자 뉴스에서 뽑은 기도제목", expanded=False):
+    with open_expander("🙏 오늘의 기도 — 오늘자 뉴스에서 뽑은 기도제목", "prayer"):
         st.caption("오늘의 국내·해외 주요 뉴스와 교회·목회 소식을 실제로 가져와, "
                    "그 소식에 근거한 기도제목을 만들어 드립니다. "
                    "새벽기도·주일예배 대표기도·주보 기도란에 그대로 쓰실 수 있습니다.")
@@ -4277,6 +4521,7 @@ def render_today_prayer_section():
 
         # ── 생성
         if go:
+            keep_open("prayer")
             d0 = datetime.strptime(date_iso, "%Y-%m-%d")
             headlines, news_ok, news_err = "", False, []
             if use_news:
@@ -4326,10 +4571,13 @@ def render_today_prayer_section():
 2. 특정 정당·정파를 지지하거나 비난하지 마십시오. 위정자를 위한 기도는 성경적 원칙(딤전 2:1-2)으로.
 3. 사망·재난은 선정적으로 다루지 말고, 유가족을 향한 애도와 위로의 언어로 쓰십시오.
 4. 확정되지 않은 사안은 단정하지 말고 "지혜를 주시도록" 같은 열린 표현으로 기도하십시오.
-5. verse 는 개역개정판 본문의 장절을 정확히 쓰십시오.
+5. verse 는 **개역개정** 본문의 장절을 정확히 쓰십시오. 아래 역본 규칙을 반드시 지키십시오.
+   (기도문 본문 body/closing 은 현대 한국어 기도문체로 쓰되, 성경 인용만 개역개정입니다.)
 6. body 는 회중 앞에서 소리 내어 읽을 수 있는 기도 문장이어야 하며, **100자를 넘기지 마십시오.**
    closing(마침 기도문)도 3문장·180자 이내로 쓰십시오.
-7. 100% 한국어."""
+7. 100% 한국어.
+
+{KRV_PROMPT_RULE}"""
                 data = get_ai_response(
                     build_research_prompt(task, "오늘의 기도", "오늘의 시대적 필요"),
                     is_json=True, temperature=0.6, kind="prayer", max_tokens=6000)
@@ -4368,11 +4616,12 @@ def render_today_prayer_section():
                 c_in = st.text_area("마침 기도문", value=data.get("closing", ""), height=110)
                 saved = st.form_submit_button("💾 저장하고 다시 그리기", type="primary")
             if saved:
+                keep_open("prayer")
                 st.session_state[key] = {
                     "title": t_in, "summary": s_in, "items": new_items, "closing": c_in,
                     "news_ok": data.get("news_ok", False), "news_err": data.get("news_err", []),
                 }
-                st.success("저장했습니다.")
+                st.session_state["__prayer_saved"] = True
                 st.rerun()
 
         if not data.get("items"):
@@ -4382,6 +4631,9 @@ def render_today_prayer_section():
                 st.caption("위 버튼을 눌러 오늘의 기도제목을 만들거나, "
                            "[✍️ 직접 작성 / 수정하기]를 켜서 직접 적어 넣으세요.")
             return
+
+        if st.session_state.pop("__prayer_saved", False):
+            st.success("✅ 저장했습니다. 아래 카드와 문서가 새로 그려집니다.")
 
         show_ai_status()
         if use_news and not data.get("news_ok"):
@@ -4406,6 +4658,7 @@ def render_today_prayer_section():
                                file_name=_safe_filename("오늘의기도", date_iso, pr_org, "png"),
                                mime="image/png", key=f"dl_prayer_{date_iso}")
             if st.button("🔀 배경 사진 바꾸기", key=f"pr_shuffle_{date_iso}"):
+                keep_open("prayer")
                 st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
                 st.rerun()
             for it in data.get("items", [])[:4]:
@@ -4425,7 +4678,8 @@ def render_today_prayer_section():
         d0 = datetime.strptime(date_iso, "%Y-%m-%d")
         wk = ["월", "화", "수", "목", "금", "토", "일"][d0.weekday()] + "요일"
         doc_field = f"prayer_doc::{date_iso}"
-        if not st.session_state.get(doc_field):
+
+        def _build_prayer_doc():
             lines = [f"🙏 {data.get('title','오늘의 기도')} · {d0.strftime('%Y년 %m월 %d일')} {wk}"]
             if pr_org.strip():
                 lines.append(f"　{pr_org.strip()}")
@@ -4437,18 +4691,24 @@ def render_today_prayer_section():
                 if it.get("basis"):
                     lines.append(f"▸ 오늘의 소식: {it['basis']}")
                 if it.get("verse"):
-                    lines.append(f"▸ 말씀: {it['verse']} (개역개정)")
+                    lines.append(f"▸ 말씀: {it['verse']} ({KRV_DEFAULT})")
                 lines.append(f"- 1. {it.get('body','')}")
                 lines.append("")
             if data.get("closing"):
                 lines += ["🕊️ 마침 기도", data["closing"]]
-            st.session_state[doc_field] = "\n".join(lines)
+            return "\n".join(lines)
+
+        sync_doc_field(doc_field,
+                       _sig(data.get("title"), data.get("summary"), data.get("items"),
+                            data.get("closing"), pr_org.strip(), date_iso),
+                       _build_prayer_doc)
 
         st.write("")
         render_section_top_toolbar(
             _safe_filename("오늘의기도", date_iso, pr_org, "").rstrip("."),
-            st.session_state[doc_field], f"pr_doc_{date_iso}")
-        if editable_section(f"pr_doc_{date_iso}", doc_field, "오늘의 기도 내용 편집", height=300):
+            st.session_state[doc_field], f"pr_doc_{date_iso}", exp_key="prayer")
+        if editable_section(f"pr_doc_{date_iso}", doc_field, "오늘의 기도 내용 편집",
+                            height=320, exp_key="prayer"):
             render_body(st.session_state[doc_field])
 
         if data.get("news_err"):
@@ -4470,7 +4730,8 @@ def _research_block(label: str, name: str, scripture: str, task: str, topic: str
                     use_search: bool = True, expanded: bool = False):
     """연구 도구 한 칸(생성 버튼 + 결과 + 내려받기)을 그린다."""
     key = _rkey(name, scripture)
-    with st.expander(label, expanded=expanded):
+    ek = f"res_{name}"
+    with open_expander(label, ek, default=expanded):
         c1, c2 = st.columns([1, 2])
         with c1:
             go = st.button("✨ 생성 / 다시 생성", key=f"btn_{name}_{abs(hash(scripture)) % 99999}",
@@ -4478,6 +4739,7 @@ def _research_block(label: str, name: str, scripture: str, task: str, topic: str
         with c2:
             st.caption(f"대상 본문: {scripture}" + (f"　·　주제: {topic}" if topic.strip() else ""))
         if go:
+            keep_open(ek)
             with st.spinner("자료를 찾아 정리하는 중입니다... (30초~1분)"):
                 st.session_state[key] = get_ai_response(
                     build_research_prompt(task, scripture, topic, theology),
@@ -4490,8 +4752,11 @@ def _research_block(label: str, name: str, scripture: str, task: str, topic: str
             show_ai_status()
             if st.session_state.get("ai_search_used"):
                 st.caption("🌐 웹 검색 근거를 사용해 작성했습니다.")
-            render_section_top_toolbar(f"{scripture}_{name}", val, f"{name}_{abs(hash(scripture)) % 9999}")
-            render_body(val)
+            sk = f"{name}_{abs(hash(scripture)) % 9999}"
+            render_section_top_toolbar(f"{scripture}_{name}", st.session_state.get(key, ""),
+                                       sk, exp_key=ek)
+            if editable_section(sk, key, f"{label} 내용 편집", height=420, exp_key=ek):
+                render_body(st.session_state.get(key, ""))
         else:
             st.caption("위 버튼을 눌러 자료를 만들어 보세요.")
     return st.session_state.get(key, "")
@@ -4566,7 +4831,7 @@ def context_to_text(d: dict, scripture: str) -> str:
 def render_context_section(scripture: str, topic: str, theology: str):
     """문맥 연구 — 표 · 도해 이미지 · 지도/유물 링크까지"""
     key = _rkey("context", scripture)
-    with st.expander("🧭 문맥 연구 — 배경 · 단락 · 도표 · 지도 · 도해", expanded=False):
+    with open_expander("🧭 문맥 연구 — 배경 · 단락 · 도표 · 지도 · 도해", "ctx"):
         c1, c2 = st.columns([1, 2])
         with c1:
             go = st.button("✨ 문맥 연구 생성", type="primary",
@@ -4575,6 +4840,7 @@ def render_context_section(scripture: str, topic: str, theology: str):
             st.caption("역사적·문맥적·사회문화적·정치경제적 배경, 저자·시기·청중·목적, "
                        "단락 나누기, 핵심 구절, 설교적·강해적 원리, 개혁주의·선교적 관점까지 한 번에.")
         if go:
+            keep_open("ctx")
             with st.spinner("본문 배경을 조사하고 도표를 만드는 중입니다... (1분 내외)"):
                 task = """[출력 형식 — 아래 JSON 하나만 출력. 설명 문장 금지]
 {
@@ -4614,9 +4880,13 @@ def render_context_section(scripture: str, topic: str, theology: str):
             return
 
         show_ai_status()
-        text_all = context_to_text(d, scripture)
-        render_section_top_toolbar(f"{scripture}_문맥연구", text_all,
-                                   f"ctx_{abs(hash(scripture)) % 9999}")
+        _ctx_sk = f"ctx_{abs(hash(scripture)) % 9999}"
+        _ctx_fld = f"ctx_doc::{scripture}"
+        sync_doc_field(_ctx_fld, _sig(d), lambda: context_to_text(d, scripture))
+        text_all = st.session_state[_ctx_fld]
+        render_section_top_toolbar(f"{scripture}_문맥연구", text_all, _ctx_sk, exp_key="ctx")
+        editable_section(_ctx_sk, _ctx_fld, "문맥 연구 내용 편집", height=420, exp_key="ctx")
+        text_all = st.session_state[_ctx_fld]
 
         m1, m2, m3, m4 = st.columns(4)
         for col, lab, k in ((m1, "저자", "author"), (m2, "저작 시기", "date_written"),
@@ -5118,7 +5388,7 @@ BIBLE_VERSIONS = [
 
 def render_weekly_news_section(scripture: str, topic: str, theology: str):
     """시사주간뉴스 — 실시간 수집 + 잡지형 정리 + 설교 연결 포인트"""
-    with st.expander("📰 시사주간뉴스 — 한 주간 이슈를 설교 자료로", expanded=False):
+    with open_expander("📰 시사주간뉴스 — 한 주간 이슈를 설교 자료로", "news"):
         st.caption("Google 뉴스에서 지난 한 주(금요일 낮 12시 마감) 기사를 섹션별로 실시간 수집합니다. "
                    "헤드라인·매체·기사 링크가 모두 실제 기사이며, 설교에 쓸 연결 포인트까지 정리해 드립니다.")
 
@@ -5160,14 +5430,17 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
         bq1, bq2, bq3 = st.columns(3)
         with bq1:
             if st.button("✅ 전체 선택", key="news_all"):
+                keep_open("news")
                 st.session_state[sel_key] = [n for _, n, _, _ in NEWS_SECTIONS]
                 st.rerun()
         with bq2:
             if st.button("🔄 기본값으로", key="news_def"):
+                keep_open("news")
                 st.session_state[sel_key] = list(NEWS_DEFAULT)
                 st.rerun()
         with bq3:
             if st.button("⬜ 전체 해제", key="news_none"):
+                keep_open("news")
                 st.session_state[sel_key] = []
                 st.rerun()
 
@@ -5193,6 +5466,7 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
         nkey = f"news::{win_s.strftime('%Y%m%d%H')}::{win_e.strftime('%Y%m%d%H')}"
 
         if go:
+            keep_open("news")
             days = max(3, min(14, (win_e - win_s).days + 2))
             with st.spinner(f"{len(chosen)}개 섹션의 기사를 모으는 중입니다..."):
                 results, errors = collect_news(chosen, days=days, per_section=per_section)
@@ -5297,6 +5571,7 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
                                mime="image/png", key=f"dl_newscover_{nkey}")
         with cv2:
             if st.button("🔀 표지 배경 바꾸기", key=f"news_shuffle_{nkey}"):
+                keep_open("news")
                 st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
                 st.rerun()
 
@@ -5377,7 +5652,12 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
         doc = "\n".join(lines)
 
         st.write("")
-        render_section_top_toolbar(f"시사주간뉴스_{win_e.strftime('%Y%m%d')}", doc, f"news_{nkey}")
+        _nw_sk = f"news_{nkey}"
+        _nw_fld = f"news_doc::{nkey}"
+        sync_doc_field(_nw_fld, _sig(doc), lambda: doc)
+        render_section_top_toolbar(f"시사주간뉴스_{win_e.strftime('%Y%m%d')}",
+                                   st.session_state[_nw_fld], _nw_sk, exp_key="news")
+        editable_section(_nw_sk, _nw_fld, "시사주간뉴스 내용 편집", height=460, exp_key="news")
 
         if errors:
             with st.expander("🔎 일부 섹션 수집 오류"):
@@ -5388,7 +5668,7 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
 def render_version_compare_section(scripture: str, topic: str, theology: str):
     """성경 여러 번역본 비교 — 행=번역본 / 열=절 표"""
     key = _rkey("versions", scripture)
-    with st.expander("📚 성경 여러 번역본 비교 — 개역개정 · 새번역 · 메시지 · NIV · 원문", expanded=False):
+    with open_expander("📚 성경 여러 번역본 비교 — 개역개정 · 새번역 · 메시지 · NIV · 원문", "vercmp"):
         c1, c2 = st.columns([1, 2])
         with c1:
             go = st.button("✨ 번역본 비교표 생성", type="primary",
@@ -5398,6 +5678,7 @@ def render_version_compare_section(scripture: str, topic: str, theology: str):
                        "원문(히브리어/헬라어) · 음역을 절별로 나란히 비교합니다.")
 
         if go:
+            keep_open("vercmp")
             with st.spinner("번역본을 절별로 모으는 중입니다... (1분 내외)"):
                 vlist = "\n".join(f'   - "{n}"' for n, _ in BIBLE_VERSIONS)
                 task = f"""[출력 형식 — 아래 JSON 하나만. 설명 문장 금지]
@@ -5487,8 +5768,12 @@ def render_version_compare_section(scripture: str, topic: str, theology: str):
         doc_text = "\n".join(lines)
 
         st.write("")
-        render_section_top_toolbar(f"{scripture}_번역본비교", doc_text,
-                                   f"ver_{abs(hash(scripture)) % 9999}")
+        _vc_sk = f"ver_{abs(hash(scripture)) % 9999}"
+        _vc_fld = f"vercmp_doc::{scripture}"
+        sync_doc_field(_vc_fld, _sig(doc_text), lambda: doc_text)
+        render_section_top_toolbar(f"{scripture}_번역본비교", st.session_state[_vc_fld],
+                                   _vc_sk, exp_key="vercmp")
+        editable_section(_vc_sk, _vc_fld, "번역본 비교 내용 편집", height=420, exp_key="vercmp")
 
         # 엑셀로도 받을 수 있게 CSV
         try:
@@ -5508,9 +5793,10 @@ def render_version_compare_section(scripture: str, topic: str, theology: str):
 def render_praise_section(scripture: str, topic: str, theology: str):
     """추천 찬양 15곡 + 곡마다 인도용 멘트"""
     key = _rkey("praise15", scripture)
-    with st.expander("🎵 추천 찬양 15곡 — 곡마다 인도용 멘트 포함", expanded=False):
+    with open_expander("🎵 추천 찬양 15곡 — 곡마다 인도용 멘트 포함", "praise"):
         if st.button("🎶 찬양 15곡 + 인도 멘트 생성", type="primary",
                      key=f"btn_praise_{abs(hash(scripture)) % 99999}"):
+            keep_open("praise")
             with st.spinner("본문에 맞는 찬양을 고르고 인도 멘트를 쓰는 중..."):
                 task = """[출력 형식 — 아래 JSON 하나만. 설명 문장 금지]
 {
@@ -5558,25 +5844,70 @@ def render_praise_section(scripture: str, topic: str, theology: str):
                 if m:
                     lines.append(f"   [인도자 팁 / 가이드]: {m}")
             lines.append("")
-        render_section_top_toolbar(f"{scripture}_추천찬양15곡", "\n".join(lines),
-                                   f"praise_{abs(hash(scripture)) % 9999}")
+        _pz_sk = f"praise_{abs(hash(scripture)) % 9999}"
+        _pz_fld = f"praise_doc::{scripture}"
+        _pz_txt = "\n".join(lines)
+        sync_doc_field(_pz_fld, _sig(_pz_txt), lambda: _pz_txt)
+        render_section_top_toolbar(f"{scripture}_추천찬양15곡", st.session_state[_pz_fld],
+                                   _pz_sk, exp_key="praise")
+        editable_section(_pz_sk, _pz_fld, "추천 찬양 목록 편집", height=420, exp_key="praise")
 
 
 def editable_section(state_key: str, session_field: str, label: str, height: int = 350,
-                     persist_summary: bool = False):
-    """수정 모드 공통 처리"""
+                     persist_summary: bool = False, exp_key: str = ""):
+    """
+    수정 모드 공통 처리.
+      · [✏️ 수정] 을 누르면 편집창이 열리고, [💾 저장] 을 누르면 세션 필드에 확실히 반영된다.
+      · 편집창은 폼(st.form)으로 감싸서, 저장을 누르는 순간의 텍스트가 확실히 넘어오게 한다.
+      · 익스팬더 안에서 눌러도 패널이 닫히지 않도록 exp_key 를 함께 넘긴다.
+    """
+    if st.session_state.pop(f"__saved_{state_key}", False):
+        st.success("✅ 저장되었습니다. 아래 내용과 내려받기 파일에 그대로 반영됩니다.")
+
+    if not st.session_state.get(f"edit_mode_{state_key}", False):
+        return True
+
+    if exp_key:
+        keep_open(exp_key)
+
     val = st.session_state.get(session_field, "")
-    if st.session_state.get(f"edit_mode_{state_key}", False):
-        edited = st.text_area(label, value=val, height=height, key=f"ta_{state_key}")
-        if st.button("💾 저장", key=f"save_{state_key}"):
-            st.session_state[session_field] = edited
-            st.session_state[f"edit_mode_{state_key}"] = False
-            if persist_summary:
-                update_sermon_in_db(st.session_state.get("current_sermon_id", 1), updated_summary=edited)
-            st.success("저장되었습니다.")
-            st.rerun()
-        return False
-    return True
+    ta_key = f"ta_{state_key}"
+    # 편집을 새로 시작할 때(또는 원본이 새로 생성됐을 때)만 현재 본문을 편집창에 채운다.
+    # 편집 도중의 rerun 에서는 덮어쓰지 않아, 치던 내용이 날아가지 않는다.
+    if ta_key not in st.session_state or st.session_state.get(f"__ta_src_{state_key}") != val:
+        st.session_state[ta_key] = val
+        st.session_state[f"__ta_src_{state_key}"] = val
+
+    with st.form(f"form_{state_key}", clear_on_submit=False):
+        st.text_area(label, height=height, key=ta_key)
+        f1, f2 = st.columns([1, 4])
+        with f1:
+            saved = st.form_submit_button("💾 저장", type="primary")
+        with f2:
+            canceled = st.form_submit_button("✖ 취소")
+
+    if saved:
+        edited = st.session_state.get(ta_key, val)
+        st.session_state[session_field] = edited
+        # 원본이 그대로인 한, 자동 재생성이 이 수정본을 덮어쓰지 못하게 잠근다.
+        st.session_state[f"{session_field}__edited"] = st.session_state.get(f"{session_field}__sig", "manual")
+        st.session_state[f"__ta_src_{state_key}"] = edited
+        st.session_state[f"edit_mode_{state_key}"] = False
+        if persist_summary:
+            update_sermon_in_db(st.session_state.get("current_sermon_id", 1), updated_summary=edited)
+        if exp_key:
+            keep_open(exp_key)
+        st.session_state[f"__saved_{state_key}"] = True
+        st.rerun()
+
+    if canceled:
+        st.session_state[f"edit_mode_{state_key}"] = False
+        st.session_state[f"__ta_dirty_{state_key}"] = False
+        if exp_key:
+            keep_open(exp_key)
+        st.rerun()
+
+    return False
 
 
 # ==============================================================================
@@ -5751,7 +6082,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
             f"📖 원고 인용 성구: {', '.join(_an['refs'][:6]) or '(없음)'}"
         )
 
-    with st.expander("🖼️ 카드뉴스 · PPT 배경 이미지 설정 (무한 생성)", expanded=False):
+    with open_expander("🖼️ 카드뉴스 · PPT 배경 이미지 설정 (무한 생성)", "bgset"):
         bg1, bg2 = st.columns([2, 1])
         with bg1:
             st.selectbox("이미지 분위기", list(BG_THEMES.keys()), key="bg_theme",
