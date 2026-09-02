@@ -1852,7 +1852,7 @@ def grounded_fallback(kind: str, is_json: bool, card_count: int = 7):
                     f"- 자막 키워드: {', '.join(keys[i*2:i*2+5]) or ', '.join(keys[:5])}", ""]
         return "\n".join(out)
 
-    if kind in ("manna", "today_verse", "versions", "news"):
+    if kind in ("manna", "today_verse", "versions", "news", "prayer"):
         return {} if is_json else ""
 
     if kind in ("research", "context"):
@@ -3400,6 +3400,103 @@ def render_today_verse_png(date_iso: str, verse: str, ref: str, church: str = ""
     return out.getvalue()
 
 
+@st.cache_data(show_spinner=False, max_entries=48)
+def render_prayer_card_png(date_iso: str, title: str, items_json: str, closing: str = "",
+                           org: str = "", seed: str = "", theme: str = "하늘 · 빛",
+                           size_key: str = "4:5 세로형") -> bytes:
+    """오늘의 기도 카드 — 날짜 + 기도제목 목록"""
+    items = json.loads(items_json)
+    W, H = (1080, 1350) if size_key.startswith("4:5") else (1080, 1080)
+    d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+
+    base = PIL.Image.new("RGBA", (W, H), (13, 18, 40, 255))
+    try:
+        b = get_background_bytes(seed or f"prayer|{date_iso}", theme, size=(1080, 1080))
+        if b:
+            base = PIL.Image.open(io.BytesIO(b)).convert("RGBA").resize((W, H))
+    except Exception:
+        pass
+    base = PIL.Image.alpha_composite(base, PIL.Image.new("RGBA", (W, H), (6, 10, 26, 178)))
+
+    # 위·아래 스크림
+    scrim = PIL.Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    sd = PIL.ImageDraw.Draw(scrim)
+    for yy in range(H):
+        if yy < int(H * 0.26):
+            a = int(120 * (1 - yy / (H * 0.26)))
+        elif yy > int(H * 0.80):
+            a = int(150 * ((yy - H * 0.80) / (H * 0.20)))
+        else:
+            a = 0
+        if a:
+            sd.line([(0, yy), (W, yy)], fill=(4, 7, 20, a))
+    img = PIL.Image.alpha_composite(base, scrim)
+    d = PIL.ImageDraw.Draw(img)
+
+    GOLD = (253, 224, 71, 255)
+    CREAM = (241, 226, 198, 255)
+
+    # 상단 날짜
+    wk = ["월", "화", "수", "목", "금", "토", "일"][d0.weekday()] + "요일"
+    f_date = get_pil_font(28)
+    line = f"{d0.strftime('%Y. %m. %d')}  {wk}"
+    bb = d.textbbox((0, 0), line, font=f_date)
+    d.text(((W - (bb[2] - bb[0])) // 2, 78), line, fill=(180, 200, 240, 255), font=f_date)
+
+    f_ttl = get_serif_font(54)
+    ttl = strip_emoji(title or "오늘의 기도")
+    tb = d.textbbox((0, 0), ttl, font=f_ttl)
+    d.text(((W - (tb[2] - tb[0])) // 2, 128), ttl, fill=GOLD, font=f_ttl)
+    line_y = 128 + (tb[3] - tb[1]) + 34
+    d.line([(W // 2 - 54, line_y), (W // 2 + 54, line_y)], fill=(253, 224, 71, 210), width=3)
+
+    # 기도제목 목록
+    f_h = get_serif_font(34)
+    f_b = get_pil_font(24)
+    y = line_y + 56
+    for i, it in enumerate(items[:6], start=1):
+        head = strip_emoji(str(it.get("head", "")))
+        body = strip_emoji(str(it.get("body", "")))
+        if not head and not body:
+            continue
+        d.ellipse([88, y + 4, 122, y + 38], fill=(124, 58, 237, 235))
+        nb = d.textbbox((0, 0), str(i), font=get_pil_font(22))
+        d.text((105 - (nb[2] - nb[0]) // 2, y + 11), str(i),
+               fill=(255, 255, 255, 255), font=get_pil_font(22))
+
+        hw = wrap_korean_text(head, f_h, W - 280, d)
+        d.multiline_text((142, y), hw, fill=(255, 255, 255, 255), font=f_h, spacing=10)
+        hb = d.multiline_textbbox((142, y), hw, font=f_h, spacing=10)
+        y = hb[3] + 14
+
+        if body:
+            bw = wrap_korean_text(body, f_b, W - 300, d)
+            d.multiline_text((142, y), bw, fill=(200, 214, 245, 255), font=f_b, spacing=12)
+            y = d.multiline_textbbox((142, y), bw, font=f_b, spacing=12)[3]
+        y += 34
+        if y > H - 250:
+            break
+
+    # 마침 기도
+    if closing:
+        f_c = get_serif_font(25)
+        cw = wrap_korean_text(strip_emoji(closing), f_c, W - 200, d)
+        cb = d.multiline_textbbox((0, 0), cw, font=f_c, spacing=13)
+        cy = min(max(y + 24, H - 240), H - 150 - (cb[3] - cb[1]))
+        d.line([(100, cy - 26), (W - 100, cy - 26)], fill=(120, 140, 190, 140), width=2)
+        d.multiline_text((100, cy), cw, fill=CREAM, font=f_c, spacing=13)
+
+    if org:
+        f_o = get_pil_font(25)
+        ob = d.textbbox((0, 0), org, font=f_o)
+        d.text(((W - (ob[2] - ob[0])) // 2, H - 92), org,
+               fill=(180, 200, 240, 255), font=f_o)
+
+    out = io.BytesIO()
+    img.convert("RGB").save(out, format="PNG")
+    return out.getvalue()
+
+
 # ==============================================================================
 # 문맥 연구용 도해(圖解) 이미지 — 본문 단락 구조 · 연대표를 그림으로
 # ==============================================================================
@@ -4079,6 +4176,239 @@ def render_today_word_section():
             st.session_state[doc_field], f"tw_doc_{date_iso}")
         if editable_section(f"tw_doc_{date_iso}", doc_field, "오늘의 말씀 내용 편집", height=260):
             render_body(st.session_state[doc_field])
+
+
+# ------------------------------------------------------------------------------
+# 오늘의 기도 — 오늘자 실제 뉴스 + 교회·목회 트렌드에서 기도제목 뽑기
+# ------------------------------------------------------------------------------
+PRAYER_NEWS_SECTIONS = ["이번 주 이슈", "정치", "경제", "국내 사건·사고",
+                        "국제·세계·해외", "세계 사건·사고",
+                        "기독교", "목회", "다음세대"]
+
+PRAYER_FIELDS = [
+    ("나라와 민족을 위하여", "국내 정치·경제·사회 현안"),
+    ("세계와 열방을 위하여", "국제 정세·재난·분쟁·선교지"),
+    ("한국 교회와 목회 현장을 위하여", "교단·교회·목회자"),
+    ("다음 세대를 위하여", "청소년·청년·교회학교·교육"),
+    ("우리 교회와 성도를 위하여", "지역 교회와 성도의 일상"),
+]
+
+
+def render_today_prayer_section():
+    with st.expander("🙏 오늘의 기도 — 오늘자 뉴스에서 뽑은 기도제목", expanded=False):
+        st.caption("오늘의 국내·해외 주요 뉴스와 교회·목회 소식을 실제로 가져와, "
+                   "그 소식에 근거한 기도제목을 만들어 드립니다. "
+                   "새벽기도·주일예배 대표기도·주보 기도란에 그대로 쓰실 수 있습니다.")
+
+        today = _today_str()
+        c1, c2, c3 = st.columns([1, 1.1, 1.6])
+        with c1:
+            sel_date = st.date_input("날짜", value=datetime.strptime(today, "%Y-%m-%d").date(),
+                                     key="pr_date")
+            date_iso = sel_date.strftime("%Y-%m-%d")
+        with c2:
+            pr_theme = st.selectbox("배경 분위기", list(BG_THEMES.keys()), index=1, key="pr_theme")
+        with c3:
+            pr_org = st.text_input(
+                "교회 · 공동체 · 단체 이름 (자유 기입)",
+                value=st.session_state.get("pr_org_name",
+                                           st.session_state.get("cn_church_name", "")),
+                placeholder="예: 화광교회 새벽기도 — 비워두면 표시 안 함",
+                key="pr_org_input")
+            st.session_state["pr_org_name"] = pr_org
+
+        o1, o2, o3 = st.columns([1.1, 1, 1])
+        with o1:
+            pr_size = st.selectbox("카드 규격", ["4:5 세로형", "1:1 정사각형"], key="pr_size")
+        with o2:
+            use_news = st.toggle("📰 오늘 뉴스에 근거", value=True, key="pr_use_news")
+        with o3:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            go = st.button("🙏 오늘의 기도 생성", type="primary", key="btn_gen_prayer")
+
+        write_mode = st.toggle("✍️ 직접 작성 / 수정하기", value=False, key="pr_write_mode")
+
+        key = f"prayer::{date_iso}"
+
+        # ── 생성
+        if go:
+            d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+            headlines, news_ok, news_err = "", False, []
+            if use_news:
+                with st.spinner("오늘의 국내·해외·교계 소식을 모으는 중..."):
+                    results, errs = collect_news(PRAYER_NEWS_SECTIONS, days=2, per_section=6)
+                    news_err = errs
+                    buf = []
+                    for nm, v in results.items():
+                        if not v["items"]:
+                            continue
+                        buf.append(f"[{nm}]")
+                        for it in v["items"][:6]:
+                            w = it["when"].strftime("%m/%d") if it["when"] else ""
+                            buf.append(f"- {it['title']} ({it['source']}, {w})")
+                    headlines = "\n".join(buf)[:9000]
+                    news_ok = bool(headlines.strip())
+
+            with st.spinner("오늘의 기도제목을 정리하는 중..."):
+                src_block = (f"[오늘 실제로 수집된 기사 목록]\n{headlines}\n"
+                             if news_ok else
+                             "[참고] 오늘 기사 목록을 가져오지 못했습니다. "
+                             "특정 사건을 지어내지 말고, 시기적으로 늘 필요한 기도제목으로만 쓰십시오.\n")
+                fields = "\n".join(f'   - "{h}" ({d})' for h, d in PRAYER_FIELDS)
+                task = f"""{src_block}
+[작업]
+{d0.strftime('%Y년 %m월 %d일')} 오늘의 기도제목을 만드십시오.
+
+[출력 형식 — 아래 JSON 하나만. 설명 문장 금지]
+{{
+ "title": "오늘의 기도 (또는 오늘 흐름을 담은 8자 이내 제목)",
+ "summary": "오늘 우리가 무엇을 놓고 기도해야 하는지 한 문장",
+ "items": [
+   {{"head": "나라와 민족을 위하여",
+     "basis": "근거가 된 오늘 소식 한 줄 (기사가 없으면 빈 문자열)",
+     "body": "기도제목 본문 2~3문장. 하나님께 아뢰는 문장으로",
+     "verse": "이 기도를 받쳐 주는 개역개정 성구 (장절 포함)"}}
+ ],
+ "closing": "다 함께 드리는 마침 기도문 3~4문장"
+}}
+
+[items 는 정확히 아래 다섯 항목을 이 순서로]
+{fields}
+
+[반드시 지킬 것]
+1. basis 는 위 기사 목록에 실제로 있는 소식만 쓰십시오. 없으면 빈 문자열로 두십시오.
+   기사에 없는 사건·수치·인명을 지어내지 마십시오.
+2. 특정 정당·정파를 지지하거나 비난하지 마십시오. 위정자를 위한 기도는 성경적 원칙(딤전 2:1-2)으로.
+3. 사망·재난은 선정적으로 다루지 말고, 유가족을 향한 애도와 위로의 언어로 쓰십시오.
+4. 확정되지 않은 사안은 단정하지 말고 "지혜를 주시도록" 같은 열린 표현으로 기도하십시오.
+5. verse 는 개역개정판 본문의 장절을 정확히 쓰십시오.
+6. body 는 회중 앞에서 소리 내어 읽을 수 있는 기도 문장이어야 합니다.
+7. 100% 한국어."""
+                data = get_ai_response(
+                    build_research_prompt(task, "오늘의 기도", "오늘의 시대적 필요"),
+                    is_json=True, temperature=0.6, kind="prayer", max_tokens=6000)
+                if isinstance(data, dict) and data.get("items"):
+                    data["news_ok"] = news_ok
+                    data["news_err"] = news_err[:5]
+                    st.session_state[key] = data
+            st.rerun()
+
+        data = st.session_state.get(key) or {}
+
+        # ── 직접 작성 / 수정
+        if write_mode:
+            st.markdown("#### ✍️ 직접 작성 · 수정")
+            st.caption("AI가 만든 기도제목을 고치거나, 목사님이 준비하신 기도제목을 직접 적어 넣으세요.")
+            cur = data.get("items", [])
+            with st.form(f"prayer_form_{date_iso}"):
+                t_in = st.text_input("제목", value=data.get("title", "오늘의 기도"))
+                s_in = st.text_input("한 줄 요약", value=data.get("summary", ""))
+                new_items = []
+                for i, (dh, dd) in enumerate(PRAYER_FIELDS):
+                    src = cur[i] if i < len(cur) else {}
+                    st.markdown(f"**{i+1}. {dh}**  ·  {dd}")
+                    f1, f2 = st.columns([1.4, 1])
+                    with f1:
+                        h = st.text_input(f"항목 {i+1} 제목", value=src.get("head", dh),
+                                          key=f"pr_h_{date_iso}_{i}")
+                    with f2:
+                        v = st.text_input(f"항목 {i+1} 성구", value=src.get("verse", ""),
+                                          key=f"pr_v_{date_iso}_{i}")
+                    bs = st.text_input(f"항목 {i+1} 근거 소식", value=src.get("basis", ""),
+                                       key=f"pr_bs_{date_iso}_{i}")
+                    bd = st.text_area(f"항목 {i+1} 기도 본문", value=src.get("body", ""),
+                                      height=90, key=f"pr_bd_{date_iso}_{i}")
+                    new_items.append({"head": h, "verse": v, "basis": bs, "body": bd})
+                c_in = st.text_area("마침 기도문", value=data.get("closing", ""), height=110)
+                saved = st.form_submit_button("💾 저장하고 다시 그리기", type="primary")
+            if saved:
+                st.session_state[key] = {
+                    "title": t_in, "summary": s_in, "items": new_items, "closing": c_in,
+                    "news_ok": data.get("news_ok", False), "news_err": data.get("news_err", []),
+                }
+                st.success("저장했습니다.")
+                st.rerun()
+
+        if not data.get("items"):
+            if st.session_state.get("ai_fallback_used"):
+                show_ai_status()
+            else:
+                st.caption("위 버튼을 눌러 오늘의 기도제목을 만들거나, "
+                           "[✍️ 직접 작성 / 수정하기]를 켜서 직접 적어 넣으세요.")
+            return
+
+        show_ai_status()
+        if use_news and not data.get("news_ok"):
+            st.warning("⚠️ 오늘 기사 목록을 가져오지 못해, **특정 사건과 연결하지 않은 "
+                       "일반 기도제목**으로 작성했습니다. 잠시 후 다시 시도해 보세요.")
+        if data.get("summary"):
+            st.caption(f"오늘의 기도 한 줄 — {data['summary']}")
+
+        # ── 기도 카드 이미지
+        card = render_prayer_card_png(
+            date_iso, data.get("title", "오늘의 기도"),
+            json.dumps(data.get("items", []), ensure_ascii=False),
+            data.get("closing", ""), pr_org.strip(),
+            seed=f"prayer|{date_iso}|{st.session_state.get('bg_shuffle', 0)}",
+            theme=pr_theme, size_key=pr_size)
+
+        p1, p2 = st.columns([1.2, 1])
+        with p1:
+            st_image_full(card, caption=f"오늘의 기도 · {date_iso}")
+        with p2:
+            st.download_button("📥 기도 카드 PNG 내려받기", data=card,
+                               file_name=_safe_filename("오늘의기도", date_iso, pr_org, "png"),
+                               mime="image/png", key=f"dl_prayer_{date_iso}")
+            if st.button("🔀 배경 사진 바꾸기", key=f"pr_shuffle_{date_iso}"):
+                st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
+                st.rerun()
+            for it in data.get("items", [])[:5]:
+                st.markdown(
+                    f"<div class='lib-card' style='padding:12px 14px;margin-bottom:8px;'>"
+                    f"<div style='color:#fde047;font-weight:800;font-size:13.5px;'>"
+                    f"{_esc(str(it.get('head','')))}</div>"
+                    + (f"<div style='color:#93a3d0;font-size:11.5px;margin-top:4px;'>"
+                       f"📰 {_esc(str(it.get('basis','')))}</div>" if it.get("basis") else "")
+                    + f"<div style='color:#e8ecff;font-size:13px;margin-top:6px;line-height:1.65;'>"
+                      f"{_esc(str(it.get('body','')))}</div>"
+                    + (f"<div style='color:#a5b4fc;font-size:11.5px;margin-top:6px;'>"
+                       f"「 {_esc(str(it.get('verse','')))} 」</div>" if it.get("verse") else "")
+                    + "</div>", unsafe_allow_html=True)
+
+        # ── 문서 내려받기
+        d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+        wk = ["월", "화", "수", "목", "금", "토", "일"][d0.weekday()] + "요일"
+        doc_field = f"prayer_doc::{date_iso}"
+        if not st.session_state.get(doc_field):
+            lines = [f"🙏 {data.get('title','오늘의 기도')} · {d0.strftime('%Y년 %m월 %d일')} {wk}"]
+            if pr_org.strip():
+                lines.append(f"　{pr_org.strip()}")
+            if data.get("summary"):
+                lines += ["", data["summary"]]
+            lines.append("")
+            for i, it in enumerate(data.get("items", []), start=1):
+                lines.append(f"{i}. {it.get('head','')}")
+                if it.get("basis"):
+                    lines.append(f"▸ 오늘의 소식: {it['basis']}")
+                if it.get("verse"):
+                    lines.append(f"▸ 말씀: {it['verse']} (개역개정)")
+                lines.append(f"- 1. {it.get('body','')}")
+                lines.append("")
+            if data.get("closing"):
+                lines += ["🕊️ 마침 기도", data["closing"]]
+            st.session_state[doc_field] = "\n".join(lines)
+
+        st.write("")
+        render_section_top_toolbar(
+            _safe_filename("오늘의기도", date_iso, pr_org, "").rstrip("."),
+            st.session_state[doc_field], f"pr_doc_{date_iso}")
+        if editable_section(f"pr_doc_{date_iso}", doc_field, "오늘의 기도 내용 편집", height=300):
+            render_body(st.session_state[doc_field])
+
+        if data.get("news_err"):
+            with st.expander("🔎 뉴스 수집 오류"):
+                for e in data["news_err"]:
+                    st.code(e, language="text")
 
 
 # ==============================================================================
@@ -5391,6 +5721,7 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
 
     render_manna_section()
     render_today_word_section()
+    render_today_prayer_section()
 
     st.write("---")
     left, right = st.columns([1, 2.5])
