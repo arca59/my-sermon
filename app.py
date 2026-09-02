@@ -3404,11 +3404,69 @@ def render_today_verse_png(date_iso: str, verse: str, ref: str, church: str = ""
 def render_prayer_card_png(date_iso: str, title: str, items_json: str, closing: str = "",
                            org: str = "", seed: str = "", theme: str = "하늘 · 빛",
                            size_key: str = "4:5 세로형") -> bytes:
-    """오늘의 기도 카드 — 날짜 + 기도제목 목록"""
-    items = json.loads(items_json)
-    W, H = (1080, 1350) if size_key.startswith("4:5") else (1080, 1080)
+    """
+    오늘의 기도 카드.
+    글자가 겹치지 않도록 '먼저 재보고 → 글자 크기를 자동으로 맞추고 →
+    그래도 넘치면 카드 높이를 늘리는' 방식으로 그린다.
+    """
+    raw = json.loads(items_json)
+    items = [it for it in raw
+             if str(it.get("head", "")).strip() or str(it.get("body", "")).strip()][:4]
+    W = 1080
+    H_base = 1350 if size_key.startswith("4:5") else 1080
     d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+    ttl = strip_emoji(title or "오늘의 기도") or "오늘의 기도"
+    closing = strip_emoji(str(closing or ""))
+    org = str(org or "").strip()
 
+    _m = PIL.ImageDraw.Draw(PIL.Image.new("RGB", (10, 10)))
+
+    # ── 머리말 높이(날짜 + 제목 + 밑줄)
+    f_ttl = get_serif_font(54)
+    tb = _m.textbbox((0, 0), ttl, font=f_ttl)
+    line_y = 128 + (tb[3] - tb[1]) + 34
+    list_top = line_y + 54
+    foot_h = 96 if org else 54
+
+    def layout(scale):
+        f_h = get_serif_font(max(20, int(34 * scale)))
+        f_b = get_pil_font(max(15, int(24 * scale)))
+        f_c = get_serif_font(max(15, int(25 * scale)))
+        sp_h, sp_b = max(6, int(10 * scale)), max(8, int(12 * scale))
+        gap_in, gap_out = max(8, int(14 * scale)), max(18, int(34 * scale))
+
+        blocks, total = [], 0
+        for it in items:
+            head = strip_emoji(str(it.get("head", "")))
+            body = strip_emoji(str(it.get("body", "")))
+            hw = wrap_korean_text(head, f_h, W - 290, _m) if head else ""
+            hh = _m.multiline_textbbox((0, 0), hw, font=f_h, spacing=sp_h)[3] if hw else 0
+            bw = wrap_korean_text(body, f_b, W - 300, _m) if body else ""
+            bh = _m.multiline_textbbox((0, 0), bw, font=f_b, spacing=sp_b)[3] if bw else 0
+            blocks.append((hw, f_h, hh, sp_h, bw, f_b, bh, sp_b))
+            total += hh + (gap_in if bw else 0) + bh + gap_out
+        total = max(0, total - gap_out)
+
+        cw = wrap_korean_text(closing, f_c, W - 200, _m) if closing else ""
+        ch = _m.multiline_textbbox((0, 0), cw, font=f_c, spacing=max(8, int(13 * scale)))[3] if cw else 0
+        close_total = (46 + ch) if cw else 0
+        return blocks, total, (cw, f_c, ch, max(8, int(13 * scale))), close_total
+
+    usable = lambda h: h - list_top - foot_h - 40
+    chosen = None
+    for scale in (1.0, 0.95, 0.90, 0.85, 0.80, 0.75, 0.70, 0.66, 0.62):
+        blocks, total, closing_pack, close_total = layout(scale)
+        if total + close_total <= usable(H_base):
+            chosen = (scale, blocks, total, closing_pack, close_total, H_base)
+            break
+    if chosen is None:
+        scale = 0.62
+        blocks, total, closing_pack, close_total = layout(scale)
+        H = list_top + total + close_total + foot_h + 40
+        chosen = (scale, blocks, total, closing_pack, close_total, H)
+    scale, blocks, total, closing_pack, close_total, H = chosen
+
+    # ── 배경
     base = PIL.Image.new("RGBA", (W, H), (13, 18, 40, 255))
     try:
         b = get_background_bytes(seed or f"prayer|{date_iso}", theme, size=(1080, 1080))
@@ -3416,16 +3474,15 @@ def render_prayer_card_png(date_iso: str, title: str, items_json: str, closing: 
             base = PIL.Image.open(io.BytesIO(b)).convert("RGBA").resize((W, H))
     except Exception:
         pass
-    base = PIL.Image.alpha_composite(base, PIL.Image.new("RGBA", (W, H), (6, 10, 26, 178)))
+    base = PIL.Image.alpha_composite(base, PIL.Image.new("RGBA", (W, H), (6, 10, 26, 186)))
 
-    # 위·아래 스크림
     scrim = PIL.Image.new("RGBA", (W, H), (0, 0, 0, 0))
     sd = PIL.ImageDraw.Draw(scrim)
     for yy in range(H):
-        if yy < int(H * 0.26):
-            a = int(120 * (1 - yy / (H * 0.26)))
-        elif yy > int(H * 0.80):
-            a = int(150 * ((yy - H * 0.80) / (H * 0.20)))
+        if yy < int(H * 0.24):
+            a = int(120 * (1 - yy / (H * 0.24)))
+        elif yy > int(H * 0.82):
+            a = int(150 * ((yy - H * 0.82) / (H * 0.18)))
         else:
             a = 0
         if a:
@@ -3436,60 +3493,49 @@ def render_prayer_card_png(date_iso: str, title: str, items_json: str, closing: 
     GOLD = (253, 224, 71, 255)
     CREAM = (241, 226, 198, 255)
 
-    # 상단 날짜
+    # ── 머리말
     wk = ["월", "화", "수", "목", "금", "토", "일"][d0.weekday()] + "요일"
     f_date = get_pil_font(28)
-    line = f"{d0.strftime('%Y. %m. %d')}  {wk}"
-    bb = d.textbbox((0, 0), line, font=f_date)
-    d.text(((W - (bb[2] - bb[0])) // 2, 78), line, fill=(180, 200, 240, 255), font=f_date)
-
-    f_ttl = get_serif_font(54)
-    ttl = strip_emoji(title or "오늘의 기도")
-    tb = d.textbbox((0, 0), ttl, font=f_ttl)
+    dline = f"{d0.strftime('%Y. %m. %d')}  {wk}"
+    bb = d.textbbox((0, 0), dline, font=f_date)
+    d.text(((W - (bb[2] - bb[0])) // 2, 78), dline, fill=(180, 200, 240, 255), font=f_date)
     d.text(((W - (tb[2] - tb[0])) // 2, 128), ttl, fill=GOLD, font=f_ttl)
-    line_y = 128 + (tb[3] - tb[1]) + 34
     d.line([(W // 2 - 54, line_y), (W // 2 + 54, line_y)], fill=(253, 224, 71, 210), width=3)
 
-    # 기도제목 목록
-    f_h = get_serif_font(34)
-    f_b = get_pil_font(24)
-    y = line_y + 56
-    for i, it in enumerate(items[:6], start=1):
-        head = strip_emoji(str(it.get("head", "")))
-        body = strip_emoji(str(it.get("body", "")))
-        if not head and not body:
-            continue
-        d.ellipse([88, y + 4, 122, y + 38], fill=(124, 58, 237, 235))
-        nb = d.textbbox((0, 0), str(i), font=get_pil_font(22))
-        d.text((105 - (nb[2] - nb[0]) // 2, y + 11), str(i),
-               fill=(255, 255, 255, 255), font=get_pil_font(22))
+    # ── 기도제목 (남는 공간에 고르게 배치)
+    slack = max(0, usable(H) - (total + close_total))
+    lead = min(slack // 2, 40)
+    extra = (slack - lead) // max(1, len(blocks)) if len(blocks) else 0
+    extra = min(extra, int(26 * scale))
 
-        hw = wrap_korean_text(head, f_h, W - 280, d)
-        d.multiline_text((142, y), hw, fill=(255, 255, 255, 255), font=f_h, spacing=10)
-        hb = d.multiline_textbbox((142, y), hw, font=f_h, spacing=10)
-        y = hb[3] + 14
+    num_d = max(28, int(34 * scale))
+    f_num = get_pil_font(max(14, int(22 * scale)))
+    y = list_top + lead
+    for i, (hw, f_h, hh, sp_h, bw, f_b, bh, sp_b) in enumerate(blocks, start=1):
+        d.ellipse([88, y + 4, 88 + num_d, y + 4 + num_d], fill=(124, 58, 237, 235))
+        nb = d.textbbox((0, 0), str(i), font=f_num)
+        d.text((88 + num_d // 2 - (nb[2] - nb[0]) // 2,
+                y + 4 + num_d // 2 - (nb[3] - nb[1]) // 2 - 2),
+               str(i), fill=(255, 255, 255, 255), font=f_num)
+        if hw:
+            d.multiline_text((142, y), hw, fill=(255, 255, 255, 255), font=f_h, spacing=sp_h)
+            y += hh + (max(8, int(14 * scale)) if bw else 0)
+        if bw:
+            d.multiline_text((142, y), bw, fill=(203, 216, 246, 255), font=f_b, spacing=sp_b)
+            y += bh
+        y += max(18, int(34 * scale)) + extra
 
-        if body:
-            bw = wrap_korean_text(body, f_b, W - 300, d)
-            d.multiline_text((142, y), bw, fill=(200, 214, 245, 255), font=f_b, spacing=12)
-            y = d.multiline_textbbox((142, y), bw, font=f_b, spacing=12)[3]
-        y += 34
-        if y > H - 250:
-            break
-
-    # 마침 기도
-    if closing:
-        f_c = get_serif_font(25)
-        cw = wrap_korean_text(strip_emoji(closing), f_c, W - 200, d)
-        cb = d.multiline_textbbox((0, 0), cw, font=f_c, spacing=13)
-        cy = min(max(y + 24, H - 240), H - 150 - (cb[3] - cb[1]))
-        d.line([(100, cy - 26), (W - 100, cy - 26)], fill=(120, 140, 190, 140), width=2)
-        d.multiline_text((100, cy), cw, fill=CREAM, font=f_c, spacing=13)
+    # ── 마침 기도
+    cw, f_c, ch, sp_c = closing_pack
+    if cw:
+        cy = H - foot_h - 24 - ch
+        d.line([(100, cy - 30), (W - 100, cy - 30)], fill=(130, 150, 200, 150), width=2)
+        d.multiline_text((100, cy), cw, fill=CREAM, font=f_c, spacing=sp_c)
 
     if org:
         f_o = get_pil_font(25)
         ob = d.textbbox((0, 0), org, font=f_o)
-        d.text(((W - (ob[2] - ob[0])) // 2, H - 92), org,
+        d.text(((W - (ob[2] - ob[0])) // 2, H - 66), org,
                fill=(180, 200, 240, 255), font=f_o)
 
     out = io.BytesIO()
@@ -4188,8 +4234,7 @@ PRAYER_NEWS_SECTIONS = ["이번 주 이슈", "정치", "경제", "국내 사건�
 PRAYER_FIELDS = [
     ("나라와 민족을 위하여", "국내 정치·경제·사회 현안"),
     ("세계와 열방을 위하여", "국제 정세·재난·분쟁·선교지"),
-    ("한국 교회와 목회 현장을 위하여", "교단·교회·목회자"),
-    ("다음 세대를 위하여", "청소년·청년·교회학교·교육"),
+    ("다음 세대와 한국 교회를 위하여", "청소년·청년·교회학교·교단·목회자"),
     ("우리 교회와 성도를 위하여", "지역 교회와 성도의 일상"),
 ]
 
@@ -4266,13 +4311,13 @@ def render_today_prayer_section():
  "items": [
    {{"head": "나라와 민족을 위하여",
      "basis": "근거가 된 오늘 소식 한 줄 (기사가 없으면 빈 문자열)",
-     "body": "기도제목 본문 2~3문장. 하나님께 아뢰는 문장으로",
+     "body": "기도제목 본문 — 2문장, 100자 이내. 하나님께 아뢰는 문장으로 (카드 한 장에 담아야 하므로 반드시 100자를 넘기지 마십시오)",
      "verse": "이 기도를 받쳐 주는 개역개정 성구 (장절 포함)"}}
  ],
- "closing": "다 함께 드리는 마침 기도문 3~4문장"
+ "closing": "다 함께 드리는 마침 기도문 — 3문장, 180자 이내"
 }}
 
-[items 는 정확히 아래 다섯 항목을 이 순서로]
+[items 는 정확히 아래 네 항목을 이 순서로]
 {fields}
 
 [반드시 지킬 것]
@@ -4282,7 +4327,8 @@ def render_today_prayer_section():
 3. 사망·재난은 선정적으로 다루지 말고, 유가족을 향한 애도와 위로의 언어로 쓰십시오.
 4. 확정되지 않은 사안은 단정하지 말고 "지혜를 주시도록" 같은 열린 표현으로 기도하십시오.
 5. verse 는 개역개정판 본문의 장절을 정확히 쓰십시오.
-6. body 는 회중 앞에서 소리 내어 읽을 수 있는 기도 문장이어야 합니다.
+6. body 는 회중 앞에서 소리 내어 읽을 수 있는 기도 문장이어야 하며, **100자를 넘기지 마십시오.**
+   closing(마침 기도문)도 3문장·180자 이내로 쓰십시오.
 7. 100% 한국어."""
                 data = get_ai_response(
                     build_research_prompt(task, "오늘의 기도", "오늘의 시대적 필요"),
@@ -4362,7 +4408,7 @@ def render_today_prayer_section():
             if st.button("🔀 배경 사진 바꾸기", key=f"pr_shuffle_{date_iso}"):
                 st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
                 st.rerun()
-            for it in data.get("items", [])[:5]:
+            for it in data.get("items", [])[:4]:
                 st.markdown(
                     f"<div class='lib-card' style='padding:12px 14px;margin-bottom:8px;'>"
                     f"<div style='color:#fde047;font-weight:800;font-size:13.5px;'>"
