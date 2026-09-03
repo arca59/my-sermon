@@ -1343,6 +1343,71 @@ def candidate_models(fingerprint: str):
     return result or [m for m in FALLBACK_MODELS if m not in dead] or list(FALLBACK_MODELS)
 
 
+def run_model_test(fingerprint: str, max_try: int = 6):
+    """
+    사이드바 [🔌 실제 작동 테스트].
+
+    예전 방식은 모델 6개를 쉬지 않고 연속 호출해서, 무료 등급에서는
+    첫 한두 개만 통과하고 나머지가 전부 '분당 한도 초과(429)'로 찍혔다.
+    (모델이 고장 난 게 아니라 우리 앱이 너무 빨리 두드린 것이다.)
+
+    그래서 이렇게 바꾼다.
+      · 성공하는 모델을 하나 찾으면 거기서 멈춘다 (한도를 아낀다)
+      · 한도 초과가 나오면 잠깐 쉬었다가 한 번 더 두드린다
+      · 응답 토큰 한도를 넉넉히 줘서, 생각(thinking) 하는 모델이
+        본문을 못 내보내 '오류'로 잘못 찍히는 일을 막는다
+      · 모든 호출에 시간 제한을 걸어 화면이 멈추지 않게 한다
+    """
+    rows = []
+    try:
+        models = discover_available_models(fingerprint)
+    except Exception as e:
+        return [("(모델 목록 조회)", f"🔑 실패 — {str(e)[:80]}", "key")]
+    if not models:
+        return [("(모델 목록)", "⚠️ 조회된 모델이 없습니다", "other")]
+
+    found = False
+    t0 = time.time()
+    for i, mname in enumerate(models[:max_try]):
+        if found or (time.time() - t0) > 45:
+            rows.append((mname, "· 확인 안 함 (이미 쓸 모델을 찾음)", "skip"))
+            continue
+
+        status, kindv = None, "other"
+        for attempt in (1, 2):
+            try:
+                mm = genai.GenerativeModel(mname)
+                r = _gen(mm, "한국어로 '연결됨' 이라고만 답하세요.",
+                         {"temperature": 0, "max_output_tokens": 400}, timeout=25)
+                txt, why = _resp_text(r)
+                if txt.strip():
+                    status, kindv = "✅ 사용 가능", "ok"
+                    found = True
+                elif why == "MAX_TOKENS":
+                    status, kindv = "✅ 사용 가능 (생각형 모델)", "ok"
+                    found = True
+                else:
+                    status, kindv = f"⚠️ 빈 응답 ({why})", "other"
+                break
+            except Exception as e:
+                k = _classify_api_error(str(e))
+                kindv = k
+                if k == "quota" and attempt == 1:
+                    time.sleep(6)          # 분당 한도라면 잠깐 쉬면 풀린다
+                    continue
+                status = {"quota": "⏳ 한도 초과 (모델 이상 아님)",
+                          "gone": "❌ 지금은 제공되지 않는 모델",
+                          "perm": "🔒 이 키로는 쓸 수 없는 모델",
+                          "key": "🔑 API 키 오류",
+                          "timeout": "⏱️ 응답 지연 (다시 시도해 보세요)"}.get(k, f"⚠️ 오류 — {str(e)[:60]}")
+                break
+        rows.append((mname, status or "⚠️ 알 수 없음", kindv))
+
+        if not found and i < len(models[:max_try]) - 1:
+            time.sleep(1.2)                # 분당 한도에 걸리지 않게 간격을 둔다
+    return rows
+
+
 def _classify_api_error(msg: str) -> str:
     m = (msg or "").lower()
     if ("deadline" in m or "timeout" in m or "timed out" in m
@@ -1545,6 +1610,56 @@ def _req_opts(timeout: int = AI_CALL_TIMEOUT):
             return None
 
 
+def _resp_text(r):
+    """
+    응답에서 본문 텍스트를 '절대 예외 없이' 꺼낸다.
+
+    ※ SDK 의 response.text 는 편해 보이지만, 응답에 텍스트 조각이 없으면
+      ValueError 를 던진다. 예를 들어 gemini-3 계열은 생각(thinking)에 토큰을
+      먼저 쓰기 때문에 max_output_tokens 가 작으면 본문이 비고, 그때 .text 가
+      예외를 내면서 멀쩡한 모델이 '❌ 오류'로 잘못 표시된다.
+      그래서 후보(candidate) → 파트(part) 순으로 직접 훑어 안전하게 모은다.
+    """
+    if r is None:
+        return "", "no_response"
+    # 1) 가장 흔한 경로
+    try:
+        t = r.text
+        if t and str(t).strip():
+            return str(t), ""
+    except Exception:
+        pass
+    # 2) 후보/파트를 직접 훑는다
+    reason = ""
+    try:
+        for cand in (getattr(r, "candidates", None) or []):
+            try:
+                fr = getattr(cand, "finish_reason", None)
+                if fr is not None:
+                    reason = getattr(fr, "name", None) or str(fr)
+            except Exception:
+                pass
+            content = getattr(cand, "content", None)
+            for part in (getattr(content, "parts", None) or []):
+                try:
+                    t = getattr(part, "text", "")
+                except Exception:
+                    t = ""
+                if t and str(t).strip():
+                    return str(t), reason
+    except Exception:
+        pass
+    # 3) 프롬프트가 차단된 경우
+    try:
+        pf = getattr(r, "prompt_feedback", None)
+        br = getattr(pf, "block_reason", None) if pf else None
+        if br:
+            reason = f"BLOCKED({getattr(br, 'name', br)})"
+    except Exception:
+        pass
+    return "", (reason or "empty")
+
+
 def _gen(model, prompt, cfg=None, tools=None, timeout: int = AI_CALL_TIMEOUT):
     """generate_content 를 시간 제한과 함께 호출한다."""
     kw = {}
@@ -1645,22 +1760,40 @@ def get_ai_response(prompt: str, is_json: bool = True, temperature: float = 0.35
                 cfg = {"response_mime_type": "application/json", "temperature": temperature,
                        "max_output_tokens": max_tokens}
                 res = _call(cfg, False)   # JSON 강제 출력과 검색 도구는 함께 못 쓰는 모델이 많다
-                parsed = extract_json_from_text(getattr(res, "text", ""))
+                raw, why = _resp_text(res)
+                parsed = extract_json_from_text(raw)
                 if parsed:
                     st.session_state.ai_model_used = model_name
                     st.session_state["_last_good_model"] = model_name
                     return parsed
-                errors.append(f"{model_name}: JSON 형식으로 응답하지 못함")
+                if why == "MAX_TOKENS":
+                    # 생각(thinking)에 토큰을 다 써서 본문이 비었다 → 한도를 늘려 한 번 더
+                    res = _call({"response_mime_type": "application/json",
+                                 "temperature": temperature,
+                                 "max_output_tokens": int(max_tokens * 2)}, False)
+                    raw, why = _resp_text(res)
+                    parsed = extract_json_from_text(raw)
+                    if parsed:
+                        st.session_state.ai_model_used = model_name
+                        st.session_state["_last_good_model"] = model_name
+                        return parsed
+                errors.append(f"{model_name}: JSON 형식으로 응답하지 못함"
+                              + (f" (사유: {why})" if why else ""))
                 kinds.append("other")
             else:
                 res = _call({"temperature": temperature, "max_output_tokens": max_tokens}, use_search)
-                txt = getattr(res, "text", "") or ""
-                cleaned = clean_korean_output(txt)
+                txt, why = _resp_text(res)
+                if (not txt) and why == "MAX_TOKENS":
+                    res = _call({"temperature": temperature,
+                                 "max_output_tokens": int(max_tokens * 2)}, False)
+                    txt, why = _resp_text(res)
+                cleaned = clean_korean_output(txt or "")
                 if cleaned and len(cleaned.strip()) > 60:
                     st.session_state.ai_model_used = model_name
                     st.session_state["_last_good_model"] = model_name
                     return fix_list_numbering(cleaned)
-                errors.append(f"{model_name}: 응답이 비었거나 너무 짧음")
+                errors.append(f"{model_name}: 응답이 비었거나 너무 짧음"
+                              + (f" (사유: {why})" if why else ""))
                 kinds.append("other")
 
         except Exception as e:
@@ -1999,6 +2132,75 @@ def ensure_korean_fonts():
     return reg, (bold or reg)
 
 
+GREEK_HEB_FONTS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSerifBold.ttf",
+    "/usr/share/fonts/truetype/freefont/FreeSerif.ttf",
+    "/usr/share/fonts/truetype/liberation/LiberationSerif-Bold.ttf",
+    "C:/Windows/Fonts/times.ttf",
+    "/System/Library/Fonts/Supplemental/Times New Roman.ttf",
+]
+
+
+def get_script_font(size: int):
+    """
+    히브리어·헬라어(폴리토닉) 글자를 그릴 수 있는 폰트.
+    한글 폰트(나눔고딕 등)에는 이 글자들이 없어서 네모(□)로 나오기 때문에,
+    원어를 그릴 때만 따로 쓴다.
+    """
+    for p in GREEK_HEB_FONTS:
+        try:
+            if os.path.exists(p):
+                return PIL.ImageFont.truetype(p, size)
+        except Exception:
+            continue
+    return get_pil_font(size)
+
+
+def _has_foreign_script(s: str) -> bool:
+    """히브리어/헬라어 글자가 섞여 있는지"""
+    return bool(re.search(r'[\u0370-\u03FF\u1F00-\u1FFF\u0590-\u05FF]', str(s or "")))
+
+
+def _script_runs(text: str):
+    """한 줄을 '한글 구간 / 원어 구간'으로 쪼갠다. [(글자, 원어여부), ...]"""
+    t = str(text or "")
+    out, last = [], 0
+    for m in re.finditer(r'[\u0370-\u03FF\u1F00-\u1FFF\u0590-\u05FF]+', t):
+        if m.start() > last:
+            out.append((t[last:m.start()], False))
+        out.append((m.group(0), True))
+        last = m.end()
+    if last < len(t):
+        out.append((t[last:], False))
+    return out or [(t, False)]
+
+
+def draw_mixed_text(d, xy, text, font_ko, font_script, fill):
+    """
+    한글과 원어(헬라어·히브리어)가 섞인 줄을 각각 맞는 폰트로 그린다.
+    한글 폰트에는 헬라어·히브리어 글리프가 없어서, 섞어 쓰지 않으면 네모(□)로 나온다.
+    반환값: 그린 뒤의 x 좌표
+    """
+    x, y = xy
+    for chunk, is_foreign in _script_runs(text):
+        if not chunk:
+            continue
+        f = font_script if is_foreign else font_ko
+        d.text((x, y), chunk, fill=fill, font=f)
+        x += d.textlength(chunk, font=f)
+    return x
+
+
+def _mixed_width(d, text, font_ko, font_script):
+    w = 0
+    for chunk, is_foreign in _script_runs(text):
+        w += d.textlength(chunk, font=(font_script if is_foreign else font_ko))
+    return w
+
+
+
 @st.cache_resource(show_spinner=False)
 def init_korean_font():
     """
@@ -2034,6 +2236,43 @@ def init_korean_font():
 
 PDF_FONT_NAME = init_korean_font()
 KOREAN_FONT_OK = (PDF_FONT_NAME != "Helvetica")
+
+
+@st.cache_resource(show_spinner=False)
+def init_script_font():
+    """
+    PDF 안에서 히브리어·헬라어를 그릴 폰트를 따로 등록한다.
+    한글 폰트(나눔고딕 등)에는 이 글자들이 없어서, 등록하지 않으면
+    PDF에서 원어가 통째로 빈칸으로 빠져 버린다.
+    """
+    for p in GREEK_HEB_FONTS:
+        try:
+            if os.path.exists(p) and p.lower().endswith(".ttf"):
+                pdfmetrics.registerFont(TTFont("ScriptFont", p))
+                return "ScriptFont"
+        except Exception:
+            continue
+    return ""
+
+
+PDF_SCRIPT_FONT = init_script_font()
+
+
+def pdf_mark(text: str) -> str:
+    """
+    PDF 문단용 마크업. 히브리어·헬라어 구간만 원어 폰트로 바꿔 준다.
+    (reportlab 의 <font name="..."> 인라인 태그를 쓴다)
+    """
+    t = (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+    if not PDF_SCRIPT_FONT or not _has_foreign_script(t):
+        return t
+    out = []
+    for chunk, is_foreign in _script_runs(t):
+        if is_foreign:
+            out.append(f'<font name="{PDF_SCRIPT_FONT}">{chunk}</font>')
+        else:
+            out.append(chunk)
+    return "".join(out)
 
 
 @st.cache_resource(show_spinner=False)
@@ -2528,7 +2767,8 @@ def create_pdf_bytes(title: str, content: str) -> bytes:
         )
 
         def esc(t):
-            return (t or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+            # 히브리어·헬라어 구간은 원어 폰트로 바꿔 준다 (안 하면 PDF에서 빈칸이 된다)
+            return pdf_mark(t)
 
         story = [Paragraph(f"<b>{esc(title)}</b>", S["title"]),
                  Paragraph(f"작성일 {datetime.now().strftime('%Y-%m-%d')} · MY 설교 AI 스튜디오", S["meta"])]
@@ -3673,6 +3913,176 @@ def render_outline_diagram(scripture: str, outline_json: str, timeline_json: str
             d.text((x - (tb[2] - tb[0]) // 2, ty + 48), what, fill=(71, 85, 105), font=f_small)
 
     d.text((44, H - 40), "MY 설교 AI 스튜디오 · 본문 구조 도해",
+           fill=(148, 163, 184), font=f_small)
+
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _wrap_by_width(draw, text: str, font, max_w: int, max_lines: int = 99):
+    """픽셀 폭 기준으로 줄바꿈 (한글은 공백이 적어 글자 단위로 나눈다)."""
+    words, lines, cur = str(text or "").split(" "), [], ""
+    for w in words:
+        cand = (cur + " " + w).strip()
+        if draw.textlength(cand, font=font) <= max_w:
+            cur = cand
+            continue
+        if cur:
+            lines.append(cur)
+        # 한 낱말이 줄보다 길면 글자 단위로 자른다
+        cur = ""
+        for ch in w:
+            if draw.textlength(cur + ch, font=font) <= max_w:
+                cur += ch
+            else:
+                lines.append(cur)
+                cur = ch
+        if len(lines) >= max_lines:
+            break
+    if cur:
+        lines.append(cur)
+    if len(lines) > max_lines:
+        lines = lines[:max_lines]
+        lines[-1] = lines[-1][:-1] + "…"
+    return lines
+
+
+def render_wordstudy_diagram(headword: str, subtitle: str, origin_json: str,
+                             senses_json: str, usage_json: str) -> bytes:
+    """
+    [성경 Q&A] 결과를 한 장의 도해 이미지(PNG)로 만든다.
+      상단 : 표제어 + 원어/음역
+      중단 : 뜻 갈래(의미망) 카드
+      하단 : 성경 안 용례 분포 막대
+    슬라이드·주보에 그대로 붙일 수 있다.
+    """
+    def _j(s, d):
+        try:
+            v = json.loads(s)
+            return v if v else d
+        except Exception:
+            return d
+
+    origin = _j(origin_json, {})       # {"lang":"헬라어","word":"ἀγάπη","translit":"아가페","strong":"G26"}
+    senses = _j(senses_json, [])       # [{"sense":"희생적 사랑","note":"..."}]
+    usage = _j(usage_json, [])         # [{"label":"바울서신","count":75}]
+
+    W = 1500
+    f_head = get_pil_font(46)
+    f_orig = get_script_font(54)          # 원어(헬라어·히브리어) 전용 폰트
+    f_sub = get_pil_font(24)
+    f_card = get_pil_font(27)
+    f_body = get_pil_font(20)
+    f_small = get_pil_font(19)
+
+    probe = PIL.ImageDraw.Draw(PIL.Image.new("RGB", (10, 10)))
+
+    senses = senses[:6]
+    cols = 3 if len(senses) > 2 else max(1, len(senses))
+    rows_n = (len(senses) + cols - 1) // cols if senses else 0
+    card_w = (W - 80 - (cols - 1) * 22) // max(1, cols)
+
+    # 카드 높이를 글자량에 맞춰 먼저 계산한다(겹침 방지)
+    card_h = 120
+    for s in senses:
+        ls = _wrap_by_width(probe, str(s.get("note", "")), f_body, card_w - 48, 4)
+        card_h = max(card_h, 78 + len(ls) * 28 + 22)
+
+    # ── 헤더 높이를 '실제 글자량'에 맞춰 먼저 계산한다 (겹침 방지)
+    head_lines = _wrap_by_width(probe, headword, f_head, W - 120, 2)
+    sub_lines = _wrap_by_width(probe, subtitle, f_sub, W - 100, 2) if subtitle else []
+    has_origin = bool(origin.get("word"))
+    head_h = 34 + 34 + len(head_lines) * 56 + (74 if has_origin else 0) \
+        + (len(sub_lines) * 32 + 10 if sub_lines else 0) + 26
+
+    sense_h = (rows_n * (card_h + 22) + 60) if senses else 0
+    usage_h = (150 + min(len(usage), 6) * 46) if usage else 0
+    H = head_h + sense_h + usage_h + 70
+
+    img = PIL.Image.new("RGB", (W, H), (250, 250, 255))
+    d = PIL.ImageDraw.Draw(img)
+
+    # 헤더 그라데이션 (헤더 영역 전체를 덮는다)
+    for y in range(head_h):
+        t = y / max(1, head_h)
+        d.line([(0, y), (W, y)],
+               fill=(int(49 + 60 * t), int(24 + 70 * t), int(120 + 90 * t)))
+
+    f_head_s = get_script_font(46)
+    yy = 30
+    d.text((44, yy), "성경 Q&A · 낱말 · 원어 연구", fill=(196, 181, 253), font=f_sub)
+    yy += 38
+    for ln in head_lines:
+        draw_mixed_text(d, (44, yy), ln, f_head, f_head_s, (255, 255, 255))
+        yy += 56
+
+    if has_origin:
+        yy += 6
+        lang = str(origin.get("lang", "원어"))
+        word = str(origin.get("word", ""))
+        d.text((44, yy + 14), lang, fill=(196, 181, 253), font=f_sub)
+        lx = 44 + d.textlength(lang, font=f_sub) + 18
+        d.text((lx, yy), word, fill=(253, 224, 71), font=f_orig)
+        lx += d.textlength(word, font=f_orig) + 22
+        tail = []
+        if origin.get("translit"):
+            tail.append(f"[{origin['translit']}]")
+        if origin.get("strong"):
+            tail.append(str(origin["strong"]))
+        if tail:
+            d.text((lx, yy + 16), "  ".join(tail), fill=(226, 232, 240), font=f_card)
+        yy += 68
+
+    for ln in sub_lines:
+        d.text((46, yy), ln, fill=(203, 213, 225), font=f_sub)
+        yy += 32
+
+    palette = [(124, 58, 237), (14, 165, 233), (219, 39, 119), (16, 185, 129),
+               (245, 158, 11), (99, 102, 241)]
+
+    # 뜻 갈래 카드
+    y = head_h + 12
+    if senses:
+        d.text((44, y), "뜻 갈래 (의미망)", fill=(76, 29, 149), font=f_card)
+        y += 46
+        for i, s in enumerate(senses):
+            r, c = divmod(i, cols)
+            x = 40 + c * (card_w + 22)
+            cy = y + r * (card_h + 22)
+            col = palette[i % len(palette)]
+            d.rounded_rectangle([x, cy, x + card_w, cy + card_h], radius=16,
+                                fill=(255, 255, 255), outline=col, width=3)
+            d.rounded_rectangle([x, cy, x + card_w, cy + 8], radius=4, fill=col)
+            d.ellipse([x + 18, cy + 26, x + 48, cy + 56], fill=col)
+            nb = d.textlength(str(i + 1), font=f_body)
+            d.text((x + 33 - nb / 2, cy + 33), str(i + 1), fill=(255, 255, 255), font=f_body)
+            d.text((x + 60, cy + 28), str(s.get("sense", ""))[:20],
+                   fill=(30, 27, 75), font=f_card)
+            f_body_s = get_script_font(20)
+            for li, ln in enumerate(_wrap_by_width(probe, str(s.get("note", "")),
+                                                   f_body, card_w - 48, 4)):
+                draw_mixed_text(d, (x + 24, cy + 74 + li * 28), ln,
+                                f_body, f_body_s, (71, 85, 105))
+        y += rows_n * (card_h + 22) + 14
+
+    # 용례 분포
+    if usage:
+        d.text((44, y + 12), "성경 안 쓰임 분포", fill=(76, 29, 149), font=f_card)
+        y += 66
+        mx = max([int(u.get("count", 0) or 0) for u in usage[:6]] + [1])
+        for i, u in enumerate(usage[:6]):
+            cy = y + i * 46
+            lab = str(u.get("label", ""))[:16]
+            d.text((48, cy + 6), lab, fill=(30, 27, 75), font=f_body)
+            bx = 300
+            bw = int((W - 420) * (int(u.get("count", 0) or 0) / mx))
+            d.rounded_rectangle([bx, cy + 4, bx + max(8, bw), cy + 34], radius=8,
+                                fill=palette[i % len(palette)])
+            d.text((bx + max(8, bw) + 14, cy + 6), str(u.get("count", "")),
+                   fill=(71, 85, 105), font=f_body)
+
+    d.text((44, H - 40), "MY 설교 AI 스튜디오 · 성경 Q&A 도해",
            fill=(148, 163, 184), font=f_small)
 
     out = io.BytesIO()
@@ -5103,9 +5513,407 @@ def render_context_section(scripture: str, topic: str, theology: str):
         render_body(text_all)
 
 
+# ==============================================================================
+# 성경 Q & A — 낱말 · 인명 · 지명 · 구절 · 신학 주제 무엇이든 물어보는 창구
+# ==============================================================================
+QA_KINDS = {
+    "🤖 자동 판별 (권장)": "auto",
+    "📕 낱말 · 용어 사전": "word",
+    "🧍 인물 사전": "person",
+    "🗺️ 지명 · 장소 사전": "place",
+    "📖 구절 해석 · 주해": "verse",
+    "🔤 구절 속 한 단어 · 어구": "phrase",
+    "🎓 신학 · 교리 주제": "topic",
+    "❓ 자유 질문": "free",
+}
+
+QA_SAMPLES = [
+    "헤세드",
+    "아가페",
+    "시편 1편 1절",
+    "시편 1:1의 '복 있는 사람'",
+    "요한복음 1:1의 '말씀(로고스)'",
+    "가버나움",
+    "멜기세덱",
+    "에벤에셀은 무슨 뜻인가요?",
+    "로마서 8:28은 모든 일이 잘 된다는 뜻인가요?",
+    "칭의와 성화는 어떻게 다른가요?",
+]
+
+
+def qa_to_text(d: dict, q: str) -> str:
+    """성경 Q&A 결과를 내려받기 좋은 문서로 조립"""
+    L = [f"📚 성경 Q & A", f"질문: {q}", ""]
+
+    def sec(title, body):
+        if body:
+            L.extend([title, str(body), ""])
+
+    if d.get("headword"):
+        L += [f"■ 표제어: {d['headword']}", ""]
+    if d.get("short_answer"):
+        L += ["1. 한마디로 답하면", f"- 1. {d['short_answer']}", ""]
+
+    o = d.get("origin") or {}
+    if o.get("word") or o.get("translit"):
+        L += ["2. 원어",
+              f"- 1. 원문: {o.get('word','')} ({o.get('lang','')})",
+              f"- 2. 음역: {o.get('translit','')}",
+              f"- 3. 스트롱번호: {o.get('strong','')}",
+              f"- 4. 품사·어형: {o.get('parsing','')}",
+              f"- 5. 어원: {o.get('etymology','')}", ""]
+
+    if d.get("verse_text"):
+        L += ["3. 본문", f"- 1. {d.get('verse_ref','')} ({KRV_DEFAULT})",
+              f"- 2. {d['verse_text']}"]
+        if d.get("verse_original"):
+            L.append(f"- 3. 원문: {d['verse_original']}")
+        if d.get("verse_translit"):
+            L.append(f"- 4. 음역: {d['verse_translit']}")
+        if d.get("verse_literal"):
+            L.append(f"- 5. 직역: {d['verse_literal']}")
+        L.append("")
+
+    if d.get("senses"):
+        L.append("4. 뜻 갈래")
+        for i, s in enumerate(d["senses"], start=1):
+            L.append(f"- {i}. {s.get('sense','')} — {s.get('note','')}")
+        L.append("")
+
+    if d.get("dictionary"):
+        L += ["5. 사전적 설명", str(d["dictionary"]), ""]
+    sec("6. 해석 · 주해", d.get("interpretation"))
+
+    if d.get("commentaries"):
+        L.append("7. 주석가들의 견해")
+        for i, c in enumerate(d["commentaries"], start=1):
+            L.append(f"- {i}. {c.get('who','')}: {c.get('view','')}")
+        L.append("")
+
+    if d.get("usage_examples"):
+        L.append("8. 성경 안 다른 용례")
+        for i, u in enumerate(d["usage_examples"], start=1):
+            L.append(f"- {i}. {u.get('ref','')} — {u.get('text','')} ({u.get('note','')})")
+        L.append("")
+
+    if d.get("compare_table"):
+        L.append("9. 비교표")
+        for row in d["compare_table"]:
+            L.append("- " + " | ".join(f"{k}: {v}" for k, v in row.items()))
+        L.append("")
+
+    if d.get("misconceptions"):
+        L.append("10. 흔한 오해와 바로잡기")
+        for i, m in enumerate(d["misconceptions"], start=1):
+            L.append(f"- {i}. {m}")
+        L.append("")
+
+    if d.get("sermon_hooks"):
+        L.append("11. 설교·묵상으로 잇기")
+        for i, h in enumerate(d["sermon_hooks"], start=1):
+            L.append(f"- {i}. {h}")
+        L.append("")
+
+    if d.get("cross_refs"):
+        L += ["12. 함께 볼 구절", "- 1. " + ", ".join(d["cross_refs"]), ""]
+    if d.get("sources"):
+        L += ["13. 참고 자료", "- 1. " + " / ".join(d["sources"]), ""]
+    if d.get("caution"):
+        L += ["※ 확인이 필요한 부분", str(d["caution"])]
+    return "\n".join(L)
+
+
+def render_bible_qa_section(scripture: str, topic: str, theology: str):
+    """성경에 관한 어떤 질문이든 사전·주석·원어·표·도해로 답한다."""
+    with open_expander("📚 성경 Q & A — 낱말 · 인명 · 지명 · 구절 무엇이든 물어보세요", "qa"):
+        st.caption("낱말 하나(헤세드, 가버나움, 멜기세덱)를 넣으면 **사전처럼**, "
+                   "구절(시편 1편 1절)이나 그 안의 한 단어를 넣으면 "
+                   "**원어(원문+음역)·주석·해석**까지 정리해 드립니다. "
+                   "표와 도해 이미지, 지도·유물 사진 링크도 함께 나옵니다.")
+
+        # 예시 버튼으로 채워 넣기 — 입력창이 만들어지기 '전'에 값을 넣어야 반영된다
+        if st.session_state.get("qa_pending"):
+            st.session_state["qa_q_input"] = st.session_state.pop("qa_pending")
+
+        q = st.text_input(
+            "무엇이 궁금하십니까?",
+            placeholder="예) 헤세드  /  시편 1편 1절  /  시편 1:1의 '복 있는 사람'  /  가버나움  /  칭의와 성화의 차이",
+            key="qa_q_input")
+        st.session_state["qa_q"] = q
+
+        st.caption("빠른 예시 — 눌러서 바로 채워 넣기")
+        sc = st.columns(5)
+        for i, samp in enumerate(QA_SAMPLES[:10]):
+            with sc[i % 5]:
+                if st.button(samp, key=f"qa_samp_{i}"):
+                    keep_open("qa")
+                    st.session_state["qa_pending"] = samp
+                    st.rerun()
+
+        o1, o2, o3 = st.columns([1.4, 1.2, 1])
+        with o1:
+            kind_label = st.selectbox("질문 유형", list(QA_KINDS.keys()), index=0, key="qa_kind")
+        with o2:
+            depth = st.selectbox("깊이", ["표준 (설교 준비용)", "간단 (빠른 확인)",
+                                        "깊이 (강해·연구용)"], key="qa_depth")
+        with o3:
+            st.markdown("<div style='height:28px'></div>", unsafe_allow_html=True)
+            go = st.button("🔎 답 찾기", type="primary", key="btn_qa_go",
+                           disabled=not q.strip())
+
+        qkey = f"qa::{hashlib.sha256((q + kind_label + depth).encode()).hexdigest()[:12]}"
+
+        if go and q.strip():
+            keep_open("qa")
+            depth_rule = {
+                "간단 (빠른 확인)": "각 항목을 짧게. senses 2~3개, commentaries 3명, usage_examples 3개.",
+                "표준 (설교 준비용)": "senses 3~5개, commentaries 5명, usage_examples 4~6개.",
+                "깊이 (강해·연구용)": "senses 4~6개, commentaries 6명(견해가 갈리면 반드시 병기), "
+                                "usage_examples 6~8개, interpretation 을 12문장 이상으로.",
+            }[depth]
+            kindv = QA_KINDS[kind_label]
+            kind_rule = {
+                "auto": "질문을 보고 스스로 유형을 판별하십시오(낱말/인물/지명/구절/구절 속 어구/신학 주제/자유질문).",
+                "word": "낱말·용어 사전 항목으로 답하십시오.",
+                "person": "성경 인물 사전 항목으로 답하십시오(가계·생애·등장 본문·평가).",
+                "place": "지명 사전 항목으로 답하십시오(위치·지형·역사·성경 사건).",
+                "verse": "구절 전체를 주해하십시오(본문·원문·직역·구문·신학).",
+                "phrase": "구절 안의 그 단어/어구에 초점을 맞춰 원어부터 파고드십시오.",
+                "topic": "신학·교리 주제로 답하십시오(정의·성경 근거·역사적 논쟁·개혁주의 입장).",
+                "free": "질문에 정확히 답하되, 아래 JSON 틀을 최대한 채우십시오.",
+            }[kindv]
+
+            with st.spinner("성경 사전·주석·원어 자료를 찾아 정리하는 중입니다... (30초~1분)"):
+                task = f"""[사용자 질문]
+{q}
+
+[질문 처리 방식]
+{kind_rule}
+{depth_rule}
+
+[출력 형식 — 아래 JSON 하나만. 설명 문장 금지. 해당 없는 항목은 빈 값으로 두십시오]
+{{
+ "qtype": "word | person | place | verse | phrase | topic | free 중 하나",
+ "headword": "표제어 — 한글로. (예: 헤세드 / 가버나움 / 시편 1:1 / 칭의)",
+ "subtitle": "한 줄 부제 (예: 언약적 사랑과 인자하심)",
+ "short_answer": "질문에 대한 답을 먼저 2~3문장으로. 여기만 읽어도 답이 되게",
+
+ "origin": {{"lang":"히브리어 또는 헬라어 또는 아람어",
+            "word":"원문 철자 그대로 (히브리어/헬라어 글자로)",
+            "translit":"한글 음역 (예: 헤세드)",
+            "roman":"로마자 음역 (예: chesed)",
+            "strong":"스트롱번호 (예: H2617). 확실하지 않으면 빈 문자열",
+            "parsing":"품사·어형 (명사면 성·수, 동사면 어간·태·시제)",
+            "etymology":"어원 2~3문장"}},
+
+ "verse_ref": "구절 질문일 때만. 예: 시편 1:1",
+ "verse_text": "그 구절의 개역개정 본문",
+ "verse_original": "그 구절의 원문 (히브리어/헬라어)",
+ "verse_translit": "그 구절 원문의 한글 음역",
+ "verse_literal": "어순을 살린 한국어 직역",
+
+ "senses": [{{"sense":"뜻 갈래 이름(6자 내외)","note":"설명 1~2문장"}}],
+ "dictionary": "사전 항목처럼 쓴 본문 설명 (6~10문장). 정의 → 용법 → 성경적 배경 순서",
+ "interpretation": "해석·주해 (8~14문장). 문맥 속 의미, 구문, 신학적 함의를 차례로",
+ "commentaries": [{{"who":"주석가 이름 (예: 존 칼빈 / 매튜 헨리 / 마틴 로이드존스 / 존 스토트 / 브루스 월키)",
+                   "view":"그 사람의 견해 2~3문장"}}],
+ "usage_examples": [{{"ref":"장:절","text":"그 구절의 개역개정 본문(짧게)","note":"여기서는 어떤 뜻으로 쓰였는지"}}],
+ "usage_stats": [{{"label":"오경 / 시가서 / 예언서 / 복음서 / 바울서신 등","count":숫자}}],
+ "compare_table": [{{"구분":"비교 항목","내용 A":"...","내용 B":"..."}}],
+ "misconceptions": ["흔한 오해와 바로잡기 2~4개, 각 2문장"],
+ "sermon_hooks": ["이 내용을 설교·묵상으로 잇는 실마리 3~4개"],
+ "cross_refs": ["함께 볼 구절 4~8개 (장절만)"],
+ "places": ["질문과 관련된 실제 지명·유물 이름 0~6개 (지도·사진 링크용)"],
+ "sources": ["참고할 만한 사전·주석 이름 3~5개 (예: BDB, TDNT, 칼빈 주석)"],
+ "caution": "확실하지 않거나 학자 간에 견해가 갈리는 부분을 솔직히 적으십시오. 없으면 빈 문자열"
+}}
+
+[반드시 지킬 것]
+1. 원어(origin.word, verse_original)는 **실제 히브리어/헬라어 글자**로 쓰십시오.
+   로마자로 대체하지 마십시오. 음역(translit)은 한글로 따로 씁니다.
+2. 스트롱번호·연대·지명·인물명은 확실할 때만 쓰십시오.
+   확신이 없으면 그 값을 비우고, caution 에 무엇이 불확실한지 적으십시오.
+   그럴듯하게 지어내는 것이 가장 나쁩니다.
+3. commentaries 의 "who" 는 실존 주석가·설교자여야 하며,
+   그 사람이 실제로 그렇게 말했다고 알려진 취지만 적으십시오.
+   출처가 불분명하면 그 사람을 빼고 다른 사람으로 채우십시오.
+4. usage_stats 의 count 는 대략적인 빈도여도 좋지만, 모르면 빈 배열로 두십시오.
+5. compare_table 은 비교가 필요한 질문일 때만(예: 아가페 vs 필리아, 칭의 vs 성화).
+   필요 없으면 빈 배열.
+6. 100% 한국어 (원어 철자 제외).
+
+{KRV_PROMPT_RULE}"""
+                data = get_ai_response(
+                    build_research_prompt(task, scripture or "성경 전체", q, theology),
+                    is_json=True, temperature=0.3, kind="qa",
+                    use_search=True, max_tokens=14000)
+                st.session_state[qkey] = data if isinstance(data, dict) else {}
+                st.session_state["qa_last_key"] = qkey
+                st.session_state["qa_last_q"] = q
+            st.rerun()
+
+        qkey = st.session_state.get("qa_last_key", qkey)
+        d = st.session_state.get(qkey) or {}
+        shown_q = st.session_state.get("qa_last_q", q)
+        if not d:
+            if st.session_state.get("ai_fallback_used"):
+                show_ai_status()
+            else:
+                st.caption("궁금한 낱말이나 구절을 적고 [🔎 답 찾기]를 눌러 보세요.")
+            return
+
+        show_ai_status()
+
+        # ── 머리말 카드
+        o = d.get("origin") or {}
+        st.markdown(
+            "<div class='lib-card' style='padding:18px 20px;'>"
+            f"<div style='color:#93a3d0;font-size:12px;'>질문 — {_esc(shown_q)}</div>"
+            f"<div style='color:#fde047;font-weight:900;font-size:22px;margin-top:6px;'>"
+            f"{_esc(str(d.get('headword','')))}</div>"
+            + (f"<div style='color:#a5b4fc;font-size:13.5px;margin-top:4px;'>"
+               f"{_esc(str(d.get('subtitle','')))}</div>" if d.get("subtitle") else "")
+            + (f"<div style='color:#e8ecff;font-size:15px;margin-top:12px;line-height:1.75;'>"
+               f"{_esc(str(d.get('short_answer','')))}</div>" if d.get("short_answer") else "")
+            + "</div>", unsafe_allow_html=True)
+
+        # ── 원어 카드
+        if o.get("word") or o.get("translit"):
+            st.markdown("#### 🔤 원어")
+            g1, g2 = st.columns([1, 1.6])
+            with g1:
+                st.markdown(
+                    "<div class='lib-card' style='padding:18px;text-align:center;'>"
+                    f"<div style='color:#93a3d0;font-size:12px;'>{_esc(str(o.get('lang','원어')))}</div>"
+                    f"<div style='color:#fde047;font-size:40px;font-weight:800;margin:8px 0;"
+                    f"font-family:\"Times New Roman\",\"Noto Serif\",serif;'>"
+                    f"{_esc(str(o.get('word','')))}</div>"
+                    f"<div style='color:#e8ecff;font-size:16px;'>[{_esc(str(o.get('translit','')))}]</div>"
+                    + (f"<div style='color:#a5b4fc;font-size:12.5px;margin-top:6px;'>"
+                       f"{_esc(str(o.get('roman','')))} · {_esc(str(o.get('strong','')))}</div>"
+                       if (o.get("roman") or o.get("strong")) else "")
+                    + "</div>", unsafe_allow_html=True)
+            with g2:
+                rows = []
+                for lab, k in (("품사·어형", "parsing"), ("어원", "etymology"),
+                               ("스트롱번호", "strong"), ("로마자", "roman")):
+                    if o.get(k):
+                        rows.append({"항목": lab, "내용": str(o[k])})
+                if rows:
+                    st.table(rows)
+                if str(o.get("lang", "")).startswith("히브리"):
+                    st.caption("※ 히브리어는 오른쪽에서 왼쪽으로 읽습니다. "
+                               "화면과 **도해 이미지(PNG)** 가 가장 정확하게 표시되며, "
+                               "PDF로 내려받으면 글자 순서와 모음 부호가 흐트러질 수 있습니다. "
+                               "주보·슬라이드에는 아래 도해 이미지를 쓰시는 편이 안전합니다.")
+
+        # ── 구절 본문
+        if d.get("verse_text"):
+            st.markdown("#### 📖 본문")
+            krv_warn(d.get("verse_text", ""), "인용된 성경 본문")
+            st.markdown(
+                "<div class='lib-card' style='padding:16px 18px;'>"
+                f"<div style='color:#fde047;font-weight:800;'>「 {_esc(str(d.get('verse_ref','')))} 」"
+                f"<span style='color:#93a3d0;font-weight:600;font-size:12px;'>　{KRV_DEFAULT}</span></div>"
+                f"<div style='color:#e8ecff;margin-top:8px;line-height:1.8;font-size:15px;'>"
+                f"{_esc(str(d.get('verse_text','')))}</div>"
+                + (f"<div style='color:#c7d2fe;margin-top:12px;font-size:19px;"
+                   f"font-family:\"Times New Roman\",serif;'>{_esc(str(d.get('verse_original','')))}</div>"
+                   if d.get("verse_original") else "")
+                + (f"<div style='color:#93a3d0;margin-top:6px;font-size:13px;'>"
+                   f"음역 — {_esc(str(d.get('verse_translit','')))}</div>"
+                   if d.get("verse_translit") else "")
+                + (f"<div style='color:#a5b4fc;margin-top:8px;font-size:13.5px;'>"
+                   f"직역 — {_esc(str(d.get('verse_literal','')))}</div>"
+                   if d.get("verse_literal") else "")
+                + "</div>", unsafe_allow_html=True)
+
+        # ── 도해 이미지
+        if d.get("senses") or o.get("word"):
+            st.markdown("#### 🖼️ 도해 (슬라이드에 바로 사용)")
+            png = render_wordstudy_diagram(
+                str(d.get("headword", shown_q)), str(d.get("subtitle", "")),
+                json.dumps(o, ensure_ascii=False),
+                json.dumps(d.get("senses", []), ensure_ascii=False),
+                json.dumps(d.get("usage_stats", []), ensure_ascii=False))
+            st_image_full(png, caption=f"성경 Q&A · {d.get('headword','')}")
+            st.download_button("📥 도해 이미지(PNG) 내려받기", data=png,
+                               file_name=f"성경QA_{re.sub(r'[^가-힣A-Za-z0-9]+','_', str(d.get('headword','결과')))[:24]}.png",
+                               mime="image/png", key=f"dl_qa_{qkey}")
+
+        # ── 뜻 갈래
+        if d.get("senses"):
+            st.markdown("#### 🧩 뜻 갈래")
+            st.table([{"뜻": s.get("sense", ""), "설명": s.get("note", "")}
+                      for s in d["senses"]])
+
+        # ── 용례
+        if d.get("usage_examples"):
+            st.markdown("#### 📚 성경 안 다른 용례")
+            st.table([{"구절": u.get("ref", ""), "본문": u.get("text", ""),
+                       "여기서의 뜻": u.get("note", "")} for u in d["usage_examples"]])
+
+        # ── 주석가
+        if d.get("commentaries"):
+            st.markdown("#### 🧑‍🏫 주석가들의 견해")
+            for c in d["commentaries"]:
+                st.markdown(
+                    "<div class='lib-card' style='padding:12px 15px;margin-bottom:8px;'>"
+                    f"<div style='color:#fde047;font-weight:800;font-size:13.5px;'>"
+                    f"{_esc(str(c.get('who','')))}</div>"
+                    f"<div style='color:#e8ecff;font-size:13.5px;margin-top:6px;line-height:1.7;'>"
+                    f"{_esc(str(c.get('view','')))}</div></div>", unsafe_allow_html=True)
+
+        if d.get("compare_table"):
+            st.markdown("#### 📊 비교표")
+            try:
+                st.table(d["compare_table"])
+            except Exception:
+                st.write(d["compare_table"])
+
+        if d.get("misconceptions"):
+            st.markdown("#### ⚠️ 흔한 오해 바로잡기")
+            for m in d["misconceptions"]:
+                st.markdown(f"- {m}")
+
+        if d.get("cross_refs"):
+            st.markdown("#### 🔗 함께 볼 구절")
+            st.markdown("　".join(f"`{r}`" for r in d["cross_refs"]))
+
+        # ── 지도 · 사진
+        places = list(d.get("places", []) or [])
+        if places:
+            st.markdown("#### 🗺️ 지도 · 사진 · 유물 바로가기")
+            st.caption("AI는 사진을 직접 가져올 수 없어, 신뢰할 수 있는 자료 사이트로 연결합니다.")
+            for row in bible_place_links(places[:8]):
+                st.markdown(
+                    f"**{row['이름']}** — [🗺️ 성경 지도]({row['지도']}) · "
+                    f"[🏺 유물·사진(위키미디어)]({row['사진·유물']}) · "
+                    f"[🔍 이미지 검색]({row['이미지 검색']})")
+
+        if d.get("caution"):
+            st.warning(f"※ 확인이 필요한 부분 — {d['caution']}")
+        if d.get("sources"):
+            st.caption("참고 자료 — " + " / ".join(str(s) for s in d["sources"]))
+
+        # ── 문서 (수정 · 복사 · 워드 · PDF · PPT · txt)
+        st.write("")
+        doc_field = f"qa_doc::{qkey}"
+        sync_doc_field(doc_field, _sig(d, shown_q), lambda: qa_to_text(d, shown_q))
+        sk = f"qa_{qkey}"
+        render_section_top_toolbar(
+            "성경QA_" + re.sub(r'[\\/:*?"<>|\s]+', "", str(d.get("headword", "결과")))[:24],
+            st.session_state[doc_field], sk, exp_key="qa")
+        if editable_section(sk, doc_field, "성경 Q&A 내용 편집", height=420, exp_key="qa"):
+            render_body(st.session_state[doc_field])
+
+
 def render_research_tools(scripture: str, topic: str, theology: str):
     st.markdown("### 🔬 본문 연구 도구")
     st.caption("아래 항목들은 설교 원고가 없어도, 선택한 본문과 주제만으로 자료를 만들어 옵니다.")
+
+    # 0) 성경 Q & A — 무엇이든 물어보는 창구
+    render_bible_qa_section(scripture, topic, theology)
 
     # 1) 문맥
     render_context_section(scripture, topic, theology)
@@ -6183,22 +6991,8 @@ with st.sidebar.expander("⚙️ AI 연결 설정", expanded=not bool(get_resolv
                     discover_available_models.clear()
                 except Exception:
                     pass
-                with st.spinner("모델마다 실제로 호출해 보는 중... (20초)"):
-                    rows = []
-                    for mname in discover_available_models(_fp)[:6]:
-                        try:
-                            mm = genai.GenerativeModel(mname)
-                            r = mm.generate_content(
-                                "한국어로 '연결됨' 이라고만 답하세요.",
-                                generation_config={"temperature": 0, "max_output_tokens": 20})
-                            ok = bool(getattr(r, "text", ""))
-                            rows.append((mname, "✅ 사용 가능" if ok else "⚠️ 빈 응답"))
-                        except Exception as e:
-                            k = _classify_api_error(str(e))
-                            label = {"quota": "⏳ 한도 초과", "gone": "❌ 폐기된 모델",
-                                     "perm": "🔒 권한 없음", "key": "🔑 키 오류"}.get(k, "⚠️ 오류")
-                            rows.append((mname, label))
-                    st.session_state["_model_test_rows"] = rows
+                with st.spinner("모델을 하나씩 실제로 호출해 보는 중입니다... (최대 40초)"):
+                    st.session_state["_model_test_rows"] = run_model_test(_fp)
                 st.rerun()
         with cgb:
             if st.button("🔄 목록 새로고침", key="btn_refresh_models"):
@@ -6211,15 +7005,35 @@ with st.sidebar.expander("⚙️ AI 연결 설정", expanded=not bool(get_resolv
                 st.rerun()
 
         if st.session_state.get("_model_test_rows"):
+            _rows = [r if len(r) == 3 else (r[0], r[1], "other")
+                     for r in st.session_state["_model_test_rows"]]
             st.markdown("**테스트 결과**")
-            for mname, status in st.session_state["_model_test_rows"]:
+            for mname, status, _k in _rows:
                 st.markdown(f"- `{mname}` → {status}")
-            usable = [m for m, s in st.session_state["_model_test_rows"] if s.startswith("✅")]
+
+            usable = [m for m, s, k in _rows if k == "ok"]
+            kinds_seen = [k for _, _, k in _rows]
             if usable:
-                st.success(f"사용 가능한 모델: {usable[0]}")
+                st.success(f"✅ **연결 정상** — 사용할 모델: `{usable[0]}`\n\n"
+                           "아래 목록에 '· 확인 안 함'이 있는 것은 고장이 아니라, "
+                           "쓸 모델을 이미 찾아서 사용량을 아끼려고 건너뛴 것입니다.")
+                st.session_state["_last_good_model"] = usable[0]
+            elif "key" in kinds_seen:
+                st.error("🔑 **API 키가 올바르지 않습니다.** Google AI Studio에서 키를 다시 "
+                         "발급받아 위 칸에 붙여 넣어 주세요.")
+            elif kinds_seen.count("quota") >= 1:
+                st.warning("⏳ **모델이 고장 난 것이 아니라 사용량 한도에 걸린 것입니다.**\n\n"
+                           "무료 등급은 분당 요청 수가 적습니다. **1~2분 뒤 다시** 눌러 보세요. "
+                           "계속된다면 오늘 하루 한도를 다 쓴 것이니 내일 다시 시도하시거나, "
+                           "Google AI Studio에서 결제를 연결하면 한도가 크게 늘어납니다.\n\n"
+                           "그동안에는 위 [사용할 모델]에서 **flash-lite** 계열을 고르시면 "
+                           "한도를 훨씬 덜 씁니다.")
+            elif "timeout" in kinds_seen:
+                st.warning("⏱️ **서버 응답이 늦습니다.** 잠시 후 다시 눌러 보세요. "
+                           "앱이 멈추지는 않고 제한 시간 뒤 자동으로 넘어갑니다.")
             else:
-                st.error("지금은 쓸 수 있는 모델이 없습니다. 대부분 ⏳ 한도 초과라면 "
-                         "1~2분 뒤 다시 시도해 주세요.")
+                st.error("지금은 쓸 수 있는 모델이 없습니다. [🔄 목록 새로고침]을 누른 뒤 "
+                         "다시 시도해 주세요.")
         if st.session_state.get("_last_good_model"):
             st.caption(f"최근 성공 모델: {st.session_state['_last_good_model']}")
     else:
