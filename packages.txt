@@ -1,3 +1,5 @@
 fonts-nanum
+fonts-dejavu-core
+fonts-freefont-ttf
 ffmpeg
  
