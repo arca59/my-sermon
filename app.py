@@ -57,6 +57,37 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 
+# ------------------------------------------------------------------------------
+# ffmpeg 확보 — packages.txt(apt) 없이도 영상 기능이 돌아가게 한다.
+#   Streamlit Cloud 는 apt 설치 단계에서 배포가 깨지는 일이 잦아 packages.txt 를
+#   두지 않는다. 대신 imageio-ffmpeg 가 들고 다니는 ffmpeg 를 moviepy 에 알려 준다.
+# ------------------------------------------------------------------------------
+def _ensure_ffmpeg():
+    if os.environ.get("FFMPEG_BINARY"):
+        return os.environ["FFMPEG_BINARY"]
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.exists(exe):
+            os.environ["FFMPEG_BINARY"] = exe
+            os.environ.setdefault("IMAGEIO_FFMPEG_EXE", exe)
+            return exe
+    except Exception:
+        pass
+    try:
+        import shutil as _sh
+        exe = _sh.which("ffmpeg")
+        if exe:
+            os.environ["FFMPEG_BINARY"] = exe
+            return exe
+    except Exception:
+        pass
+    return ""
+
+
+FFMPEG_PATH = _ensure_ffmpeg()
+
+
 # 선택적 의존성 (없어도 앱 전체가 죽지 않도록 보호)
 try:
     import edge_tts
