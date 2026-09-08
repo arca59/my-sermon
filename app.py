@@ -2095,6 +2095,13 @@ FONT_MIRRORS = {
         "https://cdn.jsdelivr.net/gh/google/fonts@main/ofl/nanumgothic/NanumGothic-Bold.ttf",
         "https://raw.githubusercontent.com/google/fonts/main/ofl/nanumgothic/NanumGothic-Bold.ttf",
     ],
+    # 히브리어·헬라어(폴리토닉)용. 한글 폰트에는 이 글자들이 없어서 □ 로 나온다.
+    # (matplotlib 저장소에 들어 있는 DejaVuSans 를 쓴다 — 히브리어·헬라어를 모두 포함)
+    "script": [
+        "https://raw.githubusercontent.com/matplotlib/matplotlib/v3.8.0/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf",
+        "https://raw.githubusercontent.com/matplotlib/matplotlib/main/lib/matplotlib/mpl-data/fonts/ttf/DejaVuSans.ttf",
+        "https://cdn.jsdelivr.net/npm/dejavu-fonts-ttf@2.37/ttf/DejaVuSans.ttf",
+    ],
 }
 FONT_DIR = "./fonts"
 
@@ -2143,18 +2150,52 @@ GREEK_HEB_FONTS = [
 ]
 
 
+def find_script_font_path(allow_download: bool = True):
+    """
+    히브리어·헬라어(폴리토닉)를 그릴 수 있는 폰트 파일 경로를 찾는다.
+      ① 시스템에 이미 깔린 폰트  ② 이전에 내려받아 둔 파일  ③ 인터넷에서 내려받기
+    apt 패키지(packages.txt)에 의존하지 않으므로 배포 환경이 달라도 동작한다.
+    ※ allow_download=False 로 부르면 네트워크를 건드리지 않는다.
+      (앱이 처음 켜질 때 내려받기를 시도하다 화면이 멈추는 일을 막기 위함)
+    없으면 빈 문자열.
+    """
+    for p in GREEK_HEB_FONTS:
+        try:
+            if p and os.path.exists(p):
+                return p
+        except Exception:
+            continue
+    cand = os.path.join(FONT_DIR, "DejaVuSans.ttf")
+    try:
+        if os.path.exists(cand):
+            return cand
+        if allow_download and _download_font("script", cand):
+            return cand
+    except Exception:
+        pass
+    return ""
+
+
+@st.cache_resource(show_spinner=False)
+def _script_font_path_cached():
+    return find_script_font_path(allow_download=True)
+
+
 def get_script_font(size: int):
     """
     히브리어·헬라어(폴리토닉) 글자를 그릴 수 있는 폰트.
     한글 폰트(나눔고딕 등)에는 이 글자들이 없어서 네모(□)로 나오기 때문에,
     원어를 그릴 때만 따로 쓴다.
     """
-    for p in GREEK_HEB_FONTS:
+    try:
+        p = _script_font_path_cached()
+    except Exception:
+        p = find_script_font_path()
+    if p:
         try:
-            if os.path.exists(p):
-                return PIL.ImageFont.truetype(p, size)
+            return PIL.ImageFont.truetype(p, size)
         except Exception:
-            continue
+            pass
     return get_pil_font(size)
 
 
@@ -2241,21 +2282,20 @@ KOREAN_FONT_OK = (PDF_FONT_NAME != "Helvetica")
 @st.cache_resource(show_spinner=False)
 def init_script_font():
     """
-    PDF 안에서 히브리어·헬라어를 그릴 폰트를 따로 등록한다.
+    PDF 안에서 히브리어·헬라어를 그릴 폰트를 등록한다.
     한글 폰트(나눔고딕 등)에는 이 글자들이 없어서, 등록하지 않으면
     PDF에서 원어가 통째로 빈칸으로 빠져 버린다.
+    ※ 실제로 원어가 들어간 PDF 를 만들 때 처음 한 번만 부른다.
+      (앱을 켜는 순간 폰트를 내려받느라 멈추지 않게 하려는 것)
     """
-    for p in GREEK_HEB_FONTS:
-        try:
-            if os.path.exists(p) and p.lower().endswith(".ttf"):
-                pdfmetrics.registerFont(TTFont("ScriptFont", p))
-                return "ScriptFont"
-        except Exception:
-            continue
+    try:
+        p = find_script_font_path(allow_download=True)
+        if p and p.lower().endswith(".ttf"):
+            pdfmetrics.registerFont(TTFont("ScriptFont", p))
+            return "ScriptFont"
+    except Exception:
+        pass
     return ""
-
-
-PDF_SCRIPT_FONT = init_script_font()
 
 
 def pdf_mark(text: str) -> str:
@@ -2264,12 +2304,18 @@ def pdf_mark(text: str) -> str:
     (reportlab 의 <font name="..."> 인라인 태그를 쓴다)
     """
     t = (text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-    if not PDF_SCRIPT_FONT or not _has_foreign_script(t):
+    if not _has_foreign_script(t):
+        return t
+    try:
+        script_font = init_script_font()
+    except Exception:
+        script_font = ""
+    if not script_font:
         return t
     out = []
     for chunk, is_foreign in _script_runs(t):
         if is_foreign:
-            out.append(f'<font name="{PDF_SCRIPT_FONT}">{chunk}</font>')
+            out.append(f'<font name="{script_font}">{chunk}</font>')
         else:
             out.append(chunk)
     return "".join(out)
