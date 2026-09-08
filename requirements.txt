@@ -1,13 +1,21 @@
-streamlit
-google-generativeai
-python-docx
-python-pptx
-pypdf
-reportlab
-pillow
-lxml
-edge-tts
-yt-dlp
-moviepy
-imageio-ffmpeg
- 
+# ── MY 설교 AI 스튜디오 Pro ─────────────────────────────────────────
+# Streamlit Cloud 설치 실패를 막기 위해 버전을 모두 고정했습니다.
+# 파이썬 3.11 / 3.12 / 3.13 에서 '컴파일 없이' 설치되는 조합만 골랐습니다.
+
+# 기본 기능
+streamlit==1.50.0
+google-generativeai==0.8.5
+protobuf==5.29.5
+python-docx==1.2.0
+python-pptx==1.0.2
+pypdf==6.1.1
+reportlab==4.4.4
+pillow==11.3.0
+lxml==6.0.2
+
+# 영상 · 음성 (쇼츠 제작 · AI 나레이션)
+edge-tts==7.2.8
+moviepy==2.2.1
+imageio==2.37.4
+imageio-ffmpeg==0.6.0
+yt-dlp==2026.8.19
