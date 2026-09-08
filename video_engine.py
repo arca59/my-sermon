@@ -27,6 +27,41 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 # ------------------------------------------------------------------------------
+# ffmpeg 확보 — 서버에 ffmpeg 가 따로 깔려 있지 않아도 되게 한다.
+#   imageio-ffmpeg 가 자체 ffmpeg 실행파일을 들고 다니므로, moviepy 가 그것을
+#   쓰도록 moviepy 를 불러오기 '전에' 환경변수로 알려 준다.
+#   (Streamlit Cloud 는 apt 설치 단계에서 배포가 깨지는 일이 잦아
+#    packages.txt 로 ffmpeg 를 깔지 않는다.)
+# ------------------------------------------------------------------------------
+def _bootstrap_ffmpeg():
+    cur = os.environ.get("FFMPEG_BINARY", "")
+    if cur and os.path.exists(cur):
+        return cur
+    try:
+        import imageio_ffmpeg
+        exe = imageio_ffmpeg.get_ffmpeg_exe()
+        if exe and os.path.exists(exe):
+            os.environ["FFMPEG_BINARY"] = exe
+            os.environ.setdefault("IMAGEIO_FFMPEG_EXE", exe)
+            return exe
+    except Exception:
+        pass
+    try:
+        import shutil
+        exe = shutil.which("ffmpeg")
+        if exe:
+            os.environ["FFMPEG_BINARY"] = exe
+            return exe
+    except Exception:
+        pass
+    os.environ.pop("FFMPEG_BINARY", None)   # 빈 값이 남으면 moviepy 가 죽는다
+    return ""
+
+
+FFMPEG_PATH = _bootstrap_ffmpeg()
+
+
+# ------------------------------------------------------------------------------
 # moviepy 1.x / 2.x 양쪽 지원
 # ------------------------------------------------------------------------------
 MOVIEPY_MAJOR = 2
