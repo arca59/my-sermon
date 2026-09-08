@@ -7830,7 +7830,12 @@ elif app_mode == "🎙️ AI 보이스오버 스튜디오":
                 unsafe_allow_html=True)
 
     if not HAS_TTS:
-        st.error("edge-tts 패키지가 설치되어 있지 않습니다. `pip install edge-tts` 후 다시 실행해 주세요.")
+        st.warning(
+            "🎙️ **음성(TTS) 패키지(edge-tts)를 불러오지 못했습니다.**\n\n"
+            "저장소의 **requirements.txt** 에 아래 줄이 있는지 확인하시고, "
+            "Manage app → ⋮ → **Reboot app** 으로 다시 설치해 주세요.\n\n"
+            "```\nedge-tts==7.2.8\n```\n"
+            "나머지 기능(설교문·요약·카드뉴스·PPT·성경 Q&A 등)은 지금도 정상 작동합니다.")
 
     c1, c2 = st.columns([1.5, 1])
     with c1:
@@ -7881,7 +7886,12 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                 unsafe_allow_html=True)
 
     if not HAS_VIDEO_ENGINE:
-        st.warning("`video_engine.py` 모듈이 없어 영상 렌더링 기능이 비활성화됩니다. 같은 폴더에 파일을 두고 다시 실행해 주세요.")
+        st.warning(
+            "🎬 **영상 제작 모듈을 불러오지 못했습니다.**\n\n"
+            "① `video_engine.py` 가 `app.py` 와 **같은 폴더**에 있는지 확인해 주세요.\n"
+            "② 저장소의 **requirements.txt** 에 아래 줄들이 있는지 확인해 주세요.\n\n"
+            "```\nmoviepy==2.2.1\nimageio==2.37.4\nimageio-ffmpeg==0.6.0\nyt-dlp==2026.8.19\n```\n"
+            "고치신 뒤 Manage app → ⋮ → **Reboot app** 을 눌러 주세요.")
 
     tab_yt, tab_ai = st.tabs(["🔗 유튜브 링크에서 숏츠 추출", "🎨 AI 나레이션 & 템플릿 숏츠 제작"])
 
