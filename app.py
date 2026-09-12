@@ -4365,6 +4365,58 @@ DL_MIME = {
     "png":  "image/png",
 }
 
+STATIC_DIR = "./static"
+STATIC_KEEP = 80          # 이 폴더에 남겨 둘 최대 파일 수
+
+
+def _static_cleanup():
+    """내려받기용 임시 파일이 무한히 쌓이지 않게 오래된 것부터 지운다."""
+    try:
+        files = []
+        for n in os.listdir(STATIC_DIR):
+            if n == "README.txt":
+                continue
+            p = os.path.join(STATIC_DIR, n)
+            if os.path.isfile(p):
+                files.append((os.path.getmtime(p), p))
+        if len(files) <= STATIC_KEEP:
+            return
+        files.sort()
+        for _, p in files[:len(files) - STATIC_KEEP]:
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
+def static_file_url(data: bytes, file_name: str, key: str) -> str:
+    """
+    파일을 앱의 static 폴더에 실제로 써 두고, 보통 웹주소로 내려받게 한다.
+
+    ※ 왜 이 길이 따로 필요한가
+      st.download_button 은 파일을 '메모리 임시 저장소'에 두고 주소를 넘긴다.
+      Streamlit Cloud 가 앱을 재웠다 깨우면 그 저장소가 비워져, 화면은 멀쩡한데
+      버튼만 반응하지 않는 일이 생긴다. 이 방식은 파일이 디스크에 남아 있고
+      주소도 평범한 https 주소라, 그런 일이 생기지 않는다.
+    """
+    try:
+        os.makedirs(STATIC_DIR, exist_ok=True)
+        safe = re.sub(r'[\\/:*?"<>|]+', "_", str(file_name))
+        stamp = hashlib.sha256((key + safe).encode()).hexdigest()[:8]
+        base, dot, tail = safe.rpartition(".")
+        disk = f"{base}_{stamp}.{tail}" if dot else f"{safe}_{stamp}"
+        path = os.path.join(STATIC_DIR, disk)
+        if (not os.path.exists(path)) or os.path.getsize(path) != len(data or b""):
+            with open(path, "wb") as f:
+                f.write(data or b"")
+            _static_cleanup()
+        return "app/static/" + urllib.parse.quote(disk)
+    except Exception:
+        return ""
+
+
 def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
     """
     다운로드 하나를 그린다.
@@ -4421,8 +4473,27 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
             render_dl("📥 txt", create_txt_bytes(title, content), f"{title}.txt",
                       "txt", f"dl_txt_{state_key}")
 
-    st.caption("⬇️ 내려받기가 눌리지 않으면, 브라우저를 새로고침(F5)한 뒤 다시 눌러 주세요. "
-               "앱이 한동안 잠들었다 깨어나면 이전 화면의 파일 주소가 만료됩니다.")
+    # ── 위 버튼이 반응하지 않을 때를 위한 두 번째 경로 (평범한 주소 링크)
+    try:
+        links = []
+        for lab, ext, blob in (
+                ("워드", "docx", create_docx_bytes(title, content)),
+                ("PDF", "pdf", create_pdf_bytes(title, content)),
+                ("PPT", "pptx", ppt_bytes),
+                ("txt", "txt", create_txt_bytes(title, content))):
+            u = static_file_url(blob, f"{title}.{ext}", f"{state_key}_{ext}")
+            if u:
+                links.append(f'<a href="{u}" download target="_blank" '
+                             f'style="color:#a5b4fc;font-size:12.5px;">{lab}</a>')
+        if links:
+            st.markdown(
+                "<div style='font-size:12.5px;color:#8b96c4;margin-top:2px;'>"
+                "⬇️ 위 버튼이 눌리지 않으면 여기로 받으세요 — "
+                + " · ".join(links)
+                + "　<span style='color:#6b76a4;'>(그래도 안 되면 브라우저 새로고침 F5)</span>"
+                "</div>", unsafe_allow_html=True)
+    except Exception:
+        pass
 
     if st.session_state.get(f"show_copy_{state_key}", False):
         st.info("💡 아래 상자의 텍스트를 복사하여 사용하세요:")
