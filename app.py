@@ -4365,18 +4365,62 @@ DL_MIME = {
     "png":  "image/png",
 }
 
-STATIC_DIR = "./static"
+# ------------------------------------------------------------------------------
+# 정적 파일(두 번째 내려받기 경로)
+#   Streamlit 은 앱 폴더 안의 static/ 을  https://.../app/static/파일  로 열어 준다.
+#   (.streamlit/config.toml 에 enableStaticServing = true 필요)
+#   서버 임시저장소를 거치지 않으므로, 앱이 잠들었다 깨어나도 주소가 살아 있다.
+# ------------------------------------------------------------------------------
 STATIC_KEEP = 80          # 이 폴더에 남겨 둘 최대 파일 수
+_STATIC_ERR = ""          # 마지막 실패 사유 (진단 화면에 그대로 보여 준다)
 
 
-def _static_cleanup():
+def _static_dir_candidates():
+    """쓸 수 있는 static 폴더 후보를 우선순위대로 돌려준다."""
+    out = []
+    try:
+        here = os.path.dirname(os.path.abspath(__file__))   # app.py 가 있는 폴더
+        out.append(os.path.join(here, "static"))
+    except Exception:
+        pass
+    out.append(os.path.abspath("./static"))                 # 현재 작업 폴더
+    try:
+        out.append(os.path.join(os.getcwd(), "static"))
+    except Exception:
+        pass
+    seen, uniq = set(), []
+    for p in out:
+        if p and p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
+@st.cache_resource(show_spinner=False)
+def resolve_static_dir():
+    """실제로 쓰기가 되는 static 폴더를 한 번만 찾아 둔다. (경로, 오류메시지)"""
+    errs = []
+    for d in _static_dir_candidates():
+        try:
+            os.makedirs(d, exist_ok=True)
+            probe = os.path.join(d, ".write_test")
+            with open(probe, "wb") as f:
+                f.write(b"ok")
+            os.remove(probe)
+            return d, ""
+        except Exception as e:
+            errs.append(f"{d} → {type(e).__name__}: {str(e)[:80]}")
+    return "", " / ".join(errs) if errs else "후보 경로 없음"
+
+
+def _static_cleanup(d: str):
     """내려받기용 임시 파일이 무한히 쌓이지 않게 오래된 것부터 지운다."""
     try:
         files = []
-        for n in os.listdir(STATIC_DIR):
-            if n == "README.txt":
+        for n in os.listdir(d):
+            if n == "README.txt" or n.startswith("."):
                 continue
-            p = os.path.join(STATIC_DIR, n)
+            p = os.path.join(d, n)
             if os.path.isfile(p):
                 files.append((os.path.getmtime(p), p))
         if len(files) <= STATIC_KEEP:
@@ -4393,27 +4437,28 @@ def _static_cleanup():
 
 def static_file_url(data: bytes, file_name: str, key: str) -> str:
     """
-    파일을 앱의 static 폴더에 실제로 써 두고, 보통 웹주소로 내려받게 한다.
-
-    ※ 왜 이 길이 따로 필요한가
-      st.download_button 은 파일을 '메모리 임시 저장소'에 두고 주소를 넘긴다.
-      Streamlit Cloud 가 앱을 재웠다 깨우면 그 저장소가 비워져, 화면은 멀쩡한데
-      버튼만 반응하지 않는 일이 생긴다. 이 방식은 파일이 디스크에 남아 있고
-      주소도 평범한 https 주소라, 그런 일이 생기지 않는다.
+    파일을 static 폴더에 실제로 써 두고, 보통 웹주소를 돌려준다.
+    실패하면 빈 문자열을 돌려주고 사유를 _STATIC_ERR 에 남긴다.
     """
+    global _STATIC_ERR
+    d, err = resolve_static_dir()
+    if not d:
+        _STATIC_ERR = err
+        return ""
     try:
-        os.makedirs(STATIC_DIR, exist_ok=True)
-        safe = re.sub(r'[\\/:*?"<>|]+', "_", str(file_name))
-        stamp = hashlib.sha256((key + safe).encode()).hexdigest()[:8]
+        safe = re.sub(r'[\\/:*?"<>|]+', "_", str(file_name)).strip() or "file"
+        stamp = hashlib.sha256((key + safe).encode("utf-8", "ignore")).hexdigest()[:8]
         base, dot, tail = safe.rpartition(".")
         disk = f"{base}_{stamp}.{tail}" if dot else f"{safe}_{stamp}"
-        path = os.path.join(STATIC_DIR, disk)
+        path = os.path.join(d, disk)
         if (not os.path.exists(path)) or os.path.getsize(path) != len(data or b""):
             with open(path, "wb") as f:
                 f.write(data or b"")
-            _static_cleanup()
+            _static_cleanup(d)
+        _STATIC_ERR = ""
         return "app/static/" + urllib.parse.quote(disk)
-    except Exception:
+    except Exception as e:
+        _STATIC_ERR = f"{type(e).__name__}: {str(e)[:120]}"
         return ""
 
 
@@ -7319,6 +7364,7 @@ with st.sidebar.expander("🩺 다운로드가 안 될 때 (진단)", expanded=F
 
     st.markdown("**② 주소 링크로 내려받기**")
     _u = static_file_url(_probe, "다운로드점검.txt", "diag_probe")
+    _sd, _sderr = resolve_static_dir()
     if _u:
         st.markdown(f'<a href="{_u}" download style="color:#a5b4fc;">② 링크로 받기</a>',
                     unsafe_allow_html=True)
@@ -7328,8 +7374,10 @@ with st.sidebar.expander("🩺 다운로드가 안 될 때 (진단)", expanded=F
         st.caption("③ 도 안 열리면 아래 주소를 복사해 새 탭 주소창에 직접 붙여 넣어 보세요.")
         st.code(_u, language="text")
     else:
-        st.error("정적 파일 폴더를 만들지 못했습니다. 저장소에 `static` 폴더와 "
-                 "`.streamlit/config.toml` 의 `enableStaticServing = true` 를 확인해 주세요.")
+        st.error("② 경로를 쓸 수 없습니다. 아래 사유를 그대로 알려 주세요.")
+        st.code(f"폴더: {_sd or '(찾지 못함)'}\n사유: {_sderr or _STATIC_ERR or '(알 수 없음)'}\n"
+                f"작업폴더: {os.getcwd()}", language="text")
+        st.caption("이 경우에도 ① 과 ④ 는 쓰실 수 있습니다.")
 
     st.markdown("**④ 파일 없이 글자만 가져가기**")
     st.caption("위가 모두 안 되더라도, 아래 상자 오른쪽 위 복사 아이콘을 누르면 "
