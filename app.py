@@ -4365,38 +4365,14 @@ DL_MIME = {
     "png":  "image/png",
 }
 
-# data: 링크로 담을 수 있는 최대 크기 (이보다 크면 기존 버튼 방식으로 넘긴다)
-DL_INLINE_LIMIT = 12 * 1024 * 1024
-
-
-def dl_link_html(label: str, data: bytes, file_name: str, ext: str) -> str:
-    """
-    파일을 페이지 안에 직접 심어 내려받게 하는 링크를 만든다.
-
-    ※ 왜 st.download_button 대신 이걸 쓰는가
-      st.download_button 은 파일을 '서버 임시 저장소'에 올려 두고 주소만 브라우저에
-      건네준다. 그런데 Streamlit Cloud 는 앱이 잠들거나 다시 배포될 때 그 임시
-      저장소를 비운다. 그러면 화면은 멀쩡한데 버튼을 눌러도 아무 일이 없거나
-      파일 이름이 뜻 모를 문자열로 바뀐다. (실제로 재현되는 현상)
-      data: 링크는 파일 내용을 페이지 안에 통째로 담기 때문에 서버 사정과
-      상관없이 언제 눌러도 반드시 받아진다.
-    """
-    b64 = base64.b64encode(data).decode("ascii")
-    mime = DL_MIME.get(ext, "application/octet-stream")
-    safe = (str(file_name).replace("&", "&amp;").replace('"', "&quot;")
-            .replace("<", "&lt;").replace(">", "&gt;"))
-    return (f'<a class="dlbtn" download="{safe}" href="data:{mime};base64,{b64}" '
-            f'title="{safe}">{label}</a>')
-
-
 def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
-    """다운로드 하나를 그린다. 파일이 아주 크면 기존 방식으로 자동 전환."""
-    try:
-        if data and len(data) <= DL_INLINE_LIMIT:
-            st.markdown(dl_link_html(label, data, file_name, ext), unsafe_allow_html=True)
-            return
-    except Exception:
-        pass
+    """
+    다운로드 하나를 그린다.
+
+    ※ 한때 data: 링크(파일을 페이지에 직접 담는 방식)를 썼으나,
+      Streamlit 이 보안상 그 주소를 막아 버려 화면에 긴 문자열이 그대로
+      찍히는 문제가 있었다. 그래서 표준 위젯으로 되돌린다.
+    """
     st.download_button(label, data=data or b"", file_name=file_name,
                        mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
 
@@ -4444,6 +4420,9 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
         with b6:
             render_dl("📥 txt", create_txt_bytes(title, content), f"{title}.txt",
                       "txt", f"dl_txt_{state_key}")
+
+    st.caption("⬇️ 내려받기가 눌리지 않으면, 브라우저를 새로고침(F5)한 뒤 다시 눌러 주세요. "
+               "앱이 한동안 잠들었다 깨어나면 이전 화면의 파일 주소가 만료됩니다.")
 
     if st.session_state.get(f"show_copy_{state_key}", False):
         st.info("💡 아래 상자의 텍스트를 복사하여 사용하세요:")
