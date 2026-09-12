@@ -31,6 +31,7 @@ import os
 import io
 import re
 import hashlib
+import base64
 import time
 import asyncio
 import zipfile
@@ -234,6 +235,17 @@ st.markdown("""
         border-left:4px solid var(--violet); border-radius:0 12px 12px 0;
     }
     /* 인도자 가이드 — 제목과 내용 전체를 파란 블록으로 */
+    /* 다운로드 링크 — 서버 임시파일에 의존하지 않는 직접 내려받기 버튼 */
+    a.dlbtn{
+        display:inline-block; width:100%; box-sizing:border-box; text-align:center;
+        padding:6px 8px; margin:0; border-radius:8px; text-decoration:none !important;
+        font-size:13.5px; font-weight:600; line-height:1.5;
+        color:#eef2ff !important; background:rgba(148,163,255,.12);
+        border:1px solid rgba(148,163,255,.35); white-space:nowrap;
+        overflow:hidden; text-overflow:ellipsis;
+    }
+    a.dlbtn:hover{ background:rgba(148,163,255,.26); border-color:#a78bfa; }
+    a.dlbtn:active{ transform:translateY(1px); }
     .leader-block{
         display:block; margin:8px 0; padding:12px 16px;
         background: linear-gradient(135deg, rgba(56,189,248,.16), rgba(59,130,246,.09));
@@ -4345,6 +4357,50 @@ def extract_youtube_to_shorts(yt_url, start_sec, duration_sec, title, subtitle_t
 # ==============================================================================
 # 공통 툴바
 # ==============================================================================
+DL_MIME = {
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "pdf":  "application/pdf",
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "txt":  "text/plain;charset=utf-8",
+    "png":  "image/png",
+}
+
+# data: 링크로 담을 수 있는 최대 크기 (이보다 크면 기존 버튼 방식으로 넘긴다)
+DL_INLINE_LIMIT = 12 * 1024 * 1024
+
+
+def dl_link_html(label: str, data: bytes, file_name: str, ext: str) -> str:
+    """
+    파일을 페이지 안에 직접 심어 내려받게 하는 링크를 만든다.
+
+    ※ 왜 st.download_button 대신 이걸 쓰는가
+      st.download_button 은 파일을 '서버 임시 저장소'에 올려 두고 주소만 브라우저에
+      건네준다. 그런데 Streamlit Cloud 는 앱이 잠들거나 다시 배포될 때 그 임시
+      저장소를 비운다. 그러면 화면은 멀쩡한데 버튼을 눌러도 아무 일이 없거나
+      파일 이름이 뜻 모를 문자열로 바뀐다. (실제로 재현되는 현상)
+      data: 링크는 파일 내용을 페이지 안에 통째로 담기 때문에 서버 사정과
+      상관없이 언제 눌러도 반드시 받아진다.
+    """
+    b64 = base64.b64encode(data).decode("ascii")
+    mime = DL_MIME.get(ext, "application/octet-stream")
+    safe = (str(file_name).replace("&", "&amp;").replace('"', "&quot;")
+            .replace("<", "&lt;").replace(">", "&gt;"))
+    return (f'<a class="dlbtn" download="{safe}" href="data:{mime};base64,{b64}" '
+            f'title="{safe}">{label}</a>')
+
+
+def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
+    """다운로드 하나를 그린다. 파일이 아주 크면 기존 방식으로 자동 전환."""
+    try:
+        if data and len(data) <= DL_INLINE_LIMIT:
+            st.markdown(dl_link_html(label, data, file_name, ext), unsafe_allow_html=True)
+            return
+    except Exception:
+        pass
+    st.download_button(label, data=data or b"", file_name=file_name,
+                       mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
+
+
 def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mode: str = "doc",
                                exp_key: str = ""):
     content = content or "내용 없음"
@@ -4367,12 +4423,11 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
                 st.session_state[f"show_copy_{state_key}"] = not st.session_state.get(f"show_copy_{state_key}", False)
                 st.rerun()
         with b3:
-            st.download_button("📥 워드", data=create_docx_bytes(title, content), file_name=f"{title}.docx",
-                               mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                               key=f"dl_docx_{state_key}")
+            render_dl("📥 워드", create_docx_bytes(title, content), f"{title}.docx",
+                      "docx", f"dl_docx_{state_key}")
         with b4:
-            st.download_button("📥 PDF", data=create_pdf_bytes(title, content), file_name=f"{title}.pdf",
-                               mime="application/pdf", key=f"dl_pdf_{state_key}")
+            render_dl("📥 PDF", create_pdf_bytes(title, content), f"{title}.pdf",
+                      "pdf", f"dl_pdf_{state_key}")
         with b5:
             if ppt_mode == "sermon":
                 ppt_bytes = generate_sermon_structure_pptx_bytes(
@@ -4385,12 +4440,10 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
             else:
                 ppt_bytes = create_document_pptx_bytes(title, content,
                                                        bg_seed(0), current_bg_theme())
-            st.download_button("📥 PPT", data=ppt_bytes, file_name=f"{title}.pptx",
-                               mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                               key=f"dl_ppt_{state_key}")
+            render_dl("📥 PPT", ppt_bytes, f"{title}.pptx", "pptx", f"dl_ppt_{state_key}")
         with b6:
-            st.download_button("📥 txt", data=create_txt_bytes(title, content), file_name=f"{title}.txt",
-                               mime="text/plain", key=f"dl_txt_{state_key}")
+            render_dl("📥 txt", create_txt_bytes(title, content), f"{title}.txt",
+                      "txt", f"dl_txt_{state_key}")
 
     if st.session_state.get(f"show_copy_{state_key}", False):
         st.info("💡 아래 상자의 텍스트를 복사하여 사용하세요:")
@@ -4653,6 +4706,60 @@ def krv_warn(text: str, where: str = "본문", declared: str = ""):
 # ==============================================================================
 # 오늘의 만나 · 오늘의 말씀 (설교 대시보드 하단 섹션)
 # ==============================================================================
+# ------------------------------------------------------------------------------
+# AI 가 안 될 때 쓰는 '오늘의 만나 / 오늘의 말씀' 기본 자료
+#   ※ 무료 등급 일일 한도(429)나 모델 오류로 AI 가 실패하면, 예전에는 화면이
+#     텅 비고 다운로드 버튼조차 안 생겼습니다. 그래서 실제 개역개정 구절과
+#     실제로 있었던 예화만 모아 두고, AI 가 실패해도 바로 쓸 수 있게 합니다.
+#   ※ 지어낸 이야기는 넣지 않습니다.
+# ------------------------------------------------------------------------------
+# 365일치 자료집 (manna_bank.py) — 구절 84편 × 예화 72편.
+# 서로 다른 주기로 맞물려 돌아, 1년 365일이 모두 다른 조합이 된다.
+try:
+    import manna_bank as MANNA_BANK_MOD
+    HAS_MANNA_BANK = True
+except Exception:
+    MANNA_BANK_MOD = None
+    HAS_MANNA_BANK = False
+
+
+def _bank_pick(date_iso: str, offset: int = 0):
+    try:
+        d0 = datetime.strptime(date_iso, "%Y-%m-%d")
+    except Exception:
+        d0 = datetime.now()
+    doy = d0.timetuple().tm_yday + offset
+    if HAS_MANNA_BANK:
+        try:
+            return MANNA_BANK_MOD.pick(doy)
+        except Exception:
+            pass
+    # 자료집 파일이 없을 때를 대비한 최소 예비본
+    return {"topic": "말씀 앞에서", "ko_ref": "시편 119:105",
+            "ko_verse": "주의 말씀은 내 발에 등이요 내 길에 빛이니이다",
+            "en_ref": "Ps 119:105",
+            "en_verse": "Your word is a lamp for my feet, a light on my path.",
+            "story_title": "비텐베르크의 성문",
+            "story_body": "1517년 10월 31일 마르틴 루터는 비텐베르크 성교회 문에 95개조 "
+                          "반박문을 붙였고, 뒷날 바르트부르크 성에서 신약성경을 독일어로 옮겼다. "
+                          "발밑을 비추는 등불이 소수의 손에서 모두의 손으로 옮겨 갔다."}
+
+
+def build_local_manna(date_iso: str) -> dict:
+    """AI 가 실패해도 오늘의 만나가 비지 않도록, 실제 구절·실제 예화로 채운다."""
+    e = _bank_pick(date_iso, 0)
+    out = dict(e)
+    out["version"] = KRV_DEFAULT
+    return out
+
+
+def build_local_today_verse(date_iso: str) -> dict:
+    """AI 가 실패해도 오늘의 말씀 카드가 비지 않도록 한다."""
+    e = _bank_pick(date_iso, 3)
+    return {"verse": e["ko_verse"], "ref": e["ko_ref"], "version": KRV_DEFAULT,
+            "why": f"오늘은 '{e['topic']}'을(를) 마음에 새기며 하루를 시작해 보십시오."}
+
+
 MANNA_THEMES = [
     "새로운 시작과 변화", "하나님을 신뢰함", "고난 중의 연단", "말이 아닌 행함의 사랑",
     "감사와 기쁨", "인내와 견딤", "겸손", "용서", "말의 능력", "지혜",
@@ -4740,9 +4847,14 @@ def render_manna_section():
                 data = get_ai_response(
                     build_research_prompt(task, "오늘의 말씀", seed_topic),
                     is_json=True, temperature=0.85, kind="manna", max_tokens=4000)
-                if isinstance(data, dict) and data:
+                if isinstance(data, dict) and data.get("ko_verse"):
                     data["version"] = normalize_version(data.get("version"))
                     st.session_state[key] = data
+                else:
+                    # AI 가 안 되더라도 화면이 비지 않게 (다운로드 버튼도 생기도록)
+                    fb = build_local_manna(date_iso)
+                    fb["ai_failed"] = True
+                    st.session_state[key] = fb
             st.rerun()
 
         data = st.session_state.get(key) or {}
@@ -4794,6 +4906,12 @@ def render_manna_section():
         if st.session_state.pop("__manna_saved", False):
             st.success("✅ 저장했습니다. 아래 이미지와 문서가 새로 그려집니다.")
 
+        if data.get("ai_failed"):
+            st.warning(
+                "⚠️ **AI 응답을 받지 못해, 앱이 준비해 둔 기본 말씀과 예화를 먼저 보여 드립니다.**\n\n"
+                "개역개정 본문과 실제로 있었던 예화만 담았으니 그대로 쓰셔도 되고, "
+                "[✍️ 직접 작성 / 수정하기]로 고치셔도 됩니다. "
+                "다시 [✨ AI로 오늘의 만나 생성]을 누르면 AI로 재시도합니다.")
         show_ai_status()
 
         # ── 역본 확인 : 개역개정이 기본, 다르면 이름을 밝힌다
@@ -4810,9 +4928,9 @@ def render_manna_section():
 
         dl1, dl2 = st.columns(2)
         with dl1:
-            st.download_button("📥 이미지(PNG) 내려받기", data=png,
-                               file_name=_safe_filename("오늘의만나", date_iso, manna_org, "png"),
-                               mime="image/png", key=f"dl_manna_{date_iso}")
+            render_dl("📥 이미지(PNG) 내려받기", png,
+                      _safe_filename("오늘의만나", date_iso, manna_org, "png"),
+                      "png", f"dl_manna_{date_iso}")
         with dl2:
             if st.button("🔀 배경 이미지 바꾸기", key=f"manna_shuffle_{date_iso}"):
                 keep_open("manna")
@@ -4943,9 +5061,13 @@ def render_today_word_section():
                     data = get_ai_response(
                         build_research_prompt(task, "오늘의 말씀", seed_topic),
                         is_json=True, temperature=0.9, kind="today_verse", max_tokens=1500)
-                    if isinstance(data, dict):
+                    if isinstance(data, dict) and data.get("verse"):
                         data["version"] = normalize_version(data.get("version"))
-                    st.session_state[key] = data if isinstance(data, dict) else {}
+                        st.session_state[key] = data
+                    else:
+                        fb = build_local_today_verse(date_iso)
+                        fb["ai_failed"] = True
+                        st.session_state[key] = fb
                 st.rerun()
 
         data = st.session_state.get(key) or {}
@@ -4957,6 +5079,10 @@ def render_today_word_section():
                 st.caption("위 버튼을 눌러 오늘의 말씀 카드를 만들어 보세요.")
             return
 
+        if data.get("ai_failed"):
+            st.warning(
+                "⚠️ **AI 응답을 받지 못해, 앱이 준비해 둔 개역개정 구절로 카드를 만들었습니다.**\n\n"
+                "그대로 쓰셔도 되고, 위에서 [직접 입력]을 골라 원하시는 구절로 바꾸셔도 됩니다.")
         show_ai_status()
         if data.get("why"):
             st.caption(f"오늘 이 말씀을 나누는 이유 — {data['why']}")
@@ -4973,10 +5099,9 @@ def render_today_word_section():
         with p1:
             st_image_full(png, caption=f"오늘의 말씀 · {date_iso} · {ver}")
         with p2:
-            st.download_button("📥 말씀카드 PNG 내려받기", data=png,
-                               file_name=_safe_filename("오늘의말씀", date_iso, tw_church, "png"),
-                               mime="image/png",
-                               key=f"dl_tw_{date_iso}")
+            render_dl("📥 말씀카드 PNG 내려받기", png,
+                      _safe_filename("오늘의말씀", date_iso, tw_church, "png"),
+                      "png", f"dl_tw_{date_iso}")
             if st.button("🔀 배경 사진 바꾸기", key=f"tw_shuffle_{date_iso}"):
                 keep_open("todayword")
                 st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
@@ -5312,9 +5437,9 @@ def render_today_prayer_section():
         with p1:
             st_image_full(card, caption=f"오늘의 기도 · {date_iso}")
         with p2:
-            st.download_button("📥 기도 카드 PNG 내려받기", data=card,
-                               file_name=_safe_filename("오늘의기도", date_iso, pr_org, "png"),
-                               mime="image/png", key=f"dl_prayer_{date_iso}")
+            render_dl("📥 기도 카드 PNG 내려받기", card,
+                      _safe_filename("오늘의기도", date_iso, pr_org, "png"),
+                      "png", f"dl_prayer_{date_iso}")
             if st.button("🔀 배경 사진 바꾸기", key=f"pr_shuffle_{date_iso}"):
                 keep_open("prayer")
                 st.session_state.bg_shuffle = int(st.session_state.get("bg_shuffle", 0)) + 1
