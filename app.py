@@ -4475,23 +4475,34 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
 
     # ── 위 버튼이 반응하지 않을 때를 위한 두 번째 경로 (평범한 주소 링크)
     try:
-        links = []
+        save_links, open_links = [], []
         for lab, ext, blob in (
                 ("워드", "docx", create_docx_bytes(title, content)),
                 ("PDF", "pdf", create_pdf_bytes(title, content)),
                 ("PPT", "pptx", ppt_bytes),
                 ("txt", "txt", create_txt_bytes(title, content))):
             u = static_file_url(blob, f"{title}.{ext}", f"{state_key}_{ext}")
-            if u:
-                links.append(f'<a href="{u}" download target="_blank" '
-                             f'style="color:#a5b4fc;font-size:12.5px;">{lab}</a>')
-        if links:
-            st.markdown(
-                "<div style='font-size:12.5px;color:#8b96c4;margin-top:2px;'>"
-                "⬇️ 위 버튼이 눌리지 않으면 여기로 받으세요 — "
-                + " · ".join(links)
-                + "　<span style='color:#6b76a4;'>(그래도 안 되면 브라우저 새로고침 F5)</span>"
-                "</div>", unsafe_allow_html=True)
+            if not u:
+                continue
+            save_links.append(f'<a href="{u}" download '
+                              f'style="color:#c4b5fd;font-weight:700;">{lab}</a>')
+            # PDF·txt 는 새 탭에서 그냥 열린다 → 열린 화면에서 Ctrl+S 로 저장 가능
+            if ext in ("pdf", "txt"):
+                open_links.append(f'<a href="{u}" target="_blank" '
+                                  f'style="color:#7dd3fc;font-weight:700;">{lab}</a>')
+        if save_links:
+            html = ("<div class='lib-card' style='padding:10px 14px;margin:6px 0 2px;'>"
+                    "<div style='font-size:12.5px;color:#e8ecff;'>"
+                    "⬇️ <b>위 버튼이 눌리지 않을 때</b> — 여기로 받으세요 : "
+                    + " · ".join(save_links) + "</div>")
+            if open_links:
+                html += ("<div style='font-size:12px;color:#9aa6d4;margin-top:5px;'>"
+                         "그래도 안 되면 새 탭에서 열어 저장(Ctrl+S) : "
+                         + " · ".join(open_links) + "</div>")
+            html += ("<div style='font-size:11.5px;color:#6b76a4;margin-top:5px;'>"
+                     "모두 안 되면 사이드바 [🩺 다운로드가 안 될 때 (진단)] 를 열어 보세요."
+                     "</div></div>")
+            st.markdown(html, unsafe_allow_html=True)
     except Exception:
         pass
 
@@ -7290,6 +7301,51 @@ with st.sidebar.expander("⚙️ AI 연결 설정", expanded=not bool(get_resolv
             st.caption(f"최근 성공 모델: {st.session_state['_last_good_model']}")
     else:
         st.markdown("<span class='badge-bad'>키 없음 · AI 기능 제한</span>", unsafe_allow_html=True)
+
+# ==============================================================================
+# 다운로드 진단 — "눌러도 아무 반응이 없다" 를 어디서 막히는지 가려낸다
+# ==============================================================================
+with st.sidebar.expander("🩺 다운로드가 안 될 때 (진단)", expanded=False):
+    st.caption("아래 네 가지를 위에서부터 차례로 눌러 보시고, 어디까지 되는지 알려 주세요. "
+               "어느 것이 되고 어느 것이 안 되는지에 따라 원인이 갈립니다.")
+
+    _probe = ("다운로드 점검용 파일입니다.\n"
+              "이 파일이 열렸다면 브라우저가 파일을 받을 수 있는 상태입니다.\n"
+              f"생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n").encode("utf-8")
+
+    st.markdown("**① 가장 단순한 내려받기 (0.1KB)**")
+    st.download_button("① 시험 파일 받기", data=_probe, file_name="다운로드점검.txt",
+                       mime="text/plain", key="diag_dl_btn")
+
+    st.markdown("**② 주소 링크로 내려받기**")
+    _u = static_file_url(_probe, "다운로드점검.txt", "diag_probe")
+    if _u:
+        st.markdown(f'<a href="{_u}" download style="color:#a5b4fc;">② 링크로 받기</a>',
+                    unsafe_allow_html=True)
+        st.markdown("**③ 새 탭에서 열어 보기** (열리면 Ctrl+S 로 저장하실 수 있습니다)")
+        st.markdown(f'<a href="{_u}" target="_blank" style="color:#7dd3fc;">③ 새 탭에서 열기</a>',
+                    unsafe_allow_html=True)
+        st.caption("③ 도 안 열리면 아래 주소를 복사해 새 탭 주소창에 직접 붙여 넣어 보세요.")
+        st.code(_u, language="text")
+    else:
+        st.error("정적 파일 폴더를 만들지 못했습니다. 저장소에 `static` 폴더와 "
+                 "`.streamlit/config.toml` 의 `enableStaticServing = true` 를 확인해 주세요.")
+
+    st.markdown("**④ 파일 없이 글자만 가져가기**")
+    st.caption("위가 모두 안 되더라도, 아래 상자 오른쪽 위 복사 아이콘을 누르면 "
+               "글자를 그대로 가져가 한글이나 워드에 붙여 넣으실 수 있습니다.")
+    st.code(_probe.decode("utf-8"), language="text")
+
+    st.divider()
+    st.caption(
+        "**어디까지 되셨나요?**\n\n"
+        "· ① 만 안 됨 → 앱 임시저장소 문제. ② 로 계속 쓰시면 됩니다\n\n"
+        "· ①②③ 다 안 됨 → 브라우저가 이 사이트의 파일 받기를 막은 것입니다. "
+        "크롬 주소창 오른쪽 끝의 작은 아이콘을 눌러 **'다운로드 허용'** 으로 바꿔 주세요. "
+        "(설정 → 개인정보 및 보안 → 사이트 설정 → 추가 콘텐츠 설정 → **자동 다운로드**)\n\n"
+        "· 카카오톡·네이버 앱 안의 브라우저로 여셨다면 파일 받기가 원래 막혀 있습니다. "
+        "**크롬이나 사파리로 다시 열어** 주세요.")
+
 
 with st.sidebar.expander("🗄️ 설교 서재 저장소", expanded=not cloud_store_ready()):
     if cloud_store_ready():
