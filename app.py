@@ -25,6 +25,7 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = getattr(PIL.Image, 'Resampling', PIL.Image).LANCZOS
 
 import streamlit as st
+import streamlit.components.v1 as components
 import google.generativeai as genai
 import json
 import os
@@ -4402,6 +4403,10 @@ def resolve_static_dir():
     errs = []
     for d in _static_dir_candidates():
         try:
+            # 같은 이름의 '파일'이 있으면 폴더를 만들 수 없다 → 다음 후보로
+            if os.path.exists(d) and not os.path.isdir(d):
+                errs.append(f"{d} → 같은 이름의 파일이 있어 폴더로 못 씀")
+                continue
             os.makedirs(d, exist_ok=True)
             probe = os.path.join(d, ".write_test")
             with open(probe, "wb") as f:
@@ -4462,15 +4467,69 @@ def static_file_url(data: bytes, file_name: str, key: str) -> str:
         return ""
 
 
+DL_EMBED_LIMIT = 20 * 1024 * 1024      # 페이지에 담을 수 있는 최대 크기
+
+
+def _render_html_frame(html: str, height: int):
+    """작은 HTML 조각을 프레임으로 그린다. Streamlit 버전이 바뀌어도 동작하게."""
+    try:
+        components.html(html, height=height)
+        return True
+    except Exception:
+        pass
+    try:                                   # 새 버전(st.iframe)
+        src = "data:text/html;base64," + base64.b64encode(
+            html.encode("utf-8")).decode("ascii")
+        st.iframe(src, height=height)
+        return True
+    except Exception:
+        return False
+
+
 def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
     """
-    다운로드 하나를 그린다.
+    다운로드 버튼 하나를 그린다.
 
-    ※ 한때 data: 링크(파일을 페이지에 직접 담는 방식)를 썼으나,
-      Streamlit 이 보안상 그 주소를 막아 버려 화면에 긴 문자열이 그대로
-      찍히는 문제가 있었다. 그래서 표준 위젯으로 되돌린다.
+    ※ 왜 st.download_button 을 쓰지 않는가
+      그 위젯은 파일을 서버의 '메모리 임시 저장소'에 올려 두고 브라우저에는
+      주소만 넘긴다. Streamlit Cloud 는 앱이 잠들거나 다시 배포될 때 그 저장소를
+      비우기 때문에, 화면은 멀쩡한데 버튼만 아무 반응이 없는 일이 매일같이 생긴다.
+
+      그래서 파일 내용을 페이지 안에 통째로 담아 내려받게 한다.
+      st.markdown 은 보안 규칙 때문에 이 방식을 막지만, 컴포넌트 프레임
+      (components.html) 안에서는 허용된다(sandbox 에 allow-downloads 가 있음).
+      서버 사정과 무관하므로 언제 눌러도 반드시 받아진다.
     """
-    st.download_button(label, data=data or b"", file_name=file_name,
+    blob = data or b""
+    try:
+        if 0 < len(blob) <= DL_EMBED_LIMIT:
+            b64 = base64.b64encode(blob).decode("ascii")
+            mime = DL_MIME.get(ext, "application/octet-stream")
+            nm = (str(file_name).replace("&", "&amp;").replace('"', "&quot;")
+                  .replace("<", "&lt;").replace(">", "&gt;"))
+            lb = (str(label).replace("&", "&amp;")
+                  .replace("<", "&lt;").replace(">", "&gt;"))
+            _html = (
+                "<style>"
+                "html,body{margin:0;padding:0;background:transparent;overflow:hidden;}"
+                "a.dlb{display:flex;align-items:center;justify-content:center;"
+                "width:100%;height:38px;box-sizing:border-box;"
+                "border:1px solid rgba(148,163,255,.35);border-radius:8px;"
+                "background:rgba(148,163,255,.10);color:#eef2ff;"
+                "font:600 13.5px/1.2 'Pretendard','Malgun Gothic',sans-serif;"
+                "text-decoration:none;white-space:nowrap;overflow:hidden;"
+                "text-overflow:ellipsis;padding:0 6px;cursor:pointer;}"
+                "a.dlb:hover{background:rgba(148,163,255,.26);border-color:#a78bfa;}"
+                "a.dlb:active{transform:translateY(1px);}"
+                "</style>"
+                f'<a class="dlb" download="{nm}" title="{nm}" '
+                f'href="data:{mime};base64,{b64}">{lb}</a>')
+            _render_html_frame(_html, 44)
+            return
+    except Exception:
+        pass
+    # 담기에 너무 크거나 실패하면 표준 위젯으로
+    st.download_button(label, data=blob, file_name=file_name,
                        mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
 
 
