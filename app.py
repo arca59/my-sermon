@@ -4461,7 +4461,10 @@ def static_file_url(data: bytes, file_name: str, key: str) -> str:
                 f.write(data or b"")
             _static_cleanup(d)
         _STATIC_ERR = ""
-        return "app/static/" + urllib.parse.quote(disk)
+        # 루트 기준 절대 경로로 돌려준다.
+        # "app/static/..." (상대경로)는 페이지 주소가 root 가 아닐 때 엉뚱한 곳을
+        # 가리켜 404 가 난다 → 크롬이 "사이트에서 사용할 수 없는 파일" 이라고 표시.
+        return "/app/static/" + urllib.parse.quote(disk)
     except Exception as e:
         _STATIC_ERR = f"{type(e).__name__}: {str(e)[:120]}"
         return ""
@@ -4497,6 +4500,23 @@ def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
       그때는 아래쪽 [위 버튼이 눌리지 않을 때] 줄의 예비 링크로 받으면 된다.
     """
     blob = data or b""
+
+    # ── 1순위 : 보통 https 주소 링크 (오른쪽 클릭 저장도 가능)
+    try:
+        url = static_file_url(blob, file_name, key)
+        if url:
+            nm = (str(file_name).replace("&", "&amp;").replace('"', "&quot;")
+                  .replace("<", "&lt;").replace(">", "&gt;"))
+            lb = (str(label).replace("&", "&amp;")
+                  .replace("<", "&lt;").replace(">", "&gt;"))
+            st.markdown(
+                f'<a class="dlbtn" href="{url}" download="{nm}" title="{nm}">{lb}</a>',
+                unsafe_allow_html=True)
+            return
+    except Exception:
+        pass
+
+    # ── 2순위 : 표준 위젯
     try:
         st.download_button(label, data=blob, file_name=file_name,
                            mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
