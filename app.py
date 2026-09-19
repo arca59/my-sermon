@@ -4372,7 +4372,8 @@ DL_MIME = {
 #   (.streamlit/config.toml 에 enableStaticServing = true 필요)
 #   서버 임시저장소를 거치지 않으므로, 앱이 잠들었다 깨어나도 주소가 살아 있다.
 # ------------------------------------------------------------------------------
-STATIC_KEEP = 80          # 이 폴더에 남겨 둘 최대 파일 수
+STATIC_KEEP = 600         # 이 폴더에 남겨 둘 최대 파일 수
+STATIC_MIN_AGE = 1800     # 만든 지 이 시간(초) 안 된 파일은 절대 지우지 않는다
 _STATIC_ERR = ""          # 마지막 실패 사유 (진단 화면에 그대로 보여 준다)
 
 
@@ -4431,43 +4432,16 @@ def _static_cleanup(d: str):
         if len(files) <= STATIC_KEEP:
             return
         files.sort()
-        for _, p in files[:len(files) - STATIC_KEEP]:
+        now = time.time()
+        for mt, p in files[:len(files) - STATIC_KEEP]:
+            if now - mt < STATIC_MIN_AGE:      # 방금 만든 파일은 건드리지 않는다
+                continue
             try:
                 os.remove(p)
             except Exception:
                 pass
     except Exception:
         pass
-
-
-def static_file_url(data: bytes, file_name: str, key: str) -> str:
-    """
-    파일을 static 폴더에 실제로 써 두고, 보통 웹주소를 돌려준다.
-    실패하면 빈 문자열을 돌려주고 사유를 _STATIC_ERR 에 남긴다.
-    """
-    global _STATIC_ERR
-    d, err = resolve_static_dir()
-    if not d:
-        _STATIC_ERR = err
-        return ""
-    try:
-        safe = re.sub(r'[\\/:*?"<>|]+', "_", str(file_name)).strip() or "file"
-        stamp = hashlib.sha256((key + safe).encode("utf-8", "ignore")).hexdigest()[:8]
-        base, dot, tail = safe.rpartition(".")
-        disk = f"{base}_{stamp}.{tail}" if dot else f"{safe}_{stamp}"
-        path = os.path.join(d, disk)
-        if (not os.path.exists(path)) or os.path.getsize(path) != len(data or b""):
-            with open(path, "wb") as f:
-                f.write(data or b"")
-            _static_cleanup(d)
-        _STATIC_ERR = ""
-        # 루트 기준 절대 경로로 돌려준다.
-        # "app/static/..." (상대경로)는 페이지 주소가 root 가 아닐 때 엉뚱한 곳을
-        # 가리켜 404 가 난다 → 크롬이 "사이트에서 사용할 수 없는 파일" 이라고 표시.
-        return "/app/static/" + urllib.parse.quote(disk)
-    except Exception as e:
-        _STATIC_ERR = f"{type(e).__name__}: {str(e)[:120]}"
-        return ""
 
 
 DL_EMBED_LIMIT = 20 * 1024 * 1024      # 페이지에 담을 수 있는 최대 크기
@@ -4487,6 +4461,66 @@ def _render_html_frame(html: str, height: int):
         return True
     except Exception:
         return False
+
+
+def static_file_url(data: bytes, file_name: str, key: str) -> str:
+    """
+    파일을 static 폴더에 써 두고 '보통 https 주소'를 돌려준다.
+
+    ※ 파일이 깨지지 않도록 세 가지를 지킨다
+      1) 파일 이름에 '내용의 지문(해시)'을 넣는다.
+         → 내용이 바뀌면 이름도 바뀌므로, 옛 내용이 섞여 나올 수 없다.
+      2) 임시 이름으로 다 쓴 뒤 한 번에 이름을 바꾼다(원자적 쓰기).
+         → 쓰는 도중에 받아 가서 반쪽짜리 파일이 되는 일이 없다.
+      3) 방금 만든 파일은 절대 지우지 않는다.
+    """
+    global _STATIC_ERR
+    d, err = resolve_static_dir()
+    if not d:
+        _STATIC_ERR = err
+        return ""
+    blob = data or b""
+    if not blob:
+        return ""
+    try:
+        safe = re.sub(r'[\\/:*?"<>|]+', "_", str(file_name)).strip() or "file"
+        base, dot, tail = safe.rpartition(".")
+        if not dot:
+            base, tail = safe, "bin"
+        # 내용 지문 — 내용이 같으면 같은 파일, 다르면 반드시 다른 파일
+        stamp = hashlib.sha256(blob).hexdigest()[:12]
+        disk = f"{base}_{stamp}.{tail}"
+        path = os.path.join(d, disk)
+
+        need_write = True
+        try:
+            if os.path.exists(path) and os.path.getsize(path) == len(blob):
+                need_write = False
+        except Exception:
+            pass
+
+        if need_write:
+            tmp = os.path.join(d, f".tmp_{stamp}_{os.getpid()}")
+            with open(tmp, "wb") as f:
+                f.write(blob)
+                f.flush()
+                try:
+                    os.fsync(f.fileno())
+                except Exception:
+                    pass
+            os.replace(tmp, path)          # 한 번에 교체 — 반쪽 파일이 안 생긴다
+            _static_cleanup(d)
+        try:
+            os.utime(path, None)           # 최근에 쓴 파일로 표시(정리에서 보호)
+        except Exception:
+            pass
+
+        _STATIC_ERR = ""
+        # 루트 기준 절대 경로 (페이지 주소와 무관하게 항상 같은 곳을 가리킨다)
+        return "/app/static/" + urllib.parse.quote(disk)
+    except Exception as e:
+        _STATIC_ERR = f"{type(e).__name__}: {str(e)[:120]}"
+        return ""
 
 
 def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
