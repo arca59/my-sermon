@@ -4490,17 +4490,40 @@ def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
     """
     다운로드 버튼 하나를 그린다.
 
-    ※ 왜 st.download_button 을 쓰지 않는가
-      그 위젯은 파일을 서버의 '메모리 임시 저장소'에 올려 두고 브라우저에는
-      주소만 넘긴다. Streamlit Cloud 는 앱이 잠들거나 다시 배포될 때 그 저장소를
-      비우기 때문에, 화면은 멀쩡한데 버튼만 아무 반응이 없는 일이 매일같이 생긴다.
-
-      그래서 파일 내용을 페이지 안에 통째로 담아 내려받게 한다.
-      st.markdown 은 보안 규칙 때문에 이 방식을 막지만, 컴포넌트 프레임
-      (components.html) 안에서는 허용된다(sandbox 에 allow-downloads 가 있음).
-      서버 사정과 무관하므로 언제 눌러도 반드시 받아진다.
+    ※ 순서가 중요하다 — 브라우저가 막지 않는 방법부터 쓴다
+      1순위) static 폴더에 파일을 써 두고 '보통 https 주소'로 받게 한다.
+             가장 평범한 링크라서 어떤 브라우저도 막지 않고,
+             파일이 디스크에 있으므로 앱이 잠들었다 깨어나도 주소가 살아 있다.
+      2순위) 그게 안 되면 표준 위젯(st.download_button).
+      3순위) 그것도 안 되면 파일을 페이지에 담는 방식(data: 링크).
+             ※ 일부 PC의 크롬은 data: 다운로드를 차단한다. 그래서 맨 뒤로 뺐다.
     """
     blob = data or b""
+
+    # ── 1순위 : 보통 주소 링크
+    try:
+        url = static_file_url(blob, file_name, key)
+        if url:
+            nm = (str(file_name).replace("&", "&amp;").replace('"', "&quot;")
+                  .replace("<", "&lt;").replace(">", "&gt;"))
+            lb = (str(label).replace("&", "&amp;")
+                  .replace("<", "&lt;").replace(">", "&gt;"))
+            st.markdown(
+                f'<a class="dlbtn" href="{url}" download="{nm}" title="{nm}">{lb}</a>',
+                unsafe_allow_html=True)
+            return
+    except Exception:
+        pass
+
+    # ── 2순위 : 표준 위젯
+    try:
+        st.download_button(label, data=blob, file_name=file_name,
+                           mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
+        return
+    except Exception:
+        pass
+
+    # ── 3순위 : 페이지에 담아서 (data: 링크)
     try:
         if 0 < len(blob) <= DL_EMBED_LIMIT:
             b64 = base64.b64encode(blob).decode("ascii")
@@ -4520,17 +4543,12 @@ def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
                 "text-decoration:none;white-space:nowrap;overflow:hidden;"
                 "text-overflow:ellipsis;padding:0 6px;cursor:pointer;}"
                 "a.dlb:hover{background:rgba(148,163,255,.26);border-color:#a78bfa;}"
-                "a.dlb:active{transform:translateY(1px);}"
                 "</style>"
                 f'<a class="dlb" download="{nm}" title="{nm}" '
                 f'href="data:{mime};base64,{b64}">{lb}</a>')
             _render_html_frame(_html, 44)
-            return
     except Exception:
         pass
-    # 담기에 너무 크거나 실패하면 표준 위젯으로
-    st.download_button(label, data=blob, file_name=file_name,
-                       mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
 
 
 def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mode: str = "doc",
@@ -4591,7 +4609,7 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
             save_links.append(f'<a href="{u}" download '
                               f'style="color:#c4b5fd;font-weight:700;">{lab}</a>')
             # PDF·txt 는 새 탭에서 그냥 열린다 → 열린 화면에서 Ctrl+S 로 저장 가능
-            if ext in ("pdf", "txt"):
+            if ext in ("pdf", "txt", "docx", "pptx"):
                 open_links.append(f'<a href="{u}" target="_blank" '
                                   f'style="color:#7dd3fc;font-weight:700;">{lab}</a>')
         if save_links:
@@ -4603,6 +4621,9 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
                 html += ("<div style='font-size:12px;color:#9aa6d4;margin-top:5px;'>"
                          "그래도 안 되면 새 탭에서 열어 저장(Ctrl+S) : "
                          + " · ".join(open_links) + "</div>")
+            html += ("<div style='font-size:12px;color:#9aa6d4;margin-top:5px;'>"
+                     "크롬이 막을 때는 링크에 <b>오른쪽 클릭 → 다른 이름으로 링크 저장</b> "
+                     "하시면 반드시 받아집니다.</div>")
             html += ("<div style='font-size:11.5px;color:#6b76a4;margin-top:5px;'>"
                      "모두 안 되면 사이드바 [🩺 다운로드가 안 될 때 (진단)] 를 열어 보세요."
                      "</div></div>")
