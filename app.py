@@ -4364,6 +4364,11 @@ DL_MIME = {
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "txt":  "text/plain;charset=utf-8",
     "png":  "image/png",
+    "csv":  "text/csv;charset=utf-8",
+    "zip":  "application/zip",
+    "mp3":  "audio/mpeg",
+    "mp4":  "video/mp4",
+    "json": "application/json;charset=utf-8",
 }
 
 # ------------------------------------------------------------------------------
@@ -4467,12 +4472,57 @@ def static_file_url(data: bytes, file_name: str, key: str) -> str:
         return ""
 
 
-def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
+def _download_filename(file_name: str, ext: str = "") -> str:
+    """브라우저와 Windows에서 모두 안전한 다운로드 파일명을 만든다."""
+    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", str(file_name or "")).strip(" ._")
+    suffix = str(ext or "").lower().lstrip(".")
+    if not name:
+        name = f"download.{suffix}" if suffix else "download"
+    elif suffix and not name.lower().endswith(f".{suffix}"):
+        name += f".{suffix}"
+    return name[:180]
+
+
+def _download_bytes(data) -> bytes:
+    """bytes/BytesIO/문자열을 st.download_button이 안정적으로 받는 bytes로 통일한다."""
+    if data is None:
+        return b""
+    if isinstance(data, bytes):
+        return data
+    if isinstance(data, bytearray):
+        return bytes(data)
+    if isinstance(data, str):
+        return data.encode("utf-8")
+    if hasattr(data, "getvalue"):
+        value = data.getvalue()
+        return value.encode("utf-8") if isinstance(value, str) else bytes(value)
+    return bytes(data)
+
+
+def render_dl(label: str, data, file_name: str, ext: str, key: str, mime: str = ""):
     """
-    다운로드 버튼 하나를 그린다. (Streamlit 표준 위젯)
+    앱 전체에서 쓰는 단일 다운로드 버튼.
+
+    Streamlit의 기본값은 다운로드 클릭 때 앱 전체를 즉시 rerun한다. 큰 문서나
+    네트워크가 느린 날에는 브라우저가 파일을 받기 전에 링크가 교체되어 버튼이
+    무반응처럼 보일 수 있다. 최신 버전에서는 on_click="ignore"로 그 rerun을
+    막고, 구버전에서는 해당 인자를 빼서 호환한다.
     """
-    st.download_button(label, data=data or b"", file_name=file_name,
-                       mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
+    payload = _download_bytes(data)
+    kwargs = dict(
+        label=label,
+        data=payload,
+        file_name=_download_filename(file_name, ext),
+        mime=mime or DL_MIME.get(str(ext).lower().lstrip("."), "application/octet-stream"),
+        key=key,
+    )
+    try:
+        return st.download_button(**kwargs, on_click="ignore")
+    except TypeError as exc:
+        # Streamlit 구버전은 on_click 인자를 지원하지 않는다.
+        if "on_click" not in str(exc):
+            raise
+        return st.download_button(**kwargs)
 
 
 def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mode: str = "doc",
@@ -5796,9 +5846,9 @@ def render_context_section(scripture: str, topic: str, theology: str):
                                      json.dumps(d.get("outline", []), ensure_ascii=False),
                                      json.dumps(d.get("timeline", []), ensure_ascii=False))
         st_image_full(png, caption=f"{scripture} 단락 구조 · 연대표")
-        st.download_button("📥 도해 이미지(PNG) 내려받기", data=png,
-                           file_name=f"{scripture}_구조도해.png", mime="image/png",
-                           key=f"dl_diag_{abs(hash(scripture)) % 9999}")
+        render_dl("📥 도해 이미지(PNG) 내려받기", png,
+                  f"{scripture}_구조도해.png", "png",
+                  f"dl_diag_{abs(hash(scripture)) % 9999}")
 
         if d.get("outline"):
             st.markdown("#### 🧩 단락 나누기")
@@ -6149,9 +6199,9 @@ def render_bible_qa_section(scripture: str, topic: str, theology: str):
                 json.dumps(d.get("senses", []), ensure_ascii=False),
                 json.dumps(d.get("usage_stats", []), ensure_ascii=False))
             st_image_full(png, caption=f"성경 Q&A · {d.get('headword','')}")
-            st.download_button("📥 도해 이미지(PNG) 내려받기", data=png,
-                               file_name=f"성경QA_{re.sub(r'[^가-힣A-Za-z0-9]+','_', str(d.get('headword','결과')))[:24]}.png",
-                               mime="image/png", key=f"dl_qa_{qkey}")
+            render_dl("📥 도해 이미지(PNG) 내려받기", png,
+                      f"성경QA_{re.sub(r'[^가-힣A-Za-z0-9]+','_', str(d.get('headword','결과')))[:24]}.png",
+                      "png", f"dl_qa_{qkey}")
 
         # ── 뜻 갈래
         if d.get("senses"):
@@ -6910,9 +6960,9 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
 
         cv1, cv2 = st.columns(2)
         with cv1:
-            st.download_button("📥 표지 이미지(PNG)", data=cover,
-                               file_name=f"시사주간뉴스_표지_{win_e.strftime('%Y%m%d')}.png",
-                               mime="image/png", key=f"dl_newscover_{nkey}")
+            render_dl("📥 표지 이미지(PNG)", cover,
+                      f"시사주간뉴스_표지_{win_e.strftime('%Y%m%d')}.png",
+                      "png", f"dl_newscover_{nkey}")
         with cv2:
             if st.button("🔀 표지 배경 바꾸기", key=f"news_shuffle_{nkey}"):
                 keep_open("news")
@@ -6927,9 +6977,9 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
                                       json.dumps(kws, ensure_ascii=False))
         st.markdown("#### 📊 이번 주 통계")
         st_image_full(chart, caption="섹션별 기사 수 · 이번 주 키워드")
-        st.download_button("📥 통계 그래프(PNG)", data=chart,
-                           file_name=f"시사주간뉴스_통계_{win_e.strftime('%Y%m%d')}.png",
-                           mime="image/png", key=f"dl_newschart_{nkey}")
+        render_dl("📥 통계 그래프(PNG)", chart,
+                  f"시사주간뉴스_통계_{win_e.strftime('%Y%m%d')}.png",
+                  "png", f"dl_newschart_{nkey}")
 
         if kws:
             st.markdown("**이번 주 키워드** &nbsp; " + " ".join(
@@ -7126,10 +7176,10 @@ def render_version_compare_section(scripture: str, topic: str, theology: str):
             w = _csv.DictWriter(buf, fieldnames=list(table[0].keys()))
             w.writeheader()
             w.writerows(table)
-            st.download_button("📥 표 그대로 내려받기 (CSV · 엑셀에서 열기)",
-                               data=("﻿" + buf.getvalue()).encode("utf-8"),
-                               file_name=f"{scripture}_번역본비교.csv", mime="text/csv",
-                               key=f"dl_vercsv_{abs(hash(scripture)) % 9999}")
+            render_dl("📥 표 그대로 내려받기 (CSV · 엑셀에서 열기)",
+                      ("﻿" + buf.getvalue()).encode("utf-8"),
+                      f"{scripture}_번역본비교.csv", "csv",
+                      f"dl_vercsv_{abs(hash(scripture)) % 9999}")
         except Exception:
             pass
 
@@ -7363,8 +7413,7 @@ with st.sidebar.expander("🩺 다운로드가 안 될 때 (진단)", expanded=F
               f"생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n").encode("utf-8")
 
     st.markdown("**① 가장 단순한 내려받기 (0.1KB)**")
-    st.download_button("① 시험 파일 받기", data=_probe, file_name="다운로드점검.txt",
-                       mime="text/plain", key="diag_dl_btn")
+    render_dl("① 시험 파일 받기", _probe, "다운로드점검.txt", "txt", "diag_dl_btn")
 
     st.markdown("**② 주소 링크로 내려받기**")
     _u = static_file_url(_probe, "다운로드점검.txt", "diag_probe")
@@ -7723,20 +7772,19 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 if st.session_state.get("card_list"):
                     cj = json.dumps(st.session_state.card_list, ensure_ascii=False)
                     with e2:
-                        st.download_button("📥 PPT 전체",
-                                           data=generate_cardnews_pptx_bytes(cj, st.session_state.cn_church_name,
-                                                                             bg_seed(0), current_bg_theme(),
-                                                                             st.session_state.sermon_scripture),
-                                           file_name=f"{st.session_state.sermon_title}_카드뉴스.pptx",
-                                           mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                                           key="cn_dl_ppt")
+                        render_dl("📥 PPT 전체",
+                                  generate_cardnews_pptx_bytes(cj, st.session_state.cn_church_name,
+                                                                bg_seed(0), current_bg_theme(),
+                                                                st.session_state.sermon_scripture),
+                                  f"{st.session_state.sermon_title}_카드뉴스.pptx",
+                                  "pptx", "cn_dl_ppt")
                     with e3:
-                        st.download_button("📦 전체 PNG",
-                                           data=generate_cardnews_zip_bytes(cj, st.session_state.sermon_scripture,
-                                                                            st.session_state.cn_church_name,
-                                                                            bg_seed(0), current_bg_theme()),
-                                           file_name=f"{st.session_state.sermon_title}_카드뉴스.zip",
-                                           mime="application/zip", key="cn_dl_zip")
+                        render_dl("📦 전체 PNG",
+                                  generate_cardnews_zip_bytes(cj, st.session_state.sermon_scripture,
+                                                               st.session_state.cn_church_name,
+                                                               bg_seed(0), current_bg_theme()),
+                                  f"{st.session_state.sermon_title}_카드뉴스.zip",
+                                  "zip", "cn_dl_zip")
 
             o1, o2 = st.columns([1, 1])
             with o1:
@@ -7799,9 +7847,9 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.session_state.sermon_scripture, st.session_state.cn_church_name,
                         f"{bg_seed(0)}|{idx}", current_bg_theme())
                     st_image_full(png, caption=f"{idx+1} / {total} — 실제 다운로드 결과와 동일")
-                    st.download_button(f"🖼️ CARD {idx+1} PNG 다운로드", data=png,
-                                       file_name=f"{st.session_state.sermon_title}_card_{idx+1}.png",
-                                       mime="image/png", key=f"dl_card_{idx}")
+                    render_dl(f"🖼️ CARD {idx+1} PNG 다운로드", png,
+                              f"{st.session_state.sermon_title}_card_{idx+1}.png",
+                              "png", f"dl_card_{idx}")
 
                 st.write("---")
                 st.markdown("#### 인스타그램 캡션")
@@ -8188,9 +8236,9 @@ elif app_mode == "🎙️ AI 보이스오버 스튜디오":
         if p and os.path.exists(p):
             st.audio(p)
             with open(p, "rb") as af:
-                st.download_button("📥 MP3 다운로드", data=af.read(),
-                                   file_name=f"{st.session_state.sermon_title}_voice.mp3",
-                                   mime="audio/mp3", key="dl_vo_mp3")
+                render_dl("📥 MP3 다운로드", af.read(),
+                          f"{st.session_state.sermon_title}_voice.mp3",
+                          "mp3", "dl_vo_mp3")
         else:
             st.info("왼쪽에서 생성하면 이곳에 플레이어가 나타납니다.")
 
@@ -8247,8 +8295,8 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                 st.video(r)
             with v2:
                 with open(r, "rb") as f:
-                    st.download_button("📥 MP4 다운로드", data=f.read(),
-                                       file_name=f"{yt_title}_shorts.mp4", mime="video/mp4", key="dl_yt")
+                    render_dl("📥 MP4 다운로드", f.read(),
+                              f"{yt_title}_shorts.mp4", "mp4", "dl_yt")
 
     with tab_ai:
         s1, s2, s3 = st.columns(3)
@@ -8335,8 +8383,8 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
             if out and os.path.exists(out):
                 st.video(out)
                 with open(out, "rb") as vf:
-                    st.download_button("📥 MP4 다운로드", data=vf.read(), file_name="sermon_shorts.mp4",
-                                       mime="video/mp4", key="dl_shorts_mp4")
+                    render_dl("📥 MP4 다운로드", vf.read(),
+                              "sermon_shorts.mp4", "mp4", "dl_shorts_mp4")
             else:
                 st.info("렌더링하면 이곳에 영상이 나타납니다.")
 
@@ -8399,9 +8447,9 @@ elif app_mode == "📷 말씀카드 이미지":
         png = generate_verse_card_png(v_text, v_scrip, bg_opt, up_file, fsize, lspace,
                                       fcolor, scolor, opacity, v_church, bg_index=bg_i)
         st_image_full(png.getvalue(), caption="1:1 고화질 말씀카드")
-        st.download_button("📥 PNG 다운로드", data=png.getvalue(),
-                           file_name=f"{st.session_state.sermon_title}_말씀카드.png",
-                           mime="image/png", key="dl_verse_card")
+        render_dl("📥 PNG 다운로드", png.getvalue(),
+                  f"{st.session_state.sermon_title}_말씀카드.png",
+                  "png", "dl_verse_card")
 
 
 # ==============================================================================
@@ -8428,10 +8476,10 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
     with t2:
         k1, k2 = st.columns(2)
         with k1:
-            st.download_button("💾 전체 백업(.json)",
-                               data=json.dumps(sermons_db, ensure_ascii=False, indent=2).encode('utf-8'),
-                               file_name=f"설교서재_백업_{datetime.now().strftime('%Y%m%d')}.json",
-                               mime="application/json", key="dl_backup")
+            render_dl("💾 전체 백업(.json)",
+                      json.dumps(sermons_db, ensure_ascii=False, indent=2).encode('utf-8'),
+                      f"설교서재_백업_{datetime.now().strftime('%Y%m%d')}.json",
+                      "json", "dl_backup")
         with k2:
             with st.popover("📂 백업 복원"):
                 rf = st.file_uploader("백업 JSON", type=["json"], key="up_restore")
