@@ -4490,65 +4490,49 @@ def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
     """
     다운로드 버튼 하나를 그린다.
 
-    ※ 순서가 중요하다 — 브라우저가 막지 않는 방법부터 쓴다
-      1순위) static 폴더에 파일을 써 두고 '보통 https 주소'로 받게 한다.
-             가장 평범한 링크라서 어떤 브라우저도 막지 않고,
-             파일이 디스크에 있으므로 앱이 잠들었다 깨어나도 주소가 살아 있다.
-      2순위) 그게 안 되면 표준 위젯(st.download_button).
-      3순위) 그것도 안 되면 파일을 페이지에 담는 방식(data: 링크).
-             ※ 일부 PC의 크롬은 data: 다운로드를 차단한다. 그래서 맨 뒤로 뺐다.
+    ※ 1순위는 Streamlit 표준 위젯(st.download_button) 이다.
+      - 주소가 https://.../media/... 형태의 '평범한 주소'라 어떤 브라우저도 막지 않는다.
+      - 저장소에 따로 폴더를 만들거나 설정을 건드릴 필요가 없다.
+      약점은 앱이 오래 잠들었다 깨어난 직후 주소가 만료되는 것인데,
+      그때는 아래쪽 [위 버튼이 눌리지 않을 때] 줄의 예비 링크로 받으면 된다.
     """
     blob = data or b""
-
-    # ── 1순위 : 보통 주소 링크
-    try:
-        url = static_file_url(blob, file_name, key)
-        if url:
-            nm = (str(file_name).replace("&", "&amp;").replace('"', "&quot;")
-                  .replace("<", "&lt;").replace(">", "&gt;"))
-            lb = (str(label).replace("&", "&amp;")
-                  .replace("<", "&lt;").replace(">", "&gt;"))
-            st.markdown(
-                f'<a class="dlbtn" href="{url}" download="{nm}" title="{nm}">{lb}</a>',
-                unsafe_allow_html=True)
-            return
-    except Exception:
-        pass
-
-    # ── 2순위 : 표준 위젯
     try:
         st.download_button(label, data=blob, file_name=file_name,
                            mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
         return
     except Exception:
         pass
-
-    # ── 3순위 : 페이지에 담아서 (data: 링크)
+    # 표준 위젯이 실패하면 파일을 페이지에 담아서
     try:
         if 0 < len(blob) <= DL_EMBED_LIMIT:
-            b64 = base64.b64encode(blob).decode("ascii")
-            mime = DL_MIME.get(ext, "application/octet-stream")
-            nm = (str(file_name).replace("&", "&amp;").replace('"', "&quot;")
-                  .replace("<", "&lt;").replace(">", "&gt;"))
-            lb = (str(label).replace("&", "&amp;")
-                  .replace("<", "&lt;").replace(">", "&gt;"))
-            _html = (
-                "<style>"
-                "html,body{margin:0;padding:0;background:transparent;overflow:hidden;}"
-                "a.dlb{display:flex;align-items:center;justify-content:center;"
-                "width:100%;height:38px;box-sizing:border-box;"
-                "border:1px solid rgba(148,163,255,.35);border-radius:8px;"
-                "background:rgba(148,163,255,.10);color:#eef2ff;"
-                "font:600 13.5px/1.2 'Pretendard','Malgun Gothic',sans-serif;"
-                "text-decoration:none;white-space:nowrap;overflow:hidden;"
-                "text-overflow:ellipsis;padding:0 6px;cursor:pointer;}"
-                "a.dlb:hover{background:rgba(148,163,255,.26);border-color:#a78bfa;}"
-                "</style>"
-                f'<a class="dlb" download="{nm}" title="{nm}" '
-                f'href="data:{mime};base64,{b64}">{lb}</a>')
-            _render_html_frame(_html, 44)
+            _render_html_frame(_embed_link_html([(label, file_name, ext, blob)]), 44)
     except Exception:
         pass
+
+
+def _embed_link_html(items):
+    """파일 내용을 페이지에 담은 링크들을 한 덩어리 HTML 로 만든다."""
+    parts = [
+        "<style>"
+        "html,body{margin:0;padding:0;background:transparent;overflow:hidden;"
+        "font:600 12.5px/1.4 'Pretendard','Malgun Gothic',sans-serif;}"
+        ".row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}"
+        "a.dlb{display:inline-flex;align-items:center;justify-content:center;"
+        "padding:5px 12px;border:1px solid rgba(148,163,255,.45);border-radius:7px;"
+        "background:rgba(148,163,255,.14);color:#dfe5ff;text-decoration:none;}"
+        "a.dlb:hover{background:rgba(148,163,255,.3);border-color:#a78bfa;}"
+        "</style><div class='row'>"]
+    for label, fname, ext, blob in items:
+        b64 = base64.b64encode(blob or b"").decode("ascii")
+        mime = DL_MIME.get(ext, "application/octet-stream")
+        nm = (str(fname).replace("&", "&amp;").replace('"', "&quot;")
+              .replace("<", "&lt;").replace(">", "&gt;"))
+        lb = str(label).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        parts.append(f'<a class="dlb" download="{nm}" title="{nm}" '
+                     f'href="data:{mime};base64,{b64}">{lb}</a>')
+    parts.append("</div>")
+    return "".join(parts)
 
 
 def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mode: str = "doc",
@@ -4595,39 +4579,38 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
             render_dl("📥 txt", create_txt_bytes(title, content), f"{title}.txt",
                       "txt", f"dl_txt_{state_key}")
 
-    # ── 위 버튼이 반응하지 않을 때를 위한 두 번째 경로 (평범한 주소 링크)
+    # ── 위 버튼이 반응하지 않을 때를 위한 예비 경로 (두 가지를 모두 제공)
     try:
-        save_links, open_links = [], []
-        for lab, ext, blob in (
-                ("워드", "docx", create_docx_bytes(title, content)),
-                ("PDF", "pdf", create_pdf_bytes(title, content)),
-                ("PPT", "pptx", ppt_bytes),
-                ("txt", "txt", create_txt_bytes(title, content))):
-            u = static_file_url(blob, f"{title}.{ext}", f"{state_key}_{ext}")
-            if not u:
-                continue
-            save_links.append(f'<a href="{u}" download '
-                              f'style="color:#c4b5fd;font-weight:700;">{lab}</a>')
-            # PDF·txt 는 새 탭에서 그냥 열린다 → 열린 화면에서 Ctrl+S 로 저장 가능
-            if ext in ("pdf", "txt", "docx", "pptx"):
-                open_links.append(f'<a href="{u}" target="_blank" '
-                                  f'style="color:#7dd3fc;font-weight:700;">{lab}</a>')
-        if save_links:
-            html = ("<div class='lib-card' style='padding:10px 14px;margin:6px 0 2px;'>"
-                    "<div style='font-size:12.5px;color:#e8ecff;'>"
-                    "⬇️ <b>위 버튼이 눌리지 않을 때</b> — 여기로 받으세요 : "
-                    + " · ".join(save_links) + "</div>")
-            if open_links:
-                html += ("<div style='font-size:12px;color:#9aa6d4;margin-top:5px;'>"
-                         "그래도 안 되면 새 탭에서 열어 저장(Ctrl+S) : "
-                         + " · ".join(open_links) + "</div>")
-            html += ("<div style='font-size:12px;color:#9aa6d4;margin-top:5px;'>"
-                     "크롬이 막을 때는 링크에 <b>오른쪽 클릭 → 다른 이름으로 링크 저장</b> "
-                     "하시면 반드시 받아집니다.</div>")
-            html += ("<div style='font-size:11.5px;color:#6b76a4;margin-top:5px;'>"
-                     "모두 안 되면 사이드바 [🩺 다운로드가 안 될 때 (진단)] 를 열어 보세요."
-                     "</div></div>")
-            st.markdown(html, unsafe_allow_html=True)
+        blobs = [("📄 워드", f"{title}.docx", "docx", create_docx_bytes(title, content)),
+                 ("📕 PDF", f"{title}.pdf", "pdf", create_pdf_bytes(title, content)),
+                 ("📊 PPT", f"{title}.pptx", "pptx", ppt_bytes),
+                 ("📝 txt", f"{title}.txt", "txt", create_txt_bytes(title, content))]
+
+        st.markdown(
+            "<div style='font-size:12.5px;color:#e8ecff;margin:8px 0 2px;'>"
+            "⬇️ <b>위 버튼이 눌리지 않을 때</b> — 아래 예비 링크로 받으세요</div>",
+            unsafe_allow_html=True)
+
+        # 방법 A : 파일을 화면 안에 담아 보내기 (서버 사정과 무관)
+        total = sum(len(b or b"") for _, _, _, b in blobs)
+        if 0 < total <= DL_EMBED_LIMIT:
+            _render_html_frame(_embed_link_html(blobs), 46)
+
+        # 방법 B : 보통 주소 링크 (저장소에 static 폴더가 있을 때만 나타남)
+        links = []
+        for lab, fname, ext, blob in blobs:
+            u = static_file_url(blob, fname, f"{state_key}_{ext}")
+            if u:
+                links.append(f'<a href="{u}" download style="color:#7dd3fc;'
+                             f'font-weight:700;">{lab.split()[-1]}</a>')
+        if links:
+            st.markdown(
+                "<div style='font-size:12px;color:#9aa6d4;margin-top:2px;'>"
+                "또는 주소 링크로 : " + " · ".join(links) + "</div>",
+                unsafe_allow_html=True)
+
+        st.caption("링크를 눌러도 안 되면 **오른쪽 클릭 → 다른 이름으로 링크 저장** 을 쓰시면 "
+                   "반드시 받아집니다. 그래도 안 되면 옆의 [📋 복사] 로 글자를 가져가세요.")
     except Exception:
         pass
 
@@ -7454,10 +7437,18 @@ with st.sidebar.expander("🩺 다운로드가 안 될 때 (진단)", expanded=F
         st.caption("③ 도 안 열리면 아래 주소를 복사해 새 탭 주소창에 직접 붙여 넣어 보세요.")
         st.code(_u, language="text")
     else:
-        st.error("② 경로를 쓸 수 없습니다. 아래 사유를 그대로 알려 주세요.")
+        st.warning("② 주소 링크 경로는 지금 쓸 수 없습니다. "
+                   "저장소 맨 위에 **static 폴더**가 있어야 합니다.\n\n"
+                   "GitHub → **Add file → Create new file** → 이름 칸에 "
+                   "`static/README.txt` 라고 **슬래시까지 그대로** 입력하면 폴더가 만들어집니다. "
+                   "(`static` 만 입력하면 폴더가 아니라 파일이 되어 안 됩니다.)")
         st.code(f"폴더: {_sd or '(찾지 못함)'}\n사유: {_sderr or _STATIC_ERR or '(알 수 없음)'}\n"
                 f"작업폴더: {os.getcwd()}", language="text")
-        st.caption("이 경우에도 ① 과 ④ 는 쓰실 수 있습니다.")
+        st.caption("② 가 없어도 ① 과 아래 ③·④ 로 받으실 수 있습니다.")
+
+    st.markdown("**②-2 화면에 담아 보내기** (저장소 설정과 무관)")
+    _render_html_frame(_embed_link_html([("②-2 시험 파일 받기", "다운로드점검2.txt",
+                                          "txt", _probe)]), 46)
 
     st.markdown("**④ 파일 없이 글자만 가져가기**")
     st.caption("위가 모두 안 되더라도, 아래 상자 오른쪽 위 복사 아이콘을 누르면 "
