@@ -4447,6 +4447,27 @@ def _static_cleanup(d: str):
 DL_EMBED_LIMIT = 20 * 1024 * 1024      # 페이지에 담을 수 있는 최대 크기
 
 
+def media_url(data: bytes, mime: str, file_name: str, coords: str) -> str:
+    """
+    Streamlit 자체 파일 저장소에 파일을 넣고 그 '진짜 주소'를 돌려준다.
+
+    ※ 왜 필요한가
+      st.download_button 은 이 주소를 내부에서만 쓰고 화면에 드러내지 않는다.
+      일부 PC의 브라우저는 '버튼으로 자동 내려받기'를 막아 버리는데,
+      주소를 링크로 드러내 주면 **오른쪽 클릭 → 다른 이름으로 링크 저장** 으로
+      받을 수 있다. 이 방법은 브라우저가 막는 경우가 거의 없다.
+      (앱이 직접 만든 /app/static/... 주소와 달리, 이 주소는 Streamlit 이
+       직접 관리하므로 배포 환경과 무관하게 항상 올바른 파일을 돌려준다.)
+    """
+    try:
+        from streamlit.runtime import get_instance
+        mgr = get_instance().media_file_mgr
+        return mgr.add(data, mime, coords, file_name=file_name,
+                       is_for_static_download=True) or ""
+    except Exception:
+        return ""
+
+
 def _render_html_frame(html: str, height: int):
     """작은 HTML 조각을 프레임으로 그린다. Streamlit 버전이 바뀌어도 동작하게."""
     try:
@@ -4525,27 +4546,41 @@ def static_file_url(data: bytes, file_name: str, key: str) -> str:
 
 def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
     """
-    다운로드 버튼 하나를 그린다.
+    다운로드 버튼 하나를 그린다. **한 번 클릭하면 바로 받아진다.**
 
-    ※ 1순위는 Streamlit 표준 위젯(st.download_button) 이다.
-      - 주소가 https://.../media/... 형태의 '평범한 주소'라 어떤 브라우저도 막지 않는다.
-      - 저장소에 따로 폴더를 만들거나 설정을 건드릴 필요가 없다.
-      약점은 앱이 오래 잠들었다 깨어난 직후 주소가 만료되는 것인데,
-      그때는 아래쪽 [위 버튼이 눌리지 않을 때] 줄의 예비 링크로 받으면 된다.
+    ※ 방식
+      Streamlit 자체 파일 저장소(/media/...)에 파일을 넣고, 그 주소를
+      '버튼처럼 생긴 보통 링크'로 내놓는다.
+        · 주소를 Streamlit 이 직접 만들므로 경로가 틀릴 수 없다
+          (앱이 만든 /app/static/... 은 배포 환경에서 HTML 이 내려와 파일이 깨졌다)
+        · 보통 링크를 누르는 것이라, 자동 내려받기를 막아 둔 브라우저도 허용한다
+          (st.download_button 은 자바스크립트로 받기 때문에 막히는 PC 가 있다)
+      혹시 주소를 못 얻으면 표준 위젯으로 넘어간다.
     """
     blob = data or b""
+    mime = DL_MIME.get(ext, "application/octet-stream")
 
-    # ── 1순위 : Streamlit 표준 위젯
-    #    주소를 Streamlit 이 직접 만들어 주므로 경로가 틀릴 수 없다.
-    #    (앱이 직접 만든 /app/static/... 주소는 배포 환경에 따라 엉뚱한 내용이
-    #     내려와 파일이 깨지는 일이 있었다 → 기본에서 제외)
+    try:
+        url = media_url(blob, mime, str(file_name), f"dl::{key}")
+        if url:
+            nm = (str(file_name).replace("&", "&amp;").replace('"', "&quot;")
+                  .replace("<", "&lt;").replace(">", "&gt;"))
+            lb = (str(label).replace("&", "&amp;")
+                  .replace("<", "&lt;").replace(">", "&gt;"))
+            st.markdown(
+                f'<a class="dlbtn" href="{url}" download="{nm}" title="{nm}">{lb}</a>',
+                unsafe_allow_html=True)
+            return
+    except Exception:
+        pass
+
     try:
         st.download_button(label, data=blob, file_name=file_name,
-                           mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
+                           mime=mime, key=key)
         return
     except Exception:
         pass
-    # 표준 위젯이 실패하면 파일을 페이지에 담아서
+
     try:
         if 0 < len(blob) <= DL_EMBED_LIMIT:
             _render_html_frame(_embed_link_html([(label, file_name, ext, blob)]), 44)
@@ -4677,12 +4712,12 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
         #   ※ 배포 환경에 따라 이 주소가 엉뚱한 내용을 돌려주어 파일이 깨지는 일이
         #     있었다. 그래서 사이드바 진단에서 '정상'으로 확인된 경우에만 보여 준다.
         links = []
-        if st.session_state.get("static_ok") is True:
-            for lab, fname, ext, blob in blobs:
-                u = static_file_url(blob, fname, f"{state_key}_{ext}")
-                if u:
-                    links.append(f'<a href="{u}" download style="color:#7dd3fc;'
-                                 f'font-weight:700;">{lab.split()[-1]}</a>')
+        for lab, fname, ext, blob in blobs:
+            u = media_url(blob or b"", DL_MIME.get(ext, "application/octet-stream"),
+                          fname, f"alt::{state_key}::{ext}")
+            if u:
+                links.append(f'<a href="{u}" download="{fname}" style="color:#7dd3fc;'
+                             f'font-weight:700;">{lab.split()[-1]}</a>')
         if links:
             st.markdown(
                 "<div class='lib-card' style='padding:10px 14px;margin-top:6px;'>"
