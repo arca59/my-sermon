@@ -4372,8 +4372,7 @@ DL_MIME = {
 #   (.streamlit/config.toml 에 enableStaticServing = true 필요)
 #   서버 임시저장소를 거치지 않으므로, 앱이 잠들었다 깨어나도 주소가 살아 있다.
 # ------------------------------------------------------------------------------
-STATIC_KEEP = 600         # 이 폴더에 남겨 둘 최대 파일 수
-STATIC_MIN_AGE = 1800     # 만든 지 이 시간(초) 안 된 파일은 절대 지우지 않는다
+STATIC_KEEP = 80          # 이 폴더에 남겨 둘 최대 파일 수
 _STATIC_ERR = ""          # 마지막 실패 사유 (진단 화면에 그대로 보여 준다)
 
 
@@ -4432,10 +4431,7 @@ def _static_cleanup(d: str):
         if len(files) <= STATIC_KEEP:
             return
         files.sort()
-        now = time.time()
-        for mt, p in files[:len(files) - STATIC_KEEP]:
-            if now - mt < STATIC_MIN_AGE:      # 방금 만든 파일은 건드리지 않는다
-                continue
+        for _, p in files[:len(files) - STATIC_KEEP]:
             try:
                 os.remove(p)
             except Exception:
@@ -4444,101 +4440,28 @@ def _static_cleanup(d: str):
         pass
 
 
-DL_EMBED_LIMIT = 20 * 1024 * 1024      # 페이지에 담을 수 있는 최대 크기
-
-
-def media_url(data: bytes, mime: str, file_name: str, coords: str) -> str:
-    """
-    Streamlit 자체 파일 저장소에 파일을 넣고 그 '진짜 주소'를 돌려준다.
-
-    ※ 왜 필요한가
-      st.download_button 은 이 주소를 내부에서만 쓰고 화면에 드러내지 않는다.
-      일부 PC의 브라우저는 '버튼으로 자동 내려받기'를 막아 버리는데,
-      주소를 링크로 드러내 주면 **오른쪽 클릭 → 다른 이름으로 링크 저장** 으로
-      받을 수 있다. 이 방법은 브라우저가 막는 경우가 거의 없다.
-      (앱이 직접 만든 /app/static/... 주소와 달리, 이 주소는 Streamlit 이
-       직접 관리하므로 배포 환경과 무관하게 항상 올바른 파일을 돌려준다.)
-    """
-    try:
-        from streamlit.runtime import get_instance
-        mgr = get_instance().media_file_mgr
-        return mgr.add(data, mime, coords, file_name=file_name,
-                       is_for_static_download=True) or ""
-    except Exception:
-        return ""
-
-
-def _render_html_frame(html: str, height: int):
-    """작은 HTML 조각을 프레임으로 그린다. Streamlit 버전이 바뀌어도 동작하게."""
-    try:
-        components.html(html, height=height)
-        return True
-    except Exception:
-        pass
-    try:                                   # 새 버전(st.iframe)
-        src = "data:text/html;base64," + base64.b64encode(
-            html.encode("utf-8")).decode("ascii")
-        st.iframe(src, height=height)
-        return True
-    except Exception:
-        return False
-
-
 def static_file_url(data: bytes, file_name: str, key: str) -> str:
     """
-    파일을 static 폴더에 써 두고 '보통 https 주소'를 돌려준다.
-
-    ※ 파일이 깨지지 않도록 세 가지를 지킨다
-      1) 파일 이름에 '내용의 지문(해시)'을 넣는다.
-         → 내용이 바뀌면 이름도 바뀌므로, 옛 내용이 섞여 나올 수 없다.
-      2) 임시 이름으로 다 쓴 뒤 한 번에 이름을 바꾼다(원자적 쓰기).
-         → 쓰는 도중에 받아 가서 반쪽짜리 파일이 되는 일이 없다.
-      3) 방금 만든 파일은 절대 지우지 않는다.
+    파일을 static 폴더에 써 두고 보통 웹주소를 돌려준다.
+    실패하면 빈 문자열을 돌려주고 사유를 _STATIC_ERR 에 남긴다.
     """
     global _STATIC_ERR
     d, err = resolve_static_dir()
     if not d:
         _STATIC_ERR = err
         return ""
-    blob = data or b""
-    if not blob:
-        return ""
     try:
         safe = re.sub(r'[\\/:*?"<>|]+', "_", str(file_name)).strip() or "file"
+        stamp = hashlib.sha256((key + safe).encode("utf-8", "ignore")).hexdigest()[:8]
         base, dot, tail = safe.rpartition(".")
-        if not dot:
-            base, tail = safe, "bin"
-        # 내용 지문 — 내용이 같으면 같은 파일, 다르면 반드시 다른 파일
-        stamp = hashlib.sha256(blob).hexdigest()[:12]
-        disk = f"{base}_{stamp}.{tail}"
+        disk = f"{base}_{stamp}.{tail}" if dot else f"{safe}_{stamp}"
         path = os.path.join(d, disk)
-
-        need_write = True
-        try:
-            if os.path.exists(path) and os.path.getsize(path) == len(blob):
-                need_write = False
-        except Exception:
-            pass
-
-        if need_write:
-            tmp = os.path.join(d, f".tmp_{stamp}_{os.getpid()}")
-            with open(tmp, "wb") as f:
-                f.write(blob)
-                f.flush()
-                try:
-                    os.fsync(f.fileno())
-                except Exception:
-                    pass
-            os.replace(tmp, path)          # 한 번에 교체 — 반쪽 파일이 안 생긴다
+        if (not os.path.exists(path)) or os.path.getsize(path) != len(data or b""):
+            with open(path, "wb") as f:
+                f.write(data or b"")
             _static_cleanup(d)
-        try:
-            os.utime(path, None)           # 최근에 쓴 파일로 표시(정리에서 보호)
-        except Exception:
-            pass
-
         _STATIC_ERR = ""
-        # 루트 기준 절대 경로 (페이지 주소와 무관하게 항상 같은 곳을 가리킨다)
-        return "/app/static/" + urllib.parse.quote(disk)
+        return "app/static/" + urllib.parse.quote(disk)
     except Exception as e:
         _STATIC_ERR = f"{type(e).__name__}: {str(e)[:120]}"
         return ""
@@ -4546,105 +4469,10 @@ def static_file_url(data: bytes, file_name: str, key: str) -> str:
 
 def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
     """
-    다운로드 버튼 하나를 그린다. **한 번 클릭하면 바로 받아진다.**
-
-    ※ 방식
-      Streamlit 자체 파일 저장소(/media/...)에 파일을 넣고, 그 주소를
-      '버튼처럼 생긴 보통 링크'로 내놓는다.
-        · 주소를 Streamlit 이 직접 만들므로 경로가 틀릴 수 없다
-          (앱이 만든 /app/static/... 은 배포 환경에서 HTML 이 내려와 파일이 깨졌다)
-        · 보통 링크를 누르는 것이라, 자동 내려받기를 막아 둔 브라우저도 허용한다
-          (st.download_button 은 자바스크립트로 받기 때문에 막히는 PC 가 있다)
-      혹시 주소를 못 얻으면 표준 위젯으로 넘어간다.
+    다운로드 버튼 하나를 그린다. (Streamlit 표준 위젯)
     """
-    blob = data or b""
-    mime = DL_MIME.get(ext, "application/octet-stream")
-
-    try:
-        url = media_url(blob, mime, str(file_name), f"dl::{key}")
-        if url:
-            nm = (str(file_name).replace("&", "&amp;").replace('"', "&quot;")
-                  .replace("<", "&lt;").replace(">", "&gt;"))
-            lb = (str(label).replace("&", "&amp;")
-                  .replace("<", "&lt;").replace(">", "&gt;"))
-            st.markdown(
-                f'<a class="dlbtn" href="{url}" download="{nm}" title="{nm}">{lb}</a>',
-                unsafe_allow_html=True)
-            return
-    except Exception:
-        pass
-
-    try:
-        st.download_button(label, data=blob, file_name=file_name,
-                           mime=mime, key=key)
-        return
-    except Exception:
-        pass
-
-    try:
-        if 0 < len(blob) <= DL_EMBED_LIMIT:
-            _render_html_frame(_embed_link_html([(label, file_name, ext, blob)]), 44)
-    except Exception:
-        pass
-
-
-def _embed_link_html(items):
-    """
-    파일 내용을 페이지에 담은 '내려받기 버튼들'을 한 덩어리 HTML 로 만든다.
-
-    ※ data: 주소를 직접 링크에 걸지 않는다.
-      일부 PC의 크롬은 data: 주소 내려받기를 통째로 차단한다(눌러도 무반응).
-      그래서 누르는 순간 자바스크립트가 Blob(임시 파일 덩어리)을 만들어
-      blob: 주소로 내려받는다. 이것이 웹에서 가장 널리 쓰이고 차단되지 않는 방식이다.
-    """
-    import json as _json
-    files = []
-    for label, fname, ext, blob in items:
-        files.append({
-            "name": str(fname),
-            "mime": DL_MIME.get(ext, "application/octet-stream"),
-            "b64": base64.b64encode(blob or b"").decode("ascii"),
-            "label": str(label),
-        })
-    payload = _json.dumps(files, ensure_ascii=False)
-    return ("<style>"
-            "html,body{margin:0;padding:0;background:transparent;overflow:hidden;"
-            "font:600 12.5px/1.4 'Pretendard','Malgun Gothic',sans-serif;}"
-            ".row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}"
-            "button.dlb{padding:6px 13px;border:1px solid rgba(148,163,255,.45);"
-            "border-radius:7px;background:rgba(148,163,255,.14);color:#dfe5ff;"
-            "font:inherit;cursor:pointer;}"
-            "button.dlb:hover{background:rgba(148,163,255,.3);border-color:#a78bfa;}"
-            "button.dlb:active{transform:translateY(1px);}"
-            "#msg{color:#fca5a5;margin-left:6px;}"
-            "</style><div class='row' id='row'></div><span id='msg'></span>"
-            "<script>"
-            f"const FILES={payload};"
-            "function b2blob(b64,mime){const bin=atob(b64);const n=bin.length;"
-            "const a=new Uint8Array(n);for(let i=0;i<n;i++)a[i]=bin.charCodeAt(i);"
-            "return new Blob([a],{type:mime});}"
-            "const row=document.getElementById('row');"
-            "FILES.forEach(function(f){"
-            "  const b=document.createElement('button');"
-            "  b.className='dlb'; b.textContent=f.label; b.title=f.name;"
-            "  b.onclick=function(){"
-            "    try{"
-            "      const blob=b2blob(f.b64,f.mime);"
-            "      if(window.navigator && window.navigator.msSaveOrOpenBlob){"
-            "        window.navigator.msSaveOrOpenBlob(blob,f.name); return;}"
-            "      const url=URL.createObjectURL(blob);"
-            "      const a=document.createElement('a');"
-            "      a.href=url; a.download=f.name; a.rel='noopener';"
-            "      document.body.appendChild(a); a.click();"
-            "      setTimeout(function(){URL.revokeObjectURL(url); a.remove();},4000);"
-            "      document.getElementById('msg').textContent='';"
-            "    }catch(e){"
-            "      document.getElementById('msg').textContent='받기 실패: '+e.message;"
-            "    }"
-            "  };"
-            "  row.appendChild(b);"
-            "});"
-            "</script>")
+    st.download_button(label, data=data or b"", file_name=file_name,
+                       mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
 
 
 def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mode: str = "doc",
@@ -4691,51 +4519,39 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
             render_dl("📥 txt", create_txt_bytes(title, content), f"{title}.txt",
                       "txt", f"dl_txt_{state_key}")
 
-    # ── 위 버튼이 반응하지 않을 때를 위한 예비 경로 (두 가지를 모두 제공)
+    # ── 위 버튼이 반응하지 않을 때를 위한 두 번째 경로 (평범한 주소 링크)
     try:
-        blobs = [("📄 워드", f"{title}.docx", "docx", create_docx_bytes(title, content)),
-                 ("📕 PDF", f"{title}.pdf", "pdf", create_pdf_bytes(title, content)),
-                 ("📊 PPT", f"{title}.pptx", "pptx", ppt_bytes),
-                 ("📝 txt", f"{title}.txt", "txt", create_txt_bytes(title, content))]
-
-        st.markdown(
-            "<div style='font-size:12.5px;color:#e8ecff;margin:8px 0 2px;'>"
-            "⬇️ <b>위 버튼이 눌리지 않을 때</b> — 아래 예비 링크로 받으세요</div>",
-            unsafe_allow_html=True)
-
-        # 방법 A : 파일을 화면 안에 담아 보내기 (서버 사정과 무관)
-        total = sum(len(b or b"") for _, _, _, b in blobs)
-        if 0 < total <= DL_EMBED_LIMIT:
-            _render_html_frame(_embed_link_html(blobs), 46)
-
-        # 방법 B : 보통 주소 링크
-        #   ※ 배포 환경에 따라 이 주소가 엉뚱한 내용을 돌려주어 파일이 깨지는 일이
-        #     있었다. 그래서 사이드바 진단에서 '정상'으로 확인된 경우에만 보여 준다.
-        links = []
-        for lab, fname, ext, blob in blobs:
-            u = media_url(blob or b"", DL_MIME.get(ext, "application/octet-stream"),
-                          fname, f"alt::{state_key}::{ext}")
-            if u:
-                links.append(f'<a href="{u}" download="{fname}" style="color:#7dd3fc;'
-                             f'font-weight:700;">{lab.split()[-1]}</a>')
-        if links:
-            st.markdown(
-                "<div class='lib-card' style='padding:10px 14px;margin-top:6px;'>"
-                "<div style='font-size:13px;color:#fde047;font-weight:800;'>"
-                "🖱️ 버튼이 안 먹을 때 — 아래 글자에 <u>오른쪽 클릭</u> → "
-                "<u>다른 이름으로 링크 저장</u></div>"
-                "<div style='font-size:14px;margin-top:6px;'>"
-                + "　·　".join(links) + "</div>"
-                "<div style='font-size:11.5px;color:#8b96c4;margin-top:5px;'>"
-                "이 방법은 브라우저가 다운로드를 막아 두었어도 반드시 받아집니다.</div>"
-                "</div>", unsafe_allow_html=True)
-        else:
-            st.caption("💡 [🖱️ 오른쪽 클릭으로 저장] 링크를 쓰시려면 저장소 맨 위에 "
-                       "**static 폴더**가 있어야 합니다. "
-                       "GitHub → Add file → Create new file → 이름 칸에 "
-                       "`static/README.txt` 를 슬래시까지 그대로 입력하면 만들어집니다.")
-
-        st.caption("그래도 안 되면 옆의 [📋 복사] 로 글자를 가져가 한글·워드에 붙여 넣으세요.")
+        save_links, open_links = [], []
+        for lab, ext, blob in (
+                ("워드", "docx", create_docx_bytes(title, content)),
+                ("PDF", "pdf", create_pdf_bytes(title, content)),
+                ("PPT", "pptx", ppt_bytes),
+                ("txt", "txt", create_txt_bytes(title, content))):
+            u = static_file_url(blob, f"{title}.{ext}", f"{state_key}_{ext}")
+            if not u:
+                continue
+            save_links.append(f'<a href="{u}" download '
+                              f'style="color:#c4b5fd;font-weight:700;">{lab}</a>')
+            # PDF·txt 는 새 탭에서 그냥 열린다 → 열린 화면에서 Ctrl+S 로 저장 가능
+            if ext in ("pdf", "txt", "docx", "pptx"):
+                open_links.append(f'<a href="{u}" target="_blank" '
+                                  f'style="color:#7dd3fc;font-weight:700;">{lab}</a>')
+        if save_links:
+            html = ("<div class='lib-card' style='padding:10px 14px;margin:6px 0 2px;'>"
+                    "<div style='font-size:12.5px;color:#e8ecff;'>"
+                    "⬇️ <b>위 버튼이 눌리지 않을 때</b> — 여기로 받으세요 : "
+                    + " · ".join(save_links) + "</div>")
+            if open_links:
+                html += ("<div style='font-size:12px;color:#9aa6d4;margin-top:5px;'>"
+                         "그래도 안 되면 새 탭에서 열어 저장(Ctrl+S) : "
+                         + " · ".join(open_links) + "</div>")
+            html += ("<div style='font-size:12px;color:#9aa6d4;margin-top:5px;'>"
+                     "크롬이 막을 때는 링크에 <b>오른쪽 클릭 → 다른 이름으로 링크 저장</b> "
+                     "하시면 반드시 받아집니다.</div>"
+                     "<div style='font-size:11.5px;color:#6b76a4;margin-top:5px;'>"
+                     "모두 안 되면 사이드바 [🩺 다운로드가 안 될 때 (진단)] 를 열어 보세요."
+                     "</div></div>")
+            st.markdown(html, unsafe_allow_html=True)
     except Exception:
         pass
 
@@ -7551,8 +7367,6 @@ with st.sidebar.expander("🩺 다운로드가 안 될 때 (진단)", expanded=F
                        mime="text/plain", key="diag_dl_btn")
 
     st.markdown("**② 주소 링크로 내려받기**")
-    import json as _js
-    _json_probe = _js.dumps("다운로드 점검용")
     _u = static_file_url(_probe, "다운로드점검.txt", "diag_probe")
     _sd, _sderr = resolve_static_dir()
     if _u:
@@ -7567,46 +7381,10 @@ with st.sidebar.expander("🩺 다운로드가 안 될 때 (진단)", expanded=F
         st.warning("② 주소 링크 경로는 지금 쓸 수 없습니다. "
                    "저장소 맨 위에 **static 폴더**가 있어야 합니다.\n\n"
                    "GitHub → **Add file → Create new file** → 이름 칸에 "
-                   "`static/README.txt` 라고 **슬래시까지 그대로** 입력하면 폴더가 만들어집니다. "
-                   "(`static` 만 입력하면 폴더가 아니라 파일이 되어 안 됩니다.)")
+                   "`static/README.txt` 라고 **슬래시까지 그대로** 입력하면 폴더가 만들어집니다.")
         st.code(f"폴더: {_sd or '(찾지 못함)'}\n사유: {_sderr or _STATIC_ERR or '(알 수 없음)'}\n"
                 f"작업폴더: {os.getcwd()}", language="text")
-        st.caption("② 가 없어도 ① 과 아래 ③·④ 로 받으실 수 있습니다.")
-
-    # ── 자동 진단 : 이 브라우저에서 주소 링크가 실제로 뭘 돌려주는지 직접 확인
-    if _u:
-        st.markdown("**②-1 이 주소가 진짜 파일을 주는지 자동 확인**")
-        _probe_txt = _probe.decode("utf-8", "ignore")[:24]
-        _render_html_frame(
-            "<style>html,body{margin:0;background:transparent;"
-            "font:13px/1.5 'Pretendard','Malgun Gothic',sans-serif;color:#e8ecff;}"
-            "b.ok{color:#86efac;} b.ng{color:#fca5a5;}</style>"
-            "<div id='r'>확인 중…</div>"
-            "<script>"
-            f"fetch('{_u}',{{cache:'no-store'}}).then(function(r){{"
-            "  return r.text().then(function(t){"
-            "    var ct=r.headers.get('content-type')||'';"
-            "    var head=t.slice(0,60).replace(/[<>]/g,'');"
-            "    var isHtml=/<!DOCTYPE|<html/i.test(t.slice(0,200));"
-            f"    var good=(r.status===200 && !isHtml && t.indexOf({_json_probe})>-1);"
-            "    document.getElementById('r').innerHTML="
-            "      (good?'<b class=ok>✅ 정상 — 주소 링크를 쓸 수 있습니다</b>'"
-            "           :'<b class=ng>❌ 이 주소는 파일이 아니라 다른 것을 돌려줍니다</b>')"
-            "      +'<br>HTTP '+r.status+' · '+ct"
-            "      +'<br>받은 내용 앞부분: '+head;"
-            "    try{window.parent.postMessage({streamlitStaticOk:good},'*');}catch(e){}"
-            "  });"
-            "}).catch(function(e){"
-            "  document.getElementById('r').innerHTML="
-            "    '<b class=ng>❌ 주소를 불러오지 못했습니다</b><br>'+e.message;"
-            "});"
-            "</script>", 86)
-        st.caption("여기에 ❌ 가 나오면, 주소 링크 방식은 이 서버에서 쓸 수 없습니다. "
-                   "①(표준 버튼) 과 ②-2(화면에 담아 보내기) 를 쓰세요.")
-
-    st.markdown("**②-2 화면에 담아 보내기** (저장소 설정과 무관)")
-    _render_html_frame(_embed_link_html([("②-2 시험 파일 받기", "다운로드점검2.txt",
-                                          "txt", _probe)]), 46)
+        st.caption("② 가 없어도 ① 과 ④ 는 쓰실 수 있습니다.")
 
     st.markdown("**④ 파일 없이 글자만 가져가기**")
     st.caption("위가 모두 안 되더라도, 아래 상자 오른쪽 위 복사 아이콘을 누르면 "
