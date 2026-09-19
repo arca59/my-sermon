@@ -4640,12 +4640,22 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
                              f'font-weight:700;">{lab.split()[-1]}</a>')
         if links:
             st.markdown(
-                "<div style='font-size:12px;color:#9aa6d4;margin-top:2px;'>"
-                "또는 주소 링크로 : " + " · ".join(links) + "</div>",
-                unsafe_allow_html=True)
+                "<div class='lib-card' style='padding:10px 14px;margin-top:6px;'>"
+                "<div style='font-size:13px;color:#fde047;font-weight:800;'>"
+                "🖱️ 버튼이 안 먹을 때 — 아래 글자에 <u>오른쪽 클릭</u> → "
+                "<u>다른 이름으로 링크 저장</u></div>"
+                "<div style='font-size:14px;margin-top:6px;'>"
+                + "　·　".join(links) + "</div>"
+                "<div style='font-size:11.5px;color:#8b96c4;margin-top:5px;'>"
+                "이 방법은 브라우저가 다운로드를 막아 두었어도 반드시 받아집니다.</div>"
+                "</div>", unsafe_allow_html=True)
+        else:
+            st.caption("💡 [🖱️ 오른쪽 클릭으로 저장] 링크를 쓰시려면 저장소 맨 위에 "
+                       "**static 폴더**가 있어야 합니다. "
+                       "GitHub → Add file → Create new file → 이름 칸에 "
+                       "`static/README.txt` 를 슬래시까지 그대로 입력하면 만들어집니다.")
 
-        st.caption("링크를 눌러도 안 되면 **오른쪽 클릭 → 다른 이름으로 링크 저장** 을 쓰시면 "
-                   "반드시 받아집니다. 그래도 안 되면 옆의 [📋 복사] 로 글자를 가져가세요.")
+        st.caption("그래도 안 되면 옆의 [📋 복사] 로 글자를 가져가 한글·워드에 붙여 넣으세요.")
     except Exception:
         pass
 
