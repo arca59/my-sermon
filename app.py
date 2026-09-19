@@ -4512,27 +4512,62 @@ def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
 
 
 def _embed_link_html(items):
-    """파일 내용을 페이지에 담은 링크들을 한 덩어리 HTML 로 만든다."""
-    parts = [
-        "<style>"
-        "html,body{margin:0;padding:0;background:transparent;overflow:hidden;"
-        "font:600 12.5px/1.4 'Pretendard','Malgun Gothic',sans-serif;}"
-        ".row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}"
-        "a.dlb{display:inline-flex;align-items:center;justify-content:center;"
-        "padding:5px 12px;border:1px solid rgba(148,163,255,.45);border-radius:7px;"
-        "background:rgba(148,163,255,.14);color:#dfe5ff;text-decoration:none;}"
-        "a.dlb:hover{background:rgba(148,163,255,.3);border-color:#a78bfa;}"
-        "</style><div class='row'>"]
+    """
+    파일 내용을 페이지에 담은 '내려받기 버튼들'을 한 덩어리 HTML 로 만든다.
+
+    ※ data: 주소를 직접 링크에 걸지 않는다.
+      일부 PC의 크롬은 data: 주소 내려받기를 통째로 차단한다(눌러도 무반응).
+      그래서 누르는 순간 자바스크립트가 Blob(임시 파일 덩어리)을 만들어
+      blob: 주소로 내려받는다. 이것이 웹에서 가장 널리 쓰이고 차단되지 않는 방식이다.
+    """
+    import json as _json
+    files = []
     for label, fname, ext, blob in items:
-        b64 = base64.b64encode(blob or b"").decode("ascii")
-        mime = DL_MIME.get(ext, "application/octet-stream")
-        nm = (str(fname).replace("&", "&amp;").replace('"', "&quot;")
-              .replace("<", "&lt;").replace(">", "&gt;"))
-        lb = str(label).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        parts.append(f'<a class="dlb" download="{nm}" title="{nm}" '
-                     f'href="data:{mime};base64,{b64}">{lb}</a>')
-    parts.append("</div>")
-    return "".join(parts)
+        files.append({
+            "name": str(fname),
+            "mime": DL_MIME.get(ext, "application/octet-stream"),
+            "b64": base64.b64encode(blob or b"").decode("ascii"),
+            "label": str(label),
+        })
+    payload = _json.dumps(files, ensure_ascii=False)
+    return ("<style>"
+            "html,body{margin:0;padding:0;background:transparent;overflow:hidden;"
+            "font:600 12.5px/1.4 'Pretendard','Malgun Gothic',sans-serif;}"
+            ".row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;}"
+            "button.dlb{padding:6px 13px;border:1px solid rgba(148,163,255,.45);"
+            "border-radius:7px;background:rgba(148,163,255,.14);color:#dfe5ff;"
+            "font:inherit;cursor:pointer;}"
+            "button.dlb:hover{background:rgba(148,163,255,.3);border-color:#a78bfa;}"
+            "button.dlb:active{transform:translateY(1px);}"
+            "#msg{color:#fca5a5;margin-left:6px;}"
+            "</style><div class='row' id='row'></div><span id='msg'></span>"
+            "<script>"
+            f"const FILES={payload};"
+            "function b2blob(b64,mime){const bin=atob(b64);const n=bin.length;"
+            "const a=new Uint8Array(n);for(let i=0;i<n;i++)a[i]=bin.charCodeAt(i);"
+            "return new Blob([a],{type:mime});}"
+            "const row=document.getElementById('row');"
+            "FILES.forEach(function(f){"
+            "  const b=document.createElement('button');"
+            "  b.className='dlb'; b.textContent=f.label; b.title=f.name;"
+            "  b.onclick=function(){"
+            "    try{"
+            "      const blob=b2blob(f.b64,f.mime);"
+            "      if(window.navigator && window.navigator.msSaveOrOpenBlob){"
+            "        window.navigator.msSaveOrOpenBlob(blob,f.name); return;}"
+            "      const url=URL.createObjectURL(blob);"
+            "      const a=document.createElement('a');"
+            "      a.href=url; a.download=f.name; a.rel='noopener';"
+            "      document.body.appendChild(a); a.click();"
+            "      setTimeout(function(){URL.revokeObjectURL(url); a.remove();},4000);"
+            "      document.getElementById('msg').textContent='';"
+            "    }catch(e){"
+            "      document.getElementById('msg').textContent='받기 실패: '+e.message;"
+            "    }"
+            "  };"
+            "  row.appendChild(b);"
+            "});"
+            "</script>")
 
 
 def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mode: str = "doc",
