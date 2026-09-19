@@ -4535,22 +4535,10 @@ def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
     """
     blob = data or b""
 
-    # ── 1순위 : 보통 https 주소 링크 (오른쪽 클릭 저장도 가능)
-    try:
-        url = static_file_url(blob, file_name, key)
-        if url:
-            nm = (str(file_name).replace("&", "&amp;").replace('"', "&quot;")
-                  .replace("<", "&lt;").replace(">", "&gt;"))
-            lb = (str(label).replace("&", "&amp;")
-                  .replace("<", "&lt;").replace(">", "&gt;"))
-            st.markdown(
-                f'<a class="dlbtn" href="{url}" download="{nm}" title="{nm}">{lb}</a>',
-                unsafe_allow_html=True)
-            return
-    except Exception:
-        pass
-
-    # ── 2순위 : 표준 위젯
+    # ── 1순위 : Streamlit 표준 위젯
+    #    주소를 Streamlit 이 직접 만들어 주므로 경로가 틀릴 수 없다.
+    #    (앱이 직접 만든 /app/static/... 주소는 배포 환경에 따라 엉뚱한 내용이
+    #     내려와 파일이 깨지는 일이 있었다 → 기본에서 제외)
     try:
         st.download_button(label, data=blob, file_name=file_name,
                            mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
@@ -4685,13 +4673,16 @@ def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mod
         if 0 < total <= DL_EMBED_LIMIT:
             _render_html_frame(_embed_link_html(blobs), 46)
 
-        # 방법 B : 보통 주소 링크 (저장소에 static 폴더가 있을 때만 나타남)
+        # 방법 B : 보통 주소 링크
+        #   ※ 배포 환경에 따라 이 주소가 엉뚱한 내용을 돌려주어 파일이 깨지는 일이
+        #     있었다. 그래서 사이드바 진단에서 '정상'으로 확인된 경우에만 보여 준다.
         links = []
-        for lab, fname, ext, blob in blobs:
-            u = static_file_url(blob, fname, f"{state_key}_{ext}")
-            if u:
-                links.append(f'<a href="{u}" download style="color:#7dd3fc;'
-                             f'font-weight:700;">{lab.split()[-1]}</a>')
+        if st.session_state.get("static_ok") is True:
+            for lab, fname, ext, blob in blobs:
+                u = static_file_url(blob, fname, f"{state_key}_{ext}")
+                if u:
+                    links.append(f'<a href="{u}" download style="color:#7dd3fc;'
+                                 f'font-weight:700;">{lab.split()[-1]}</a>')
         if links:
             st.markdown(
                 "<div class='lib-card' style='padding:10px 14px;margin-top:6px;'>"
@@ -7525,6 +7516,8 @@ with st.sidebar.expander("🩺 다운로드가 안 될 때 (진단)", expanded=F
                        mime="text/plain", key="diag_dl_btn")
 
     st.markdown("**② 주소 링크로 내려받기**")
+    import json as _js
+    _json_probe = _js.dumps("다운로드 점검용")
     _u = static_file_url(_probe, "다운로드점검.txt", "diag_probe")
     _sd, _sderr = resolve_static_dir()
     if _u:
@@ -7544,6 +7537,37 @@ with st.sidebar.expander("🩺 다운로드가 안 될 때 (진단)", expanded=F
         st.code(f"폴더: {_sd or '(찾지 못함)'}\n사유: {_sderr or _STATIC_ERR or '(알 수 없음)'}\n"
                 f"작업폴더: {os.getcwd()}", language="text")
         st.caption("② 가 없어도 ① 과 아래 ③·④ 로 받으실 수 있습니다.")
+
+    # ── 자동 진단 : 이 브라우저에서 주소 링크가 실제로 뭘 돌려주는지 직접 확인
+    if _u:
+        st.markdown("**②-1 이 주소가 진짜 파일을 주는지 자동 확인**")
+        _probe_txt = _probe.decode("utf-8", "ignore")[:24]
+        _render_html_frame(
+            "<style>html,body{margin:0;background:transparent;"
+            "font:13px/1.5 'Pretendard','Malgun Gothic',sans-serif;color:#e8ecff;}"
+            "b.ok{color:#86efac;} b.ng{color:#fca5a5;}</style>"
+            "<div id='r'>확인 중…</div>"
+            "<script>"
+            f"fetch('{_u}',{{cache:'no-store'}}).then(function(r){{"
+            "  return r.text().then(function(t){"
+            "    var ct=r.headers.get('content-type')||'';"
+            "    var head=t.slice(0,60).replace(/[<>]/g,'');"
+            "    var isHtml=/<!DOCTYPE|<html/i.test(t.slice(0,200));"
+            f"    var good=(r.status===200 && !isHtml && t.indexOf({_json_probe})>-1);"
+            "    document.getElementById('r').innerHTML="
+            "      (good?'<b class=ok>✅ 정상 — 주소 링크를 쓸 수 있습니다</b>'"
+            "           :'<b class=ng>❌ 이 주소는 파일이 아니라 다른 것을 돌려줍니다</b>')"
+            "      +'<br>HTTP '+r.status+' · '+ct"
+            "      +'<br>받은 내용 앞부분: '+head;"
+            "    try{window.parent.postMessage({streamlitStaticOk:good},'*');}catch(e){}"
+            "  });"
+            "}).catch(function(e){"
+            "  document.getElementById('r').innerHTML="
+            "    '<b class=ng>❌ 주소를 불러오지 못했습니다</b><br>'+e.message;"
+            "});"
+            "</script>", 86)
+        st.caption("여기에 ❌ 가 나오면, 주소 링크 방식은 이 서버에서 쓸 수 없습니다. "
+                   "①(표준 버튼) 과 ②-2(화면에 담아 보내기) 를 쓰세요.")
 
     st.markdown("**②-2 화면에 담아 보내기** (저장소 설정과 무관)")
     _render_html_frame(_embed_link_html([("②-2 시험 파일 받기", "다운로드점검2.txt",
