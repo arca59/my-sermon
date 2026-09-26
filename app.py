@@ -4364,11 +4364,6 @@ DL_MIME = {
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "txt":  "text/plain;charset=utf-8",
     "png":  "image/png",
-    "csv":  "text/csv;charset=utf-8",
-    "zip":  "application/zip",
-    "mp3":  "audio/mpeg",
-    "mp4":  "video/mp4",
-    "json": "application/json;charset=utf-8",
 }
 
 # ------------------------------------------------------------------------------
@@ -4472,57 +4467,12 @@ def static_file_url(data: bytes, file_name: str, key: str) -> str:
         return ""
 
 
-def _download_filename(file_name: str, ext: str = "") -> str:
-    """브라우저와 Windows에서 모두 안전한 다운로드 파일명을 만든다."""
-    name = re.sub(r'[\\/:*?"<>|\x00-\x1f]+', "_", str(file_name or "")).strip(" ._")
-    suffix = str(ext or "").lower().lstrip(".")
-    if not name:
-        name = f"download.{suffix}" if suffix else "download"
-    elif suffix and not name.lower().endswith(f".{suffix}"):
-        name += f".{suffix}"
-    return name[:180]
-
-
-def _download_bytes(data) -> bytes:
-    """bytes/BytesIO/문자열을 st.download_button이 안정적으로 받는 bytes로 통일한다."""
-    if data is None:
-        return b""
-    if isinstance(data, bytes):
-        return data
-    if isinstance(data, bytearray):
-        return bytes(data)
-    if isinstance(data, str):
-        return data.encode("utf-8")
-    if hasattr(data, "getvalue"):
-        value = data.getvalue()
-        return value.encode("utf-8") if isinstance(value, str) else bytes(value)
-    return bytes(data)
-
-
-def render_dl(label: str, data, file_name: str, ext: str, key: str, mime: str = ""):
+def render_dl(label: str, data: bytes, file_name: str, ext: str, key: str):
     """
-    앱 전체에서 쓰는 단일 다운로드 버튼.
-
-    Streamlit의 기본값은 다운로드 클릭 때 앱 전체를 즉시 rerun한다. 큰 문서나
-    네트워크가 느린 날에는 브라우저가 파일을 받기 전에 링크가 교체되어 버튼이
-    무반응처럼 보일 수 있다. 최신 버전에서는 on_click="ignore"로 그 rerun을
-    막고, 구버전에서는 해당 인자를 빼서 호환한다.
+    다운로드 버튼 하나를 그린다. (Streamlit 표준 위젯)
     """
-    payload = _download_bytes(data)
-    kwargs = dict(
-        label=label,
-        data=payload,
-        file_name=_download_filename(file_name, ext),
-        mime=mime or DL_MIME.get(str(ext).lower().lstrip("."), "application/octet-stream"),
-        key=key,
-    )
-    try:
-        return st.download_button(**kwargs, on_click="ignore")
-    except TypeError as exc:
-        # Streamlit 구버전은 on_click 인자를 지원하지 않는다.
-        if "on_click" not in str(exc):
-            raise
-        return st.download_button(**kwargs)
+    st.download_button(label, data=data or b"", file_name=file_name,
+                       mime=DL_MIME.get(ext, "application/octet-stream"), key=key)
 
 
 def render_section_top_toolbar(title: str, content: str, state_key: str, ppt_mode: str = "doc",
@@ -5846,9 +5796,9 @@ def render_context_section(scripture: str, topic: str, theology: str):
                                      json.dumps(d.get("outline", []), ensure_ascii=False),
                                      json.dumps(d.get("timeline", []), ensure_ascii=False))
         st_image_full(png, caption=f"{scripture} 단락 구조 · 연대표")
-        render_dl("📥 도해 이미지(PNG) 내려받기", png,
-                  f"{scripture}_구조도해.png", "png",
-                  f"dl_diag_{abs(hash(scripture)) % 9999}")
+        st.download_button("📥 도해 이미지(PNG) 내려받기", data=png,
+                           file_name=f"{scripture}_구조도해.png", mime="image/png",
+                           key=f"dl_diag_{abs(hash(scripture)) % 9999}")
 
         if d.get("outline"):
             st.markdown("#### 🧩 단락 나누기")
@@ -6199,9 +6149,9 @@ def render_bible_qa_section(scripture: str, topic: str, theology: str):
                 json.dumps(d.get("senses", []), ensure_ascii=False),
                 json.dumps(d.get("usage_stats", []), ensure_ascii=False))
             st_image_full(png, caption=f"성경 Q&A · {d.get('headword','')}")
-            render_dl("📥 도해 이미지(PNG) 내려받기", png,
-                      f"성경QA_{re.sub(r'[^가-힣A-Za-z0-9]+','_', str(d.get('headword','결과')))[:24]}.png",
-                      "png", f"dl_qa_{qkey}")
+            st.download_button("📥 도해 이미지(PNG) 내려받기", data=png,
+                               file_name=f"성경QA_{re.sub(r'[^가-힣A-Za-z0-9]+','_', str(d.get('headword','결과')))[:24]}.png",
+                               mime="image/png", key=f"dl_qa_{qkey}")
 
         # ── 뜻 갈래
         if d.get("senses"):
@@ -6777,6 +6727,328 @@ BIBLE_VERSIONS = [
 ]
 
 
+# ==============================================================================
+# 시사주간뉴스 → 종이신문 발행 (A3 세로 · 8면 / PDF · 워드)
+#   ※ 기존 시사주간뉴스 기능에는 손대지 않고, 아래 블록만 덧붙입니다.
+# ==============================================================================
+try:
+    import news_paper as NEWS_PAPER
+    HAS_NEWS_PAPER = True
+except Exception as _e_np:
+    NEWS_PAPER = None
+    HAS_NEWS_PAPER = False
+    _NEWS_PAPER_ERR = f"{type(_e_np).__name__}: {_e_np}"
+
+
+@st.cache_resource(show_spinner=False)
+def _paper_fonts_ready():
+    """종이신문 엔진에 한글 폰트를 한 번만 물려 준다."""
+    if not HAS_NEWS_PAPER:
+        return ("", "")
+    reg, bold = ensure_korean_fonts()
+    try:
+        return NEWS_PAPER.configure(reg, bold, bg_provider=get_background_bytes)
+    except Exception:
+        return ("", "")
+
+
+PAPER_FIXED = {1: "1면 종합 (톱기사·사진·주요기사)",
+               2: "2면 이슈 해설 (큰 흐름·표·키워드)",
+               5: "5면 만평·사설",
+               6: "6면 도해·통계",
+               8: "8면 신앙·목회 (설교 연결·기도·판권)"}
+
+
+def _paper_ai_json(results, kws, ai_text, scripture, topic, theology,
+                   page_sections, paper_title):
+    """수집된 실제 헤드라인만으로 '신문 기사'를 쓰게 한다."""
+    brief = []
+    for name, v in results.items():
+        if not v["items"]:
+            continue
+        brief.append(f"[{name}]")
+        for it in v["items"][:8]:
+            w = it["when"].strftime("%m/%d") if it["when"] else ""
+            brief.append(f"- {it['title']} ({it['source']}, {w})")
+    headlines = "\n".join(brief)[:14000]
+    kwline = ", ".join(f"{w}({n})" for w, n in kws[:12])
+    plan = " / ".join(f"{p}면: {', '.join(v)}" for p, v in page_sections.items() if v)
+
+    task = f"""[이번 주 실제 수집된 기사 목록]
+{headlines}
+
+[이번 주 키워드] {kwline}
+[면 배치] {plan}
+
+[작업]
+위 기사 목록만을 근거로, '{paper_title}'이라는 주간신문(A3 8면)에 실을 기사를 쓰십시오.
+지어낸 사건·인물·수치·발언을 절대 넣지 마십시오. 위 목록에 있는 내용만 쓰십시오.
+
+[출력 — 아래 JSON 하나만. 설명 문장·코드표시 금지]
+{{
+ "masthead_sub": "제호 아래 한 줄 표어 (20자 이내)",
+ "top": {{
+   "kicker": "이번 주 톱",
+   "headline": "1면 톱기사 제목 (25자 내외, 신문체)",
+   "sub": "부제 한 줄 (40자 내외)",
+   "lead": "리드 문단 (2문장)",
+   "body": ["본문 1문단", "본문 2문단", "본문 3문단", "본문 4문단"],
+   "photo_caption": "사진 설명 한 줄 (25자 이내)"
+ }},
+ "second": [
+   {{"headline": "1면 두 번째 기사 제목", "body": ["1~2문단"], "source": "매체명"}},
+   {{"headline": "1면 세 번째 기사 제목", "body": ["1~2문단"], "source": "매체명"}}
+ ],
+ "flow3": [
+   {{"title": "이번 주 큰 흐름 ①", "body": ["2~3문장", "2~3문장"]}},
+   {{"title": "이번 주 큰 흐름 ②", "body": ["2~3문장"]}},
+   {{"title": "이번 주 큰 흐름 ③", "body": ["2~3문장"]}}
+ ],
+ "sections": [
+   {{"name": "섹션 이름(위 목록의 이름 그대로)", "headline": "그 섹션 머리기사 제목",
+     "lead": "리드 한 문장", "body": ["본문 1문단", "본문 2문단"]}}
+ ],
+ "cartoon": {{
+   "title": "만평 제목 (10자 내외)",
+   "left_line": "왼쪽 인물의 말 (20자 이내)",
+   "right_line": "오른쪽 인물의 말 (20자 이내)",
+   "caption": "만평 설명 한 줄 (풍자는 하되 특정 정당·인물을 비난하지 말 것)"
+ }},
+ "editorial": {{"title": "사설 — 제목", "body": ["1문단", "2문단", "3문단", "4문단"]}},
+ "table": {{"title": "표 제목", "headers": ["항목", "이번 주", "비고"],
+           "rows": [["항목명", "값", "설명"]]}},
+ "diagram": {{"title": "도해 제목", "center": "가운데 개념 (8자 이내)",
+             "nodes": [{{"label": "항목(6자 이내)", "desc": "설명(12자 이내)"}}]}},
+ "sermon_links": [
+   {{"event": "이번 주 사건", "text": "성경 본문 장절", "use": "강단에서 쓰는 법 한 문장"}}
+ ],
+ "prayer": ["기도제목 1", "기도제목 2", "기도제목 3", "기도제목 4"]
+}}
+
+[반드시 지킬 것]
+- "sections" 는 위 [면 배치]에 나온 섹션 이름을 그대로 써서 6개 이내로 채우십시오.
+- "table.rows" 는 3~8줄, "diagram.nodes" 는 4~6개, "sermon_links" 는 5~6개.
+- 특정 정당·정파를 지지하거나 비난하지 마십시오.
+- 사망·재난은 애도와 절제된 표현으로 다루십시오.
+- 신문 기사체(‘~했다’, ‘~로 보인다’)로 쓰고, 100% 한국어."""
+    return get_ai_response(
+        build_research_prompt(task, scripture or "이번 주 시사", topic, theology),
+        is_json=True, temperature=0.45, kind="news", max_tokens=12000)
+
+
+def render_news_paper_block(results, kws, chart_png, win_s, win_e, nkey,
+                            news_theme, ai_text, scripture, topic, theology):
+    """시사주간뉴스 결과를 A3 세로 8면 종이신문으로 발행한다."""
+    st.write("")
+    st.markdown("<div class='sec-head'>🗞️ 종이신문으로 발행하기 — A3 세로 · 8면</div>",
+                unsafe_allow_html=True)
+
+    if not HAS_NEWS_PAPER:
+        st.error("종이신문 엔진(news_paper.py)을 불러오지 못했습니다.\n\n"
+                 "GitHub 저장소에 **news_paper.py** 파일이 app.py 와 같은 위치에 "
+                 "올라가 있어야 합니다.")
+        st.code(globals().get("_NEWS_PAPER_ERR", ""), language="text")
+        return
+
+    _paper_fonts_ready()
+    names = [n for n, v in results.items() if v["items"]]
+    if not names:
+        st.caption("먼저 위에서 기사를 모아 주세요.")
+        return
+
+    pkey = f"paper::{nkey}"
+    st.caption("아래에서 **각 면에 실을 섹션**을 고르시면, 실제 종이신문처럼 "
+               "제호 · 톱기사 · 사진 · 만평 · 도해 · 표를 넣어 **A3 세로 8면**으로 "
+               "짜 드립니다. PDF와 워드로 내려받아 바로 인쇄하실 수 있습니다.")
+
+    c1, c2, c3, c4 = st.columns([1.2, 1, 1, 0.9])
+    with c1:
+        p_title = st.text_input("신문 이름(제호)", value=st.session_state.get(
+            "paper_title", "시사주간뉴스"), key="paper_title")
+    with c2:
+        p_pub = st.text_input("발행처", value=st.session_state.get(
+            "paper_pub", "화광교회"), key="paper_pub")
+    with c3:
+        p_ed = st.text_input("편집(선택)", value=st.session_state.get(
+            "paper_editor", ""), key="paper_editor")
+    with c4:
+        p_iss = st.text_input("호수", value=st.session_state.get(
+            "paper_issue", f"제 {win_e.isocalendar()[1]} 호"), key="paper_issue")
+
+    st.markdown("**📐 면 배치 — 각 면에 실을 섹션을 골라 주세요**")
+    st.caption("1 · 2 · 5 · 6 · 8면은 " +
+               " / ".join(PAPER_FIXED[k].split(" ", 1)[1] for k in (1, 2, 5, 6, 8)) +
+               " 으로 고정됩니다.")
+
+    dflt = {3: names[0::3], 4: names[1::3], 7: names[2::3]}
+    pcols = st.columns(3)
+    page_sections = {}
+    for i, no in enumerate((3, 4, 7)):
+        with pcols[i]:
+            page_sections[no] = st.multiselect(
+                f"{no}면에 실을 섹션", names,
+                default=[n for n in st.session_state.get(f"paper_p{no}", dflt[no])
+                         if n in names],
+                key=f"paper_p{no}")
+
+    photo_mode = st.radio(
+        "📷 신문 사진 만들기",
+        ["🎨 구글 AI 사진 (컬러)", "🎨 구글 AI 사진 (흑백 · 신문 느낌)", "⚡ 기본 그림 (빠름 · API 안 씀)"],
+        horizontal=True, key="paper_photo_mode",
+        help="구글 AI 사진은 목사님의 Gemini API 키로 기사 제목에 어울리는 사진 5장을 만듭니다. "
+             "(1면·3면·4면·7면·8면) 실패한 자리는 기본 그림으로 자동으로 채워집니다.")
+
+    g1, g2 = st.columns([1, 1.3])
+    with g1:
+        go = st.button("🗞️ 종이신문 만들기 (A3 8면)", type="primary",
+                       key=f"btn_paper_{nkey}")
+    with g2:
+        use_ai = st.toggle("🧠 AI가 기사·사설·만평까지 써 주기", value=True,
+                           key=f"paper_ai_{nkey}")
+
+    if go:
+        keep_open("news")
+        aj = None
+        if use_ai:
+            with st.spinner("AI가 이번 주 기사를 신문 기사체로 쓰는 중입니다... (1~2분)"):
+                try:
+                    r = _paper_ai_json(results, kws, ai_text, scripture, topic,
+                                       theology, page_sections, p_title)
+                    if isinstance(r, dict) and (r.get("top") or r.get("flow3")):
+                        aj = r
+                except Exception as e:
+                    st.warning(f"AI 기사 작성을 건너뜁니다. ({type(e).__name__})")
+        if use_ai and aj is None:
+            st.warning("AI 기사 작성에 실패해, 수집된 헤드라인만으로 지면을 짭니다. "
+                       "(신문은 정상적으로 만들어집니다)")
+
+        try:
+            spec = NEWS_PAPER.build_spec(
+                p_title, p_pub, win_s, win_e, results, ai_json=aj,
+                ai_text=ai_text or "", keywords=kws, chart_png=chart_png,
+                issue_no=p_iss, page_sections=page_sections, theme=news_theme,
+                seed=f"paper|{nkey}|{st.session_state.get('bg_shuffle', 0)}",
+                editor=p_ed, church=p_pub)
+            if aj and aj.get("sections"):
+                spec["ai_sections"] = aj["sections"]
+
+            bar = st.progress(0.0, text="지면에 넣을 사진·만평·도해를 그리는 중...")
+            spec["photo_mono"] = ("흑백" in photo_mode) or photo_mode.startswith("⚡")
+            photo_errs, photo_n, photo_model = [], 0, ""
+            if photo_mode.startswith("🎨"):
+                _key = get_resolved_api_key()
+                if not _key:
+                    photo_errs.append("Gemini API 키가 없어 기본 그림으로 넣었습니다.")
+                else:
+                    bar.progress(0.02, text="구글 AI가 기사에 맞는 사진을 만드는 중... (1~2분)")
+                    try:
+                        photo_n, photo_errs, photo_model = NEWS_PAPER.generate_google_photos(
+                            spec, _key, budget=150,
+                            progress=lambda f, k: bar.progress(
+                                min(0.55, 0.02 + f * 0.53),
+                                text=f"구글 AI 사진 만드는 중... ({int(f*5)}/5)"))
+                    except Exception as e:
+                        photo_errs.append(f"{type(e).__name__}: {e}")
+            NEWS_PAPER.render_images(
+                spec, progress=lambda f, k: bar.progress(
+                    min(0.75, 0.55 + f * 0.2), text=f"그림을 그리는 중... ({k})"))
+            bar.progress(0.78, text="A3 8면 PDF를 짜는 중...")
+            pdf_b = NEWS_PAPER.make_pdf(spec)
+            bar.progress(0.92, text="워드 파일을 만드는 중...")
+            docx_b = NEWS_PAPER.make_docx(spec)
+            bar.progress(1.0, text="완성되었습니다.")
+
+            st.session_state[pkey] = {
+                "pdf": pdf_b, "docx": docx_b,
+                "outline": NEWS_PAPER.outline_text(spec),
+                "cartoon": NEWS_PAPER.pil_to_bytes(spec["images"]["cartoon"]),
+                "diagram": NEWS_PAPER.pil_to_bytes(spec["images"]["diagram"]),
+                "cover": NEWS_PAPER.pil_to_bytes(spec["images"]["top"], "JPEG"),
+                "title": p_title, "ai": bool(aj),
+                "photo_mode": photo_mode, "photo_n": photo_n,
+                "photo_errs": photo_errs[:6], "photo_model": photo_model,
+                "photos": {k: NEWS_PAPER.pil_to_bytes(spec["images"][k], "JPEG", 82)
+                           for k in ("top", "p3", "p4", "p7", "p8")
+                           if k in (spec.get("photo_bytes") or {})},
+            }
+        except Exception as e:
+            st.session_state.pop(pkey, None)
+            st.error(f"신문을 짜는 중 문제가 생겼습니다: {type(e).__name__}: {e}")
+        st.rerun()
+
+    pdata = st.session_state.get(pkey)
+    if not pdata:
+        st.caption("면 배치를 고르고 위 [🗞️ 종이신문 만들기] 를 눌러 주세요.")
+        return
+
+    st.success(f"**{pdata['title']}** A3 세로 8면이 완성되었습니다."
+               + ("" if pdata["ai"] else "  (AI 기사 없이 헤드라인으로 구성)"))
+
+    if pdata.get("photo_mode", "").startswith("🎨"):
+        if pdata.get("photo_n"):
+            st.info(f"📷 구글 AI 사진 {pdata['photo_n']}장을 넣었습니다"
+                    + (f" (모델: {pdata['photo_model']})" if pdata.get("photo_model") else "")
+                    + ". 사진 설명에는 ‘구글 AI 생성 이미지’라고 표시됩니다."
+                    + ("" if pdata["photo_n"] >= 5 else
+                       f" 나머지 {5 - pdata['photo_n']}장은 기본 그림으로 채웠습니다."))
+        else:
+            st.warning("📷 구글 AI 사진을 만들지 못해 기본 그림으로 넣었습니다. "
+                       "(신문은 정상적으로 완성되었습니다)")
+        if pdata.get("photo_errs"):
+            with st.popover("🔎 사진 오류 자세히"):
+                for e in pdata["photo_errs"]:
+                    st.code(e, language="text")
+                st.caption("‘429’는 구글 무료 한도 초과입니다. 잠시 뒤 다시 하시거나 "
+                           "‘기본 그림’을 고르세요. ‘403/404’는 이 API 키로 이미지 모델을 "
+                           "쓸 수 없다는 뜻입니다(유료 결제 연결이 필요할 수 있음).")
+    if pdata.get("photos"):
+        st.markdown("**📷 이번 호 사진**")
+        _names = {"top": "1면", "p3": "3면", "p4": "4면", "p7": "7면", "p8": "8면"}
+        _pc = st.columns(len(pdata["photos"]))
+        for _i, (_k, _b) in enumerate(pdata["photos"].items()):
+            with _pc[_i]:
+                st_image_full(_b, caption=_names.get(_k, _k))
+
+    st.markdown("**📄 면 구성**")
+    st.markdown(
+        "<div class='lib-card' style='padding:12px 16px;'>" +
+        "".join(f"<div style='padding:5px 0;border-bottom:1px solid "
+                f"rgba(148,163,255,.14);'><b style='color:#fde047;'>{no}면</b> "
+                f"&nbsp; <span style='color:#e8ecff;'>{_esc(nm)}</span> "
+                f"&nbsp; <span style='color:#93a3d0;font-size:12px;'>{_esc(ds)}</span>"
+                f"</div>" for no, nm, ds in pdata["outline"]) +
+        "</div>", unsafe_allow_html=True)
+
+    v1, v2 = st.columns(2)
+    with v1:
+        st.markdown("**🖋️ 이번 호 만평 (5면)**")
+        st_image_full(pdata["cartoon"])
+    with v2:
+        st.markdown("**📊 이번 호 도해 (6면)**")
+        st_image_full(pdata["diagram"])
+
+    st.write("")
+    st.markdown("**📥 내려받기**")
+    d1, d2, d3, d4 = st.columns(4)
+    stamp = win_e.strftime("%Y%m%d")
+    base = f"{pdata['title']}_{stamp}_A3_8면"
+    with d1:
+        render_dl("📥 신문 PDF (A3)", pdata["pdf"], f"{base}.pdf", "pdf",
+                  key=f"dl_paper_pdf_{nkey}")
+    with d2:
+        render_dl("📥 신문 워드", pdata["docx"], f"{base}.docx", "docx",
+                  key=f"dl_paper_docx_{nkey}")
+    with d3:
+        render_dl("📥 만평(PNG)", pdata["cartoon"], f"{base}_만평.png", "png",
+                  key=f"dl_paper_cart_{nkey}")
+    with d4:
+        render_dl("📥 도해(PNG)", pdata["diagram"], f"{base}_도해.png", "png",
+                  key=f"dl_paper_dgm_{nkey}")
+    st.caption("PDF는 A3(297×420mm) 세로 8면입니다. 집·사무실 프린터에서는 "
+               "인쇄 설정에서 **‘용지에 맞춤(A4 축소)’** 을 고르시면 A4로도 뽑힙니다. "
+               "워드 파일은 내용을 직접 고쳐 쓰실 수 있습니다.")
+
+
 def render_weekly_news_section(scripture: str, topic: str, theology: str):
     """시사주간뉴스 — 실시간 수집 + 잡지형 정리 + 설교 연결 포인트"""
     with open_expander("📰 시사주간뉴스 — 한 주간 이슈를 설교 자료로", "news"):
@@ -6960,9 +7232,9 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
 
         cv1, cv2 = st.columns(2)
         with cv1:
-            render_dl("📥 표지 이미지(PNG)", cover,
-                      f"시사주간뉴스_표지_{win_e.strftime('%Y%m%d')}.png",
-                      "png", f"dl_newscover_{nkey}")
+            st.download_button("📥 표지 이미지(PNG)", data=cover,
+                               file_name=f"시사주간뉴스_표지_{win_e.strftime('%Y%m%d')}.png",
+                               mime="image/png", key=f"dl_newscover_{nkey}")
         with cv2:
             if st.button("🔀 표지 배경 바꾸기", key=f"news_shuffle_{nkey}"):
                 keep_open("news")
@@ -6977,9 +7249,9 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
                                       json.dumps(kws, ensure_ascii=False))
         st.markdown("#### 📊 이번 주 통계")
         st_image_full(chart, caption="섹션별 기사 수 · 이번 주 키워드")
-        render_dl("📥 통계 그래프(PNG)", chart,
-                  f"시사주간뉴스_통계_{win_e.strftime('%Y%m%d')}.png",
-                  "png", f"dl_newschart_{nkey}")
+        st.download_button("📥 통계 그래프(PNG)", data=chart,
+                           file_name=f"시사주간뉴스_통계_{win_e.strftime('%Y%m%d')}.png",
+                           mime="image/png", key=f"dl_newschart_{nkey}")
 
         if kws:
             st.markdown("**이번 주 키워드** &nbsp; " + " ".join(
@@ -7052,6 +7324,11 @@ def render_weekly_news_section(scripture: str, topic: str, theology: str):
         render_section_top_toolbar(f"시사주간뉴스_{win_e.strftime('%Y%m%d')}",
                                    st.session_state[_nw_fld], _nw_sk, exp_key="news")
         editable_section(_nw_sk, _nw_fld, "시사주간뉴스 내용 편집", height=460, exp_key="news")
+
+        # ── 종이신문(A3 세로 8면) 발행 — 기존 기능 위에 덧붙인 부분
+        render_news_paper_block(results, kws, chart, win_s, win_e, nkey,
+                                news_theme, data.get("ai", ""),
+                                scripture, topic, theology)
 
         if errors:
             with st.expander("🔎 일부 섹션 수집 오류"):
@@ -7176,10 +7453,10 @@ def render_version_compare_section(scripture: str, topic: str, theology: str):
             w = _csv.DictWriter(buf, fieldnames=list(table[0].keys()))
             w.writeheader()
             w.writerows(table)
-            render_dl("📥 표 그대로 내려받기 (CSV · 엑셀에서 열기)",
-                      ("﻿" + buf.getvalue()).encode("utf-8"),
-                      f"{scripture}_번역본비교.csv", "csv",
-                      f"dl_vercsv_{abs(hash(scripture)) % 9999}")
+            st.download_button("📥 표 그대로 내려받기 (CSV · 엑셀에서 열기)",
+                               data=("﻿" + buf.getvalue()).encode("utf-8"),
+                               file_name=f"{scripture}_번역본비교.csv", mime="text/csv",
+                               key=f"dl_vercsv_{abs(hash(scripture)) % 9999}")
         except Exception:
             pass
 
@@ -7413,7 +7690,8 @@ with st.sidebar.expander("🩺 다운로드가 안 될 때 (진단)", expanded=F
               f"생성 시각: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n").encode("utf-8")
 
     st.markdown("**① 가장 단순한 내려받기 (0.1KB)**")
-    render_dl("① 시험 파일 받기", _probe, "다운로드점검.txt", "txt", "diag_dl_btn")
+    st.download_button("① 시험 파일 받기", data=_probe, file_name="다운로드점검.txt",
+                       mime="text/plain", key="diag_dl_btn")
 
     st.markdown("**② 주소 링크로 내려받기**")
     _u = static_file_url(_probe, "다운로드점검.txt", "diag_probe")
@@ -7772,19 +8050,20 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                 if st.session_state.get("card_list"):
                     cj = json.dumps(st.session_state.card_list, ensure_ascii=False)
                     with e2:
-                        render_dl("📥 PPT 전체",
-                                  generate_cardnews_pptx_bytes(cj, st.session_state.cn_church_name,
-                                                                bg_seed(0), current_bg_theme(),
-                                                                st.session_state.sermon_scripture),
-                                  f"{st.session_state.sermon_title}_카드뉴스.pptx",
-                                  "pptx", "cn_dl_ppt")
+                        st.download_button("📥 PPT 전체",
+                                           data=generate_cardnews_pptx_bytes(cj, st.session_state.cn_church_name,
+                                                                             bg_seed(0), current_bg_theme(),
+                                                                             st.session_state.sermon_scripture),
+                                           file_name=f"{st.session_state.sermon_title}_카드뉴스.pptx",
+                                           mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                                           key="cn_dl_ppt")
                     with e3:
-                        render_dl("📦 전체 PNG",
-                                  generate_cardnews_zip_bytes(cj, st.session_state.sermon_scripture,
-                                                               st.session_state.cn_church_name,
-                                                               bg_seed(0), current_bg_theme()),
-                                  f"{st.session_state.sermon_title}_카드뉴스.zip",
-                                  "zip", "cn_dl_zip")
+                        st.download_button("📦 전체 PNG",
+                                           data=generate_cardnews_zip_bytes(cj, st.session_state.sermon_scripture,
+                                                                            st.session_state.cn_church_name,
+                                                                            bg_seed(0), current_bg_theme()),
+                                           file_name=f"{st.session_state.sermon_title}_카드뉴스.zip",
+                                           mime="application/zip", key="cn_dl_zip")
 
             o1, o2 = st.columns([1, 1])
             with o1:
@@ -7847,9 +8126,9 @@ if app_mode == "📊 설교 대시보드 (메인 작업실)":
                         st.session_state.sermon_scripture, st.session_state.cn_church_name,
                         f"{bg_seed(0)}|{idx}", current_bg_theme())
                     st_image_full(png, caption=f"{idx+1} / {total} — 실제 다운로드 결과와 동일")
-                    render_dl(f"🖼️ CARD {idx+1} PNG 다운로드", png,
-                              f"{st.session_state.sermon_title}_card_{idx+1}.png",
-                              "png", f"dl_card_{idx}")
+                    st.download_button(f"🖼️ CARD {idx+1} PNG 다운로드", data=png,
+                                       file_name=f"{st.session_state.sermon_title}_card_{idx+1}.png",
+                                       mime="image/png", key=f"dl_card_{idx}")
 
                 st.write("---")
                 st.markdown("#### 인스타그램 캡션")
@@ -8236,9 +8515,9 @@ elif app_mode == "🎙️ AI 보이스오버 스튜디오":
         if p and os.path.exists(p):
             st.audio(p)
             with open(p, "rb") as af:
-                render_dl("📥 MP3 다운로드", af.read(),
-                          f"{st.session_state.sermon_title}_voice.mp3",
-                          "mp3", "dl_vo_mp3")
+                st.download_button("📥 MP3 다운로드", data=af.read(),
+                                   file_name=f"{st.session_state.sermon_title}_voice.mp3",
+                                   mime="audio/mp3", key="dl_vo_mp3")
         else:
             st.info("왼쪽에서 생성하면 이곳에 플레이어가 나타납니다.")
 
@@ -8295,8 +8574,8 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
                 st.video(r)
             with v2:
                 with open(r, "rb") as f:
-                    render_dl("📥 MP4 다운로드", f.read(),
-                              f"{yt_title}_shorts.mp4", "mp4", "dl_yt")
+                    st.download_button("📥 MP4 다운로드", data=f.read(),
+                                       file_name=f"{yt_title}_shorts.mp4", mime="video/mp4", key="dl_yt")
 
     with tab_ai:
         s1, s2, s3 = st.columns(3)
@@ -8383,8 +8662,8 @@ elif app_mode == "🎬 쇼츠 만들기 (스튜디오)":
             if out and os.path.exists(out):
                 st.video(out)
                 with open(out, "rb") as vf:
-                    render_dl("📥 MP4 다운로드", vf.read(),
-                              "sermon_shorts.mp4", "mp4", "dl_shorts_mp4")
+                    st.download_button("📥 MP4 다운로드", data=vf.read(), file_name="sermon_shorts.mp4",
+                                       mime="video/mp4", key="dl_shorts_mp4")
             else:
                 st.info("렌더링하면 이곳에 영상이 나타납니다.")
 
@@ -8447,9 +8726,9 @@ elif app_mode == "📷 말씀카드 이미지":
         png = generate_verse_card_png(v_text, v_scrip, bg_opt, up_file, fsize, lspace,
                                       fcolor, scolor, opacity, v_church, bg_index=bg_i)
         st_image_full(png.getvalue(), caption="1:1 고화질 말씀카드")
-        render_dl("📥 PNG 다운로드", png.getvalue(),
-                  f"{st.session_state.sermon_title}_말씀카드.png",
-                  "png", "dl_verse_card")
+        st.download_button("📥 PNG 다운로드", data=png.getvalue(),
+                           file_name=f"{st.session_state.sermon_title}_말씀카드.png",
+                           mime="image/png", key="dl_verse_card")
 
 
 # ==============================================================================
@@ -8476,10 +8755,10 @@ elif app_mode == "📚 설교 서재 (Sermon Library)":
     with t2:
         k1, k2 = st.columns(2)
         with k1:
-            render_dl("💾 전체 백업(.json)",
-                      json.dumps(sermons_db, ensure_ascii=False, indent=2).encode('utf-8'),
-                      f"설교서재_백업_{datetime.now().strftime('%Y%m%d')}.json",
-                      "json", "dl_backup")
+            st.download_button("💾 전체 백업(.json)",
+                               data=json.dumps(sermons_db, ensure_ascii=False, indent=2).encode('utf-8'),
+                               file_name=f"설교서재_백업_{datetime.now().strftime('%Y%m%d')}.json",
+                               mime="application/json", key="dl_backup")
         with k2:
             with st.popover("📂 백업 복원"):
                 rf = st.file_uploader("백업 JSON", type=["json"], key="up_restore")
