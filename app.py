@@ -6746,22 +6746,31 @@ def _paper_fonts_ready():
     if not HAS_NEWS_PAPER:
         return ("", "")
     reg, bold = ensure_korean_fonts()
+    # PDF 용 글꼴은 .ttf 여야 한다 — 아니면 나눔고딕을 받아 둔다
+    if not (reg or "").lower().endswith(".ttf") or not (bold or "").lower().endswith(".ttf"):
+        for _kind, _fn in (("regular", "NanumGothic-Regular.ttf"), ("bold", "NanumGothic-Bold.ttf")):
+            _dst = os.path.join(FONT_DIR, _fn)
+            if not os.path.exists(_dst):
+                try:
+                    _download_font(_kind, _dst)
+                except Exception:
+                    pass
     try:
         return NEWS_PAPER.configure(reg, bold, bg_provider=get_background_bytes)
     except Exception:
         return ("", "")
 
 
-PAPER_FIXED = {1: "1면 종합 (톱기사·사진·주요기사)",
-               2: "2면 이슈 해설 (큰 흐름·표·키워드)",
-               5: "5면 만평·사설",
-               6: "6면 도해·통계",
-               8: "8면 신앙·목회 (설교 연결·기도·판권)"}
+PAPER_KIND_LABEL = {"front": "종합", "analysis": "이슈 해설", "cartoon": "만평·사설",
+                    "graphics": "도해·통계", "faith": "신앙·목회", "opinion": "오피니언",
+                    "infographic": "도표로 보는 한 주", "church": "교회·설교",
+                    "closing": "기도·판권"}
 
 
 def _paper_ai_json(results, kws, ai_text, scripture, topic, theology,
-                   page_sections, paper_title):
+                   page_sections, paper_title, npages=8):
     """수집된 실제 헤드라인만으로 '신문 기사'를 쓰게 한다."""
+    n16 = int(npages) >= 16
     brief = []
     for name, v in results.items():
         if not v["items"]:
@@ -6770,9 +6779,26 @@ def _paper_ai_json(results, kws, ai_text, scripture, topic, theology,
         for it in v["items"][:8]:
             w = it["when"].strftime("%m/%d") if it["when"] else ""
             brief.append(f"- {it['title']} ({it['source']}, {w})")
-    headlines = "\n".join(brief)[:14000]
+    headlines = "\n".join(brief)[:16000]
     kwline = ", ".join(f"{w}({n})" for w, n in kws[:12])
     plan = " / ".join(f"{p}면: {', '.join(v)}" for p, v in page_sections.items() if v)
+    nsec = len({n for v in page_sections.values() for n in v})
+
+    extra16 = ""
+    if n16:
+        extra16 = """,
+ "cartoon2": {
+   "title": "두 번째 만평 제목 (10자 내외)",
+   "scene": "그림 장면 묘사 (한 문장, 누가 어디서 무엇을 하는지)",
+   "left_line": "왼쪽 인물의 말 (20자 이내)",
+   "right_line": "오른쪽 인물의 말 (20자 이내)",
+   "caption": "만평 설명 한 줄"
+ },
+ "columns": [
+   {"title": "칼럼 — 제목", "body": ["1문단", "2문단", "3문단", "4문단"]},
+   {"title": "칼럼 — 제목", "body": ["1문단", "2문단", "3문단", "4문단"]}
+ ],
+ "infographic": {"title": "숫자로 보는 한 주 (또는 더 알맞은 제목)"}"""
 
     task = f"""[이번 주 실제 수집된 기사 목록]
 {headlines}
@@ -6781,7 +6807,7 @@ def _paper_ai_json(results, kws, ai_text, scripture, topic, theology,
 [면 배치] {plan}
 
 [작업]
-위 기사 목록만을 근거로, '{paper_title}'이라는 주간신문(A3 8면)에 실을 기사를 쓰십시오.
+위 기사 목록만을 근거로, '{paper_title}'이라는 주간신문(A3 {npages}면)에 실을 기사를 쓰십시오.
 지어낸 사건·인물·수치·발언을 절대 넣지 마십시오. 위 목록에 있는 내용만 쓰십시오.
 
 [출력 — 아래 JSON 하나만. 설명 문장·코드표시 금지]
@@ -6810,6 +6836,7 @@ def _paper_ai_json(results, kws, ai_text, scripture, topic, theology,
  ],
  "cartoon": {{
    "title": "만평 제목 (10자 내외)",
+   "scene": "그림 장면 묘사 (한 문장, 누가 어디서 무엇을 하는지)",
    "left_line": "왼쪽 인물의 말 (20자 이내)",
    "right_line": "오른쪽 인물의 말 (20자 이내)",
    "caption": "만평 설명 한 줄 (풍자는 하되 특정 정당·인물을 비난하지 말 것)"
@@ -6822,25 +6849,28 @@ def _paper_ai_json(results, kws, ai_text, scripture, topic, theology,
  "sermon_links": [
    {{"event": "이번 주 사건", "text": "성경 본문 장절", "use": "강단에서 쓰는 법 한 문장"}}
  ],
- "prayer": ["기도제목 1", "기도제목 2", "기도제목 3", "기도제목 4"]
+ "prayer": ["기도제목 1", "기도제목 2", "기도제목 3", "기도제목 4"]{extra16}
 }}
 
 [반드시 지킬 것]
-- "sections" 는 위 [면 배치]에 나온 섹션 이름을 그대로 써서 6개 이내로 채우십시오.
+- "sections" 는 위 [면 배치]에 나온 섹션 이름을 그대로 써서 {min(16, max(6, nsec))}개 이내로 채우십시오.
 - "table.rows" 는 3~8줄, "diagram.nodes" 는 4~6개, "sermon_links" 는 5~6개.
+- 표의 숫자는 기사 제목에 실제로 나온 숫자만 쓰십시오.
+- 만평은 실존 인물(정치인·연예인·종교지도자)을 등장시키지 말고 평범한 가상의 인물로 구성하십시오.
 - 특정 정당·정파를 지지하거나 비난하지 마십시오.
 - 사망·재난은 애도와 절제된 표현으로 다루십시오.
 - 신문 기사체(‘~했다’, ‘~로 보인다’)로 쓰고, 100% 한국어."""
     return get_ai_response(
         build_research_prompt(task, scripture or "이번 주 시사", topic, theology),
-        is_json=True, temperature=0.45, kind="news", max_tokens=12000)
+        is_json=True, temperature=0.45, kind="news",
+        max_tokens=16000 if n16 else 12000)
 
 
 def render_news_paper_block(results, kws, chart_png, win_s, win_e, nkey,
                             news_theme, ai_text, scripture, topic, theology):
-    """시사주간뉴스 결과를 A3 세로 8면 종이신문으로 발행한다."""
+    """시사주간뉴스 결과를 A3 세로 8면/16면 종이신문으로 발행한다."""
     st.write("")
-    st.markdown("<div class='sec-head'>🗞️ 종이신문으로 발행하기 — A3 세로 · 8면</div>",
+    st.markdown("<div class='sec-head'>🗞️ 종이신문으로 발행하기 — A3 세로 · 16면 / 8면</div>",
                 unsafe_allow_html=True)
 
     if not HAS_NEWS_PAPER:
@@ -6848,6 +6878,10 @@ def render_news_paper_block(results, kws, chart_png, win_s, win_e, nkey,
                  "GitHub 저장소에 **news_paper.py** 파일이 app.py 와 같은 위치에 "
                  "올라가 있어야 합니다.")
         st.code(globals().get("_NEWS_PAPER_ERR", ""), language="text")
+        return
+    if not hasattr(NEWS_PAPER, "generate_google_images"):
+        st.error("news_paper.py 가 예전 버전입니다. 새 news_paper.py 로 바꿔 올려 주세요. "
+                 "(16면 · 구글 AI 만평/도표 기능이 들어 있는 파일)")
         return
 
     _paper_fonts_ready()
@@ -6857,9 +6891,9 @@ def render_news_paper_block(results, kws, chart_png, win_s, win_e, nkey,
         return
 
     pkey = f"paper::{nkey}"
-    st.caption("아래에서 **각 면에 실을 섹션**을 고르시면, 실제 종이신문처럼 "
-               "제호 · 톱기사 · 사진 · 만평 · 도해 · 표를 넣어 **A3 세로 8면**으로 "
-               "짜 드립니다. PDF와 워드로 내려받아 바로 인쇄하실 수 있습니다.")
+    st.caption("아래에서 **면 수**와 **각 면에 실을 섹션**을 고르시면, 실제 종이신문처럼 "
+               "제호 · 톱기사 · 사진 · 만평 · 도해 · 도표를 넣어 **A3 세로**로 짜 드립니다. "
+               "PDF와 워드로 내려받아 바로 인쇄하실 수 있습니다.")
 
     c1, c2, c3, c4 = st.columns([1.2, 1, 1, 0.9])
     with c1:
@@ -6875,32 +6909,56 @@ def render_news_paper_block(results, kws, chart_png, win_s, win_e, nkey,
         p_iss = st.text_input("호수", value=st.session_state.get(
             "paper_issue", f"제 {win_e.isocalendar()[1]} 호"), key="paper_issue")
 
+    pages_label = st.radio("📰 면 수", ["16면 (A3 세로 16면)", "8면 (A3 세로 8면)"],
+                           horizontal=True, key="paper_npages")
+    npages = 16 if pages_label.startswith("16") else 8
+    plan = NEWS_PAPER.plan_of(npages)
+    spages = NEWS_PAPER.section_pages(npages)
+
     st.markdown("**📐 면 배치 — 각 면에 실을 섹션을 골라 주세요**")
-    st.caption("1 · 2 · 5 · 6 · 8면은 " +
-               " / ".join(PAPER_FIXED[k].split(" ", 1)[1] for k in (1, 2, 5, 6, 8)) +
-               " 으로 고정됩니다.")
+    st.caption(" · ".join(f"{no}면 {PAPER_KIND_LABEL[k]}" for no, k, _ in plan if k != "section")
+               + "  은 고정 면입니다.")
+    if len(names) < len(spages):
+        st.info(f"모은 섹션이 {len(names)}개라 섹션 면({len(spages)}개)보다 적습니다. "
+                "비는 면은 기사가 많은 섹션의 **‘이어서 보기’** 면으로 자동으로 채워집니다. "
+                "(위에서 섹션을 더 고르고 ‘섹션당 기사 수’를 늘리시면 더 풍성해집니다)")
 
-    dflt = {3: names[0::3], 4: names[1::3], 7: names[2::3]}
-    pcols = st.columns(3)
+    dflt = NEWS_PAPER.default_page_sections(names, npages)
     page_sections = {}
-    for i, no in enumerate((3, 4, 7)):
-        with pcols[i]:
-            page_sections[no] = st.multiselect(
-                f"{no}면에 실을 섹션", names,
-                default=[n for n in st.session_state.get(f"paper_p{no}", dflt[no])
-                         if n in names],
-                key=f"paper_p{no}")
+    per_row = 4
+    for r0 in range(0, len(spages), per_row):
+        row = spages[r0:r0 + per_row]
+        pcols = st.columns(per_row)
+        for i, no in enumerate(row):
+            with pcols[i]:
+                k = f"paper{npages}_p{no}"
+                page_sections[no] = st.multiselect(
+                    f"{no}면 섹션", names,
+                    default=[n for n in st.session_state.get(k, dflt[no]) if n in names],
+                    key=k)
 
+    st.markdown("**🎨 그림 — 구글 AI(제미나이)로 그리기**")
     photo_mode = st.radio(
-        "📷 신문 사진 만들기",
+        "📷 신문 사진",
         ["🎨 구글 AI 사진 (컬러)", "🎨 구글 AI 사진 (흑백 · 신문 느낌)", "⚡ 기본 그림 (빠름 · API 안 씀)"],
         horizontal=True, key="paper_photo_mode",
-        help="구글 AI 사진은 목사님의 Gemini API 키로 기사 제목에 어울리는 사진 5장을 만듭니다. "
-             "(1면·3면·4면·7면·8면) 실패한 자리는 기본 그림으로 자동으로 채워집니다.")
+        help="구글 AI 사진은 목사님의 Gemini API 키로 기사 제목에 어울리는 사진을 만듭니다. "
+             "실패한 자리는 기본 그림으로 자동으로 채워집니다.")
+    t1, t2 = st.columns(2)
+    with t1:
+        gfx_ai = st.toggle("🖋️ 만평 · 도해 · 도표도 구글 AI로 그리기", value=True,
+                           key="paper_gfx_ai",
+                           help="16면이면 만평 2컷 · 도해 · ‘숫자로 보는 한 주’ 인포그래픽, "
+                                "8면이면 만평 · 도해를 제미나이가 그립니다.")
+    with t2:
+        cart_text = st.toggle("💬 만평 말풍선 글씨도 그림 안에 넣기", value=False,
+                              key="paper_cart_text",
+                              help="끄면(권장) 대사를 그림 아래에 앱이 정확한 한글로 넣습니다. "
+                                   "켜면 제미나이가 말풍선 안에 직접 쓰는데, 한글이 가끔 깨질 수 있습니다.")
 
     g1, g2 = st.columns([1, 1.3])
     with g1:
-        go = st.button("🗞️ 종이신문 만들기 (A3 8면)", type="primary",
+        go = st.button(f"🗞️ 종이신문 만들기 (A3 {npages}면)", type="primary",
                        key=f"btn_paper_{nkey}")
     with g2:
         use_ai = st.toggle("🧠 AI가 기사·사설·만평까지 써 주기", value=True,
@@ -6913,7 +6971,7 @@ def render_news_paper_block(results, kws, chart_png, win_s, win_e, nkey,
             with st.spinner("AI가 이번 주 기사를 신문 기사체로 쓰는 중입니다... (1~2분)"):
                 try:
                     r = _paper_ai_json(results, kws, ai_text, scripture, topic,
-                                       theology, page_sections, p_title)
+                                       theology, page_sections, p_title, npages)
                     if isinstance(r, dict) and (r.get("top") or r.get("flow3")):
                         aj = r
                 except Exception as e:
@@ -6928,48 +6986,58 @@ def render_news_paper_block(results, kws, chart_png, win_s, win_e, nkey,
                 ai_text=ai_text or "", keywords=kws, chart_png=chart_png,
                 issue_no=p_iss, page_sections=page_sections, theme=news_theme,
                 seed=f"paper|{nkey}|{st.session_state.get('bg_shuffle', 0)}",
-                editor=p_ed, church=p_pub)
-            if aj and aj.get("sections"):
-                spec["ai_sections"] = aj["sections"]
+                editor=p_ed, church=p_pub, npages=npages)
 
             bar = st.progress(0.0, text="지면에 넣을 사진·만평·도해를 그리는 중...")
             spec["photo_mono"] = ("흑백" in photo_mode) or photo_mode.startswith("⚡")
-            photo_errs, photo_n, photo_model = [], 0, ""
-            if photo_mode.startswith("🎨"):
+            spec["cartoon_text_inside"] = bool(cart_text)
+            want_photos = photo_mode.startswith("🎨")
+            img_errs, img_n, img_total, img_model = [], 0, 0, ""
+            if want_photos or gfx_ai:
                 _key = get_resolved_api_key()
                 if not _key:
-                    photo_errs.append("Gemini API 키가 없어 기본 그림으로 넣었습니다.")
+                    img_errs.append("Gemini API 키가 없어 기본 그림으로 넣었습니다.")
                 else:
-                    bar.progress(0.02, text="구글 AI가 기사에 맞는 사진을 만드는 중... (1~2분)")
+                    exp_total = ((len(NEWS_PAPER.photo_page_keys(npages)) if want_photos else 0)
+                                 + ((4 if npages >= 16 else 2) if gfx_ai else 0))
+                    bar.progress(0.02, text=f"구글 AI가 그림 {exp_total}장을 그리는 중... "
+                                            f"({'3~4분' if exp_total > 8 else '1~2분'})")
                     try:
-                        photo_n, photo_errs, photo_model = NEWS_PAPER.generate_google_photos(
-                            spec, _key, budget=150,
+                        img_n, img_errs, img_model, img_total = NEWS_PAPER.generate_google_images(
+                            spec, _key, budget=(260 if npages >= 16 else 160),
+                            photos=want_photos, graphics=gfx_ai, text_inside=bool(cart_text),
                             progress=lambda f, k: bar.progress(
                                 min(0.55, 0.02 + f * 0.53),
-                                text=f"구글 AI 사진 만드는 중... ({int(f*5)}/5)"))
+                                text=f"구글 AI 그림 그리는 중... ({round(f * exp_total)}/{exp_total})"))
                     except Exception as e:
-                        photo_errs.append(f"{type(e).__name__}: {e}")
+                        img_errs.append(f"{type(e).__name__}: {e}")
             NEWS_PAPER.render_images(
                 spec, progress=lambda f, k: bar.progress(
-                    min(0.75, 0.55 + f * 0.2), text=f"그림을 그리는 중... ({k})"))
-            bar.progress(0.78, text="A3 8면 PDF를 짜는 중...")
+                    min(0.75, 0.55 + f * 0.2), text=f"그림을 앉히는 중... ({k})"))
+            bar.progress(0.78, text=f"A3 {npages}면 PDF를 짜는 중...")
             pdf_b = NEWS_PAPER.make_pdf(spec)
             bar.progress(0.92, text="워드 파일을 만드는 중...")
             docx_b = NEWS_PAPER.make_docx(spec)
             bar.progress(1.0, text="완성되었습니다.")
 
+            imgs = spec["images"]
+            gb = spec.get("gfx_bytes") or {}
+            pb = spec.get("photo_bytes") or {}
             st.session_state[pkey] = {
-                "pdf": pdf_b, "docx": docx_b,
+                "pdf": pdf_b, "docx": docx_b, "npages": npages,
                 "outline": NEWS_PAPER.outline_text(spec),
-                "cartoon": NEWS_PAPER.pil_to_bytes(spec["images"]["cartoon"]),
-                "diagram": NEWS_PAPER.pil_to_bytes(spec["images"]["diagram"]),
-                "cover": NEWS_PAPER.pil_to_bytes(spec["images"]["top"], "JPEG"),
+                "gfx": {k: NEWS_PAPER.pil_to_bytes(imgs[k])
+                        for k in ("cartoon", "diagram", "cartoon2", "infographic") if k in imgs},
+                "gfx_ai": sorted(gb.keys()),
+                "cartoon": NEWS_PAPER.pil_to_bytes(imgs["cartoon"]),
+                "diagram": NEWS_PAPER.pil_to_bytes(imgs["diagram"]),
                 "title": p_title, "ai": bool(aj),
-                "photo_mode": photo_mode, "photo_n": photo_n,
-                "photo_errs": photo_errs[:6], "photo_model": photo_model,
-                "photos": {k: NEWS_PAPER.pil_to_bytes(spec["images"][k], "JPEG", 82)
-                           for k in ("top", "p3", "p4", "p7", "p8")
-                           if k in (spec.get("photo_bytes") or {})},
+                "photo_mode": photo_mode, "gfx_on": bool(gfx_ai),
+                "img_n": img_n, "img_total": img_total,
+                "photo_n": len(pb), "gfx_n": len(gb),
+                "img_errs": img_errs[:8], "img_model": img_model,
+                "photos": {k: NEWS_PAPER.pil_to_bytes(imgs[k], "JPEG", 82)
+                           for k in NEWS_PAPER.photo_page_keys(npages) if k in pb},
             }
         except Exception as e:
             st.session_state.pop(pkey, None)
@@ -6978,36 +7046,60 @@ def render_news_paper_block(results, kws, chart_png, win_s, win_e, nkey,
 
     pdata = st.session_state.get(pkey)
     if not pdata:
-        st.caption("면 배치를 고르고 위 [🗞️ 종이신문 만들기] 를 눌러 주세요.")
+        st.caption("면 수와 면 배치를 고르고 위 [🗞️ 종이신문 만들기] 를 눌러 주세요.")
         return
 
-    st.success(f"**{pdata['title']}** A3 세로 8면이 완성되었습니다."
+    pn = int(pdata.get("npages", 8))
+    st.success(f"**{pdata['title']}** A3 세로 {pn}면이 완성되었습니다."
                + ("" if pdata["ai"] else "  (AI 기사 없이 헤드라인으로 구성)"))
 
-    if pdata.get("photo_mode", "").startswith("🎨"):
-        if pdata.get("photo_n"):
-            st.info(f"📷 구글 AI 사진 {pdata['photo_n']}장을 넣었습니다"
-                    + (f" (모델: {pdata['photo_model']})" if pdata.get("photo_model") else "")
-                    + ". 사진 설명에는 ‘구글 AI 생성 이미지’라고 표시됩니다."
-                    + ("" if pdata["photo_n"] >= 5 else
-                       f" 나머지 {5 - pdata['photo_n']}장은 기본 그림으로 채웠습니다."))
+    wanted = pdata.get("photo_mode", "").startswith("🎨") or pdata.get("gfx_on")
+    if wanted:
+        if pdata.get("img_n"):
+            parts = []
+            if pdata.get("photo_n"):
+                parts.append(f"사진 {pdata['photo_n']}장")
+            if pdata.get("gfx_n"):
+                gname = {"cartoon": "만평", "cartoon2": "두 번째 만평", "diagram": "도해",
+                         "infographic": "인포그래픽"}
+                parts.append(" · ".join(gname.get(k, k) for k in pdata.get("gfx_ai", [])))
+            st.info(f"🎨 구글 AI가 {' / '.join(parts)} 을(를) 그렸습니다"
+                    + (f" (모델: {pdata['img_model']})" if pdata.get("img_model") else "")
+                    + ". 지면의 그림 설명에 ‘구글 AI 생성’이라고 표시됩니다."
+                    + ("" if pdata["img_n"] >= pdata.get("img_total", 0) else
+                       f" 못 그린 {pdata['img_total'] - pdata['img_n']}장은 기본 그림으로 채웠습니다."))
         else:
-            st.warning("📷 구글 AI 사진을 만들지 못해 기본 그림으로 넣었습니다. "
+            st.warning("🎨 구글 AI 그림을 만들지 못해 기본 그림으로 넣었습니다. "
                        "(신문은 정상적으로 완성되었습니다)")
-        if pdata.get("photo_errs"):
-            with st.popover("🔎 사진 오류 자세히"):
-                for e in pdata["photo_errs"]:
+        if pdata.get("img_errs"):
+            with st.popover("🔎 그림 오류 자세히"):
+                for e in pdata["img_errs"]:
                     st.code(e, language="text")
                 st.caption("‘429’는 구글 무료 한도 초과입니다. 잠시 뒤 다시 하시거나 "
                            "‘기본 그림’을 고르세요. ‘403/404’는 이 API 키로 이미지 모델을 "
                            "쓸 수 없다는 뜻입니다(유료 결제 연결이 필요할 수 있음).")
+
     if pdata.get("photos"):
         st.markdown("**📷 이번 호 사진**")
-        _names = {"top": "1면", "p3": "3면", "p4": "4면", "p7": "7면", "p8": "8면"}
-        _pc = st.columns(len(pdata["photos"]))
-        for _i, (_k, _b) in enumerate(pdata["photos"].items()):
-            with _pc[_i]:
-                st_image_full(_b, caption=_names.get(_k, _k))
+        _items = list(pdata["photos"].items())
+        for r0 in range(0, len(_items), 5):
+            _pc = st.columns(5)
+            for _i, (_k, _b) in enumerate(_items[r0:r0 + 5]):
+                with _pc[_i]:
+                    st_image_full(_b, caption=("1면" if _k == "top" else _k[1:] + "면"))
+
+    gfx = pdata.get("gfx") or {"cartoon": pdata["cartoon"], "diagram": pdata["diagram"]}
+    cart_no = next((no for no, k, _ in NEWS_PAPER.plan_of(pn) if k == "cartoon"), 5)
+    gra_no = next((no for no, k, _ in NEWS_PAPER.plan_of(pn) if k == "graphics"), 6)
+    glabels = {"cartoon": f"🖋️ 만평 ({cart_no}면)", "diagram": f"📊 도해 ({gra_no}면)",
+               "cartoon2": "🖋️ 두 번째 만평 (13면)", "infographic": "📈 숫자로 보는 한 주 (14면)"}
+    gkeys = [k for k in ("cartoon", "diagram", "cartoon2", "infographic") if k in gfx]
+    for r0 in range(0, len(gkeys), 2):
+        vc = st.columns(2)
+        for i, k in enumerate(gkeys[r0:r0 + 2]):
+            with vc[i]:
+                st.markdown(f"**{glabels[k]}**")
+                st_image_full(gfx[k])
 
     st.markdown("**📄 면 구성**")
     st.markdown(
@@ -7019,32 +7111,26 @@ def render_news_paper_block(results, kws, chart_png, win_s, win_e, nkey,
                 f"</div>" for no, nm, ds in pdata["outline"]) +
         "</div>", unsafe_allow_html=True)
 
-    v1, v2 = st.columns(2)
-    with v1:
-        st.markdown("**🖋️ 이번 호 만평 (5면)**")
-        st_image_full(pdata["cartoon"])
-    with v2:
-        st.markdown("**📊 이번 호 도해 (6면)**")
-        st_image_full(pdata["diagram"])
-
     st.write("")
     st.markdown("**📥 내려받기**")
-    d1, d2, d3, d4 = st.columns(4)
     stamp = win_e.strftime("%Y%m%d")
-    base = f"{pdata['title']}_{stamp}_A3_8면"
+    base = f"{pdata['title']}_{stamp}_A3_{pn}면"
+    d1, d2 = st.columns(2)
     with d1:
-        render_dl("📥 신문 PDF (A3)", pdata["pdf"], f"{base}.pdf", "pdf",
+        render_dl(f"📥 신문 PDF (A3 {pn}면)", pdata["pdf"], f"{base}.pdf", "pdf",
                   key=f"dl_paper_pdf_{nkey}")
     with d2:
         render_dl("📥 신문 워드", pdata["docx"], f"{base}.docx", "docx",
                   key=f"dl_paper_docx_{nkey}")
-    with d3:
-        render_dl("📥 만평(PNG)", pdata["cartoon"], f"{base}_만평.png", "png",
-                  key=f"dl_paper_cart_{nkey}")
-    with d4:
-        render_dl("📥 도해(PNG)", pdata["diagram"], f"{base}_도해.png", "png",
-                  key=f"dl_paper_dgm_{nkey}")
-    st.caption("PDF는 A3(297×420mm) 세로 8면입니다. 집·사무실 프린터에서는 "
+    dnames = {"cartoon": ("만평", "cart"), "diagram": ("도해", "dgm"),
+              "cartoon2": ("만평2", "cart2"), "infographic": ("인포그래픽", "info")}
+    dc = st.columns(len(gkeys))
+    for i, k in enumerate(gkeys):
+        with dc[i]:
+            nm, kk = dnames[k]
+            render_dl(f"📥 {nm}(PNG)", gfx[k], f"{base}_{nm}.png", "png",
+                      key=f"dl_paper_{kk}_{nkey}")
+    st.caption(f"PDF는 A3(297×420mm) 세로 {pn}면입니다. 집·사무실 프린터에서는 "
                "인쇄 설정에서 **‘용지에 맞춤(A4 축소)’** 을 고르시면 A4로도 뽑힙니다. "
                "워드 파일은 내용을 직접 고쳐 쓰실 수 있습니다.")
 

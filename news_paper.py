@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-news_paper.py  —  시사주간뉴스 → 진짜 종이신문(A3 세로 · 8면) 발행 엔진
+news_paper.py  —  시사주간뉴스 → 진짜 종이신문(A3 세로 · 8면/16면) 발행 엔진
 ================================================================================
 · PDF   : reportlab 캔버스에 직접 조판합니다. (실제 신문처럼 제호·단·괘선·사진)
 · WORD  : python-docx 로 A3 세로 2단 문서를 만듭니다.
@@ -42,22 +42,44 @@ F_BOLD = "Helvetica-Bold"
 
 
 def configure(font_regular=None, font_bold=None, bg_provider=None):
-    """app.py 에서 한 번 불러 주면 됩니다."""
+    """
+    app.py 에서 한 번 불러 주면 됩니다.
+    · PDF(reportlab)는 .ttc/.otf(CFF) 글꼴을 못 쓰는 경우가 많아, 실패하면
+      ./fonts 의 나눔고딕(.ttf)으로 자동으로 바꿔 등록합니다.
+    """
     global _FONT_REG_PATH, _FONT_BOLD_PATH, _BG_PROVIDER, F_REG, F_BOLD
-    if font_regular and os.path.exists(font_regular):
-        _FONT_REG_PATH = font_regular
-    if font_bold and os.path.exists(font_bold):
-        _FONT_BOLD_PATH = font_bold
     if bg_provider:
         _BG_PROVIDER = bg_provider
-
-    for name, path in (("NP-R", _FONT_REG_PATH), ("NP-B", _FONT_BOLD_PATH)):
-        if not path:
+    here = os.path.dirname(os.path.abspath(__file__))
+    cands = {
+        "NP-R": [font_regular, "./fonts/NanumGothic-Regular.ttf",
+                 os.path.join(here, "fonts", "NanumGothic-Regular.ttf")],
+        "NP-B": [font_bold, "./fonts/NanumGothic-Bold.ttf",
+                 os.path.join(here, "fonts", "NanumGothic-Bold.ttf"),
+                 "./fonts/NanumGothic-Regular.ttf"],
+    }
+    ok = {}
+    for name, paths in cands.items():
+        if name in pdfmetrics.getRegisteredFontNames():
+            ok[name] = True
             continue
-        try:
-            pdfmetrics.registerFont(TTFont(name, path))
-        except Exception:
-            pass
+        for path in paths:
+            if not path or not os.path.exists(path):
+                continue
+            try:
+                pdfmetrics.registerFont(TTFont(name, path))
+                ok[name] = path
+                break
+            except Exception:
+                continue
+    if isinstance(ok.get("NP-R"), str):
+        _FONT_REG_PATH = ok["NP-R"]
+    elif font_regular and os.path.exists(font_regular) and not _FONT_REG_PATH:
+        _FONT_REG_PATH = font_regular            # 그림(PIL)용으로는 .ttc 도 괜찮다
+    if isinstance(ok.get("NP-B"), str):
+        _FONT_BOLD_PATH = ok["NP-B"]
+    elif font_bold and os.path.exists(font_bold) and not _FONT_BOLD_PATH:
+        _FONT_BOLD_PATH = font_bold
     reg_ok = "NP-R" in pdfmetrics.getRegisteredFontNames()
     bold_ok = "NP-B" in pdfmetrics.getRegisteredFontNames()
     F_REG = "NP-R" if reg_ok else "Helvetica"
@@ -532,7 +554,7 @@ def make_diagram(title, center, nodes, size=(1200, 900), seed="dg"):
 
 def _pil_to_reader(img):
     b = io.BytesIO()
-    img.save(b, format="PNG")
+    img.convert("RGB").save(b, format="JPEG", quality=88, optimize=True)
     b.seek(0)
     return ImageReader(b)
 
@@ -547,14 +569,66 @@ def pil_to_bytes(img, fmt="PNG", quality=88):
 
 
 # ==============================================================================
-# 3. 지면 설계 (내용 → 8면 구성)
+# 3. 지면 설계 (내용 → 8면 / 16면 구성)
 # ==============================================================================
-PAGE_NAMES = ["종합", "이슈 해설", "사회·시사", "국제·경제",
-              "만평·사설", "도해·통계", "문화·현장", "신앙·목회"]
+PAGE_PLANS = {
+    8: [(1, "front", "종합"), (2, "analysis", "이슈 해설"), (3, "section", ""),
+        (4, "section", ""), (5, "cartoon", "만평·사설"), (6, "graphics", "도해·통계"),
+        (7, "section", ""), (8, "faith", "신앙·목회")],
+    16: [(1, "front", "종합"), (2, "analysis", "이슈 해설"), (3, "section", ""),
+         (4, "section", ""), (5, "section", ""), (6, "section", ""),
+         (7, "graphics", "도해·통계"), (8, "cartoon", "만평·사설"),
+         (9, "section", ""), (10, "section", ""), (11, "section", ""),
+         (12, "section", ""), (13, "opinion", "오피니언"),
+         (14, "infographic", "도표로 보는 한 주"), (15, "church", "교회·설교"),
+         (16, "closing", "기도·판권")],
+}
+PAGE_NAMES = [n for _, _, n in PAGE_PLANS[8]]          # 예전 코드 호환용
+
+PAGE_DESC = {
+    "front": "제호 · 톱기사 · 사진 · 주요기사 · 이번 주 한눈에",
+    "analysis": "이번 주 큰 흐름 · 해설 · 표 · 키워드",
+    "section": "머리기사 · 사진 · 섹션 기사",
+    "cartoon": "한 컷 만평 · 사설 · 묵상 질문 · 기도",
+    "graphics": "도해 · 표 · 통계",
+    "faith": "설교 연결 포인트 표 · 기도 · 전체 헤드라인 · 판권",
+    "opinion": "칼럼 2편 · 두 번째 만평 · 독자와 함께",
+    "infographic": "숫자로 보는 한 주(인포그래픽) · 그래프 · 표",
+    "church": "설교 연결 포인트 표 · 사진 · 교계 소식 · 기도",
+    "closing": "이번 주 기도 · 묵상 · 전체 헤드라인 · 판권",
+}
 
 
-def _fallback_article(name, items):
+def plan_of(npages):
+    return PAGE_PLANS[16] if int(npages or 8) >= 16 else PAGE_PLANS[8]
+
+
+def section_pages(npages):
+    """섹션 기사가 들어가는 면 번호들"""
+    return [no for no, k, _ in plan_of(npages) if k == "section"]
+
+
+def photo_page_keys(npages):
+    """사진이 들어가는 자리(키) — 1면 톱 + 섹션면 + 신앙면"""
+    keys = ["top"]
+    for no, k, _ in plan_of(npages):
+        if k in ("section", "faith", "church"):
+            keys.append(f"p{no}")
+    return keys
+
+
+def default_page_sections(names, npages):
+    """섹션을 면에 고르게 나눈다(고른 순서대로 돌아가며)."""
+    pages = section_pages(npages)
+    ps = {no: [] for no in pages}
+    for i, n in enumerate(names):
+        ps[pages[i % len(pages)]].append(n)
+    return ps
+
+
+def _fallback_article(name, items, off=0):
     """AI 가 없어도 기사 모양이 나오도록 헤드라인만으로 만든 기사."""
+    items = items[off:] if off < len(items) else items
     if not items:
         return None
     top = items[0]
@@ -577,23 +651,38 @@ def _fallback_article(name, items):
 def build_spec(paper_title, publisher, win_s, win_e, results, ai_json=None,
                ai_text="", keywords=None, chart_png=None, issue_no="",
                page_sections=None, theme="도시 · 일상", seed="np",
-               editor="", church=""):
+               editor="", church="", npages=8):
     """
     results      : {섹션이름: {"group","color","query","items":[{title,link,source,when}]}}
     ai_json      : AI 가 만든 기사화 결과(dict) — 없으면 헤드라인만으로 만듭니다
-    page_sections: {3:[섹션이름...], 4:[...], 7:[...]}  면별 배치
+    page_sections: {면번호:[섹션이름...]}  섹션면 배치 (8면: 3·4·7 / 16면: 3~6·9~12)
+    npages       : 8 또는 16
     """
     aj = ai_json or {}
     kws = keywords or []
+    npages = 16 if int(npages or 8) >= 16 else 8
     names = [n for n in results.keys() if results[n]["items"]]
+    spages = section_pages(npages)
 
     if not page_sections:
-        page_sections = {3: [], 4: [], 7: []}
-        for i, n in enumerate(names):
-            page_sections[[3, 4, 7][i % 3]].append(n)
+        page_sections = default_page_sections(names, npages)
+    page_sections = {int(k): [n for n in v if n in names]
+                     for k, v in page_sections.items() if int(k) in spages}
+    for no in spages:
+        page_sections.setdefault(no, [])
+
+    # 섹션이 모자라 빈 면이 생기면 → 기사 많은 섹션의 '이어서 보기' 면으로 채운다
+    more_pages = {}
+    pool = sorted(names, key=lambda n: -len(results[n]["items"]))
+    k = 0
+    for no in spages:
+        if not page_sections[no] and pool:
+            page_sections[no] = [pool[k % len(pool)]]
+            more_pages[no] = True
+            k += 1
 
     # ── 1면 톱
-    top = aj.get("top") or {}
+    top = dict(aj.get("top") or {})
     first_items = []
     for n in names:
         first_items.extend(results[n]["items"][:2])
@@ -639,13 +728,22 @@ def build_spec(paper_title, publisher, win_s, win_e, results, ai_json=None,
                           "body": [("관련 보도: " + " / ".join(rel[:4])) if rel else
                                    "이번 주 자주 등장한 낱말이다."]})
 
-    cart = aj.get("cartoon") or {}
+    cart = dict(aj.get("cartoon") or {})
     cart.setdefault("title", "이번 주 만평")
+    cart.setdefault("scene", "바쁘게 오가는 사람들 사이에서 두 사람이 신문을 들고 마주 선 장면")
     cart.setdefault("left_line", "세상은 늘 바쁘게 돌아갑니다.")
     cart.setdefault("right_line", "그 속에서 우리는 어디를 보고 있습니까?")
     cart.setdefault("caption", "한 주간의 뉴스를 지나며, 교회는 무엇을 붙들어야 하는가.")
 
-    edit = aj.get("editorial") or {}
+    cart2 = dict(aj.get("cartoon2") or {})
+    kw1 = kws[0][0] if kws else "뉴스"
+    cart2.setdefault("title", f"‘{kw1}’의 한 주")
+    cart2.setdefault("scene", "산더미처럼 쌓인 신문 더미 앞에서 한 사람이 작은 성경책을 펴 든 장면")
+    cart2.setdefault("left_line", "소식이 너무 많아 숨이 찹니다.")
+    cart2.setdefault("right_line", "그럴수록 먼저 펼 것이 있지요.")
+    cart2.setdefault("caption", "쏟아지는 소식보다 먼저 붙들 말씀이 있다.")
+
+    edit = dict(aj.get("editorial") or {})
     edit.setdefault("title", "사설 — 소란한 한 주 끝에서")
     edit.setdefault("body", [
         "한 주간의 기사를 모아 놓고 보면 세상의 소리가 얼마나 큰지 알게 된다.",
@@ -653,7 +751,25 @@ def build_spec(paper_title, publisher, win_s, win_e, results, ai_json=None,
         "그 소리 속에서 하나님의 뜻을 분별하는 자리다.",
         "이번 주에도 우리는 말씀 앞에 다시 선다."])
 
-    tbl = aj.get("table") or {}
+    columns = [c_ for c_ in (aj.get("columns") or []) if c_.get("title")]
+    if len(columns) < 2:
+        rel = [_clean(it["title"]) for n in names for it in results[n]["items"]
+               if kws and kws[0][0] in it["title"]][:5]
+        columns += [
+            {"title": "칼럼 — 뉴스를 읽는 그리스도인의 눈",
+             "body": ["뉴스는 세상의 속도를 알려 주지만, 방향까지 알려 주지는 않는다.",
+                      "한 주간 쏟아진 기사들 앞에서 성도가 먼저 물어야 할 것은 "
+                      "‘무슨 일이 있었나’보다 ‘이 일 앞에서 나는 누구의 편에 서야 하나’이다.",
+                      "말씀은 우리를 뉴스의 소비자가 아니라 세상의 이웃으로 부른다."]},
+            {"title": f"칼럼 — 이번 주 낱말 ‘{kw1}’",
+             "body": ([f"이번 주 기사 제목에 가장 자주 나온 낱말은 ‘{kw1}’였다."] +
+                      ([("관련 보도로는 " + " / ".join(rel) + " 등이 있었다.")] if rel else []) +
+                      ["한 낱말이 한 주를 대표할 때, 교회는 그 낱말 뒤에 있는 "
+                       "사람들의 얼굴을 기억해야 한다."])},
+        ]
+        columns = columns[:2]
+
+    tbl = dict(aj.get("table") or {})
     if not tbl.get("rows"):
         rows = [[n, str(len(results[n]["items"])), results[n]["group"]]
                 for n in names]
@@ -661,11 +777,28 @@ def build_spec(paper_title, publisher, win_s, win_e, results, ai_json=None,
         tbl = {"title": "섹션별 수집 기사 수",
                "headers": ["섹션", "기사 수", "분류"], "rows": rows[:14]}
 
-    dgm = aj.get("diagram") or {}
+    dgm = dict(aj.get("diagram") or {})
     if not dgm.get("nodes"):
         dgm = {"title": "이번 주 흐름 한눈에",
                "center": "이번 주\n한국·세계",
                "nodes": [{"label": w, "desc": f"관련 보도 {c}건"} for w, c in kws[:5]]}
+
+    # 숫자로 보는 한 주 — 실제 수집 숫자를 먼저, AI 표 항목을 뒤에
+    total = sum(len(v["items"]) for v in results.values())
+    facts = [{"label": "이번 주 수집 기사", "value": f"{total}건", "note": "Google 뉴스"},
+             {"label": "다룬 섹션", "value": f"{len(names)}개", "note": ""}]
+    if names:
+        big = max(names, key=lambda n: len(results[n]["items"]))
+        facts.append({"label": "가장 많이 보도된 분야", "value": big,
+                      "note": f"{len(results[big]['items'])}건"})
+    for w, c in kws[:2]:
+        facts.append({"label": f"자주 나온 낱말 ‘{w}’", "value": f"{c}회", "note": "기사 제목 기준"})
+    for r in (aj.get("table") or {}).get("rows", [])[:3]:
+        if len(r) >= 2:
+            facts.append({"label": _clean(r[0]), "value": _clean(r[1]),
+                          "note": _clean(r[2]) if len(r) > 2 else ""})
+    infog = {"title": (aj.get("infographic") or {}).get("title") or "숫자로 보는 한 주",
+             "facts": facts[:8]}
 
     links = aj.get("sermon_links") or []
     if not links:
@@ -679,7 +812,6 @@ def build_spec(paper_title, publisher, win_s, win_e, results, ai_json=None,
         "이 나라의 위정자들에게 지혜를 주옵소서.",
         "교회가 세상의 소리보다 말씀에 먼저 귀 기울이게 하옵소서."]
 
-    total = sum(len(v["items"]) for v in results.values())
     spec = {
         "title": paper_title or "시사주간뉴스",
         "sub": aj.get("masthead_sub") or "한 주간의 세상을 말씀의 눈으로 읽습니다",
@@ -695,10 +827,15 @@ def build_spec(paper_title, publisher, win_s, win_e, results, ai_json=None,
         "keywords": kws,
         "results": results,
         "names": names,
+        "npages": npages,
+        "plan": plan_of(npages),
         "page_sections": page_sections,
+        "more_pages": more_pages,
         "top": top, "second": second, "flow3": flow3,
-        "cartoon": cart, "editorial": edit, "table": tbl, "diagram": dgm,
+        "cartoon": cart, "cartoon2": cart2, "editorial": edit, "columns": columns,
+        "table": tbl, "diagram": dgm, "infographic": infog,
         "sermon_links": links, "prayer": prayer,
+        "ai_sections": aj.get("sections") or [],
         "ai_text": ai_text,
         "chart_png": chart_png,
         "theme": theme,
@@ -785,6 +922,7 @@ def _extract_image(js):
 def google_image(api_key, prompt, aspect="16:9", timeout=90):
     """
     Gemini 로 그림 한 장. 성공하면 (bytes, 모델이름), 실패하면 (None, 사유).
+    · 429(한도)면 잠깐 쉬었다가 한 번 더 시도합니다.
     """
     if not api_key:
         return None, "API 키가 없습니다"
@@ -796,8 +934,7 @@ def google_image(api_key, prompt, aspect="16:9", timeout=90):
     for m in models:
         if m in _IMG_STATE["bad"]:
             continue
-        left = deadline - _time.time()
-        if left < 8:
+        if deadline - _time.time() < 8:
             return None, last + " · 제한 시간 초과"
         url = f"{GEMINI_BASE}/models/{m}:generateContent"
         bodies = [
@@ -807,7 +944,10 @@ def google_image(api_key, prompt, aspect="16:9", timeout=90):
             {"contents": [{"parts": [{"text": prompt}]}],
              "generationConfig": {"responseModalities": ["TEXT", "IMAGE"]}},
         ]
-        for body in bodies:
+        bi = 0
+        tries_429 = 0
+        while bi < len(bodies):
+            body = bodies[bi]
             try:
                 js = _http_json(url, api_key, body,
                                 timeout=max(8, min(timeout, deadline - _time.time())))
@@ -824,11 +964,16 @@ def google_image(api_key, prompt, aspect="16:9", timeout=90):
                 except Exception:
                     msg = ""
                 if e.code == 429:
+                    if tries_429 < 1 and deadline - _time.time() > 35:
+                        tries_429 += 1
+                        _time.sleep(15)                 # 잠깐 쉬고 다시
+                        continue
                     return None, "구글 이미지 무료 한도(분당/일일)를 넘었습니다 (429)"
                 if "API_KEY_INVALID" in msg or "API key not valid" in msg:
                     return None, "API 키가 올바르지 않습니다 (사이드바 AI 연결 설정 확인)"
-                if e.code == 400 and body is bodies[0]:
+                if e.code == 400 and bi == 0:
                     last = f"{m}: 400 {msg[:120]}"
+                    bi += 1
                     continue                            # imageConfig 없이 다시
                 if e.code in (400, 403, 404):
                     _IMG_STATE["bad"].add(m)
@@ -841,6 +986,17 @@ def google_image(api_key, prompt, aspect="16:9", timeout=90):
                 last = f"{m}: {type(e).__name__} {str(e)[:100]}"
                 break
     return None, last
+
+
+def _fatal(info):
+    """이 오류가 나면 다른 그림도 어차피 안 된다."""
+    return any(k in (info or "") for k in
+               ("한도", "API 키", "연결하지 못", "이미지 모델이 없", "HTTP 403", "HTTP 404"))
+
+
+# ------------------------------------------------------------------ 지시문
+_SAFE_PEOPLE = ("정치인·연예인·종교지도자 등 실존 인물을 닮게 그리지 말고, "
+                "평범한 가상의 인물로만 그리세요. 특정 정당·집단·국가를 조롱하지 마세요. ")
 
 
 def photo_prompt(subject, kind="news"):
@@ -861,79 +1017,174 @@ def photo_prompt(subject, kind="news"):
             "글자·간판 문구·로고·워터마크·자막은 절대 넣지 마세요.")
 
 
+def cartoon_prompt(ct, text_inside=False):
+    """한 컷 시사만평 지시문."""
+    title = _clean(ct.get("title", ""))[:40]
+    scene = _clean(ct.get("scene", ""))[:200]
+    left = _clean(ct.get("left_line", ""))[:40]
+    right = _clean(ct.get("right_line", ""))[:40]
+    base = (f"한국 신문에 싣는 한 컷 시사만평(editorial cartoon)을 그려 주세요. "
+            f"주제: 「{title}」. 장면: {scene}. "
+            f"왼쪽 인물은 “{left}”, 오른쪽 인물은 “{right}”라고 말하는 상황입니다. "
+            "스타일: 펜과 잉크로 그린 굵은 선화에 옅은 수채 채색, 과장된 표정의 "
+            "캐리커처 풍 신문 만평, 밝은 여백 배경, 가로 4:3 구도. " + _SAFE_PEOPLE)
+    if text_inside:
+        return base + (f"그림 위쪽에 말풍선 두 개를 그리고, 왼쪽 말풍선에는 「{left}」, "
+                       f"오른쪽 말풍선에는 「{right}」를 한국어로 정확히 그대로 쓰세요. "
+                       "그 밖의 글자·서명·로고·워터마크는 넣지 마세요.")
+    return base + ("그림 안에는 글자를 한 글자도 쓰지 말고 말풍선도 그리지 마세요 "
+                   "(대사는 신문 편집자가 그림 아래에 따로 넣습니다). "
+                   "서명·로고·워터마크도 넣지 마세요.")
+
+
+def diagram_prompt(dg):
+    """도해(개념 연결도) 지시문 — 글자는 적힌 그대로만."""
+    nodes = [n for n in (dg.get("nodes") or []) if _clean(n.get("label", ""))][:6]
+    lines = "\n".join(f"{i}) {_clean(n.get('label',''))} — {_clean(n.get('desc',''))}"
+                      for i, n in enumerate(nodes, 1))
+    center = _clean(str(dg.get("center", "이번 주")).replace("\n", " "))
+    return (f"한국어 신문 지면에 싣는 도해(개념 연결 다이어그램) 한 장을 그려 주세요.\n"
+            f"맨 위 제목: 「{_clean(dg.get('title', '이번 주 흐름 한눈에'))}」\n"
+            f"가운데 원: 「{center}」\n"
+            f"가운데 원에서 화살표로 이어지는 둘레 상자 {len(nodes)}개:\n{lines}\n"
+            "조건: 위에 적힌 한국어 글자만 정확히 그대로 쓰고, 다른 글자·숫자·영어는 "
+            "추가하지 마세요. 깔끔한 플랫 벡터 인포그래픽 스타일, 흰 배경, 신문에 어울리는 "
+            "절제된 색(남색·주황·회색), 상자마다 작은 아이콘, 가로 4:3. 로고·워터마크 금지.")
+
+
+def infographic_prompt(ig):
+    """'숫자로 보는 한 주' 인포그래픽 지시문 — 숫자는 바꾸지 않게."""
+    facts = (ig.get("facts") or [])[:6]
+    lines = "\n".join(f"- {_clean(f.get('label',''))}: {_clean(f.get('value',''))}"
+                      + (f" ({_clean(f.get('note',''))})" if f.get("note") else "")
+                      for f in facts)
+    return (f"한국어 신문 지면용 인포그래픽 한 장을 그려 주세요.\n"
+            f"맨 위 제목: 「{_clean(ig.get('title', '숫자로 보는 한 주'))}」\n"
+            f"아래 항목을 각각 큰 숫자 카드로 보여 주세요:\n{lines}\n"
+            "조건: 숫자와 글자는 위에 적힌 그대로 정확히 쓰고, 바꾸거나 새 숫자를 만들지 "
+            "마세요. 깔끔한 플랫 벡터 스타일, 카드마다 어울리는 작은 아이콘, 흰 배경, "
+            "절제된 색(남색·주황·청록·회색), 가로 16:9. 로고·워터마크 금지.")
+
+
 def photo_subjects(spec):
     """각 사진 자리에 들어갈 기사 제목."""
-    subj = {"top": (spec["top"].get("headline", "") + " — " + spec["top"].get("sub", "")).strip(" —")}
-    for no, key in ((3, "p3"), (4, "p4"), (7, "p7")):
-        names = [n for n in spec["page_sections"].get(no, [])
-                 if spec["results"].get(n, {}).get("items")]
-        if names:
-            subj[key] = _clean(spec["results"][names[0]]["items"][0]["title"])
-        else:
-            subj[key] = spec["top"].get("headline", "이번 주 한국 사회")
-    subj["p8"] = ""
+    subj = {"top": (spec["top"].get("headline", "") + " — " +
+                    spec["top"].get("sub", "")).strip(" —")}
+    for no, k, _ in spec.get("plan") or plan_of(spec.get("npages", 8)):
+        key = f"p{no}"
+        if k == "section":
+            names = [n for n in spec["page_sections"].get(no, [])
+                     if spec["results"].get(n, {}).get("items")]
+            if names:
+                its = spec["results"][names[0]]["items"]
+                off = _more_offset(its) if spec.get("more_pages", {}).get(no) else 0
+                subj[key] = _clean(its[off]["title"])
+            else:
+                subj[key] = spec["top"].get("headline", "이번 주 한국 사회")
+        elif k in ("faith", "church"):
+            subj[key] = ""
     return subj
 
 
-def generate_google_photos(spec, api_key, progress=None, budget=150, workers=3):
+def _more_offset(items):
+    """'이어서 보기' 면에서 몇 번째 기사부터 쓸지"""
+    n = len(items)
+    return 3 if n > 4 else (1 if n > 1 else 0)
+
+
+def generate_google_images(spec, api_key, progress=None, budget=240, workers=3,
+                           photos=True, graphics=True, text_inside=False):
     """
-    사진 5장(1면·3면·4면·7면·8면)을 구글 AI로 만들어 spec["photo_bytes"] 에 담습니다.
-    반환: (성공 장수, 오류 목록, 사용한 모델)
+    구글 AI(Gemini)로 지면 그림을 만듭니다.
+      · graphics=True : 만평 · 도해 (16면이면 두 번째 만평 · 인포그래픽까지)
+      · photos=True   : 1면 톱 · 섹션면 · 신앙면 사진
+    결과: spec["photo_bytes"], spec["gfx_bytes"]
+    반환: (성공 장수, 오류 목록, 사용한 모델, 시도 장수)
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
-    subj = photo_subjects(spec)
-    jobs = {k: photo_prompt(v, "church" if k == "p8" else "news") for k, v in subj.items()}
-    out, errs, used = {}, [], ""
+    n16 = int(spec.get("npages", 8)) >= 16
+    jobs = []                                    # (key, prompt, aspect, kind)
+    subj = photo_subjects(spec) if photos else {}
+    if photos:
+        jobs.append(("top", photo_prompt(subj["top"]), "16:9", "photo"))
+    if graphics:
+        jobs.append(("cartoon", cartoon_prompt(spec["cartoon"], text_inside), "4:3", "gfx"))
+        jobs.append(("diagram", diagram_prompt(spec["diagram"]), "4:3", "gfx"))
+        if n16:
+            jobs.append(("infographic", infographic_prompt(spec["infographic"]), "16:9", "gfx"))
+            jobs.append(("cartoon2", cartoon_prompt(spec["cartoon2"], text_inside), "4:3", "gfx"))
+    if photos:
+        for k, v in subj.items():
+            if k == "top":
+                continue
+            jobs.append((k, photo_prompt(v, "church" if not v else "news"), "16:9", "photo"))
+
+    pb, gb, errs, used = {}, {}, [], ""
+    spec["photo_bytes"], spec["gfx_bytes"] = pb, gb
+    if not jobs:
+        return 0, errs, used, 0
     t0 = _time.time()
+    total = len(jobs)
+    names = {"top": "1면 사진", "cartoon": "만평", "cartoon2": "두 번째 만평",
+             "diagram": "도해", "infographic": "인포그래픽"}
+
+    def _store(key, kind, b):
+        (pb if kind == "photo" else gb)[key] = b
+
+    def _prog(done, key):
+        if progress:
+            try:
+                progress(done / total, key)
+            except Exception:
+                pass
 
     # 첫 장은 혼자 먼저 — 모델 찾기와 한도 확인을 한 번에 끝낸다
-    first = "top"
-    b, info = google_image(api_key, jobs[first], "16:9",
-                           timeout=min(90, max(20, budget - 5)))
-    if progress:
-        try:
-            progress(1 / len(jobs), first)
-        except Exception:
-            pass
+    k0, p0, a0, kind0 = jobs[0]
+    b, info = google_image(api_key, p0, a0, timeout=min(90, max(20, budget - 5)))
+    _prog(1, k0)
     if b:
-        out[first] = b
+        _store(k0, kind0, b)
         used = info
     else:
-        errs.append(f"1면 사진: {info}")
-        spec["photo_bytes"] = out
-        return 0, errs, used                    # 첫 장부터 안 되면 나머지도 안 된다
+        errs.append(f"{names.get(k0, k0)}: {info}")
+        if _fatal(info):
+            return 0, errs, used, total          # 첫 장부터 막히면 나머지도 안 된다
 
-    rest = [k for k in jobs if k != first]
+    rest = jobs[1:]
     ex = ThreadPoolExecutor(max_workers=workers)
-    futs = {ex.submit(google_image, api_key, jobs[k], "16:9",
-                      max(20, min(90, budget - (_time.time() - t0)))): k for k in rest}
+    futs = {}
+    for k, p_, a_, kind in rest:
+        futs[ex.submit(google_image, api_key, p_, a_,
+                       max(20, min(90, budget - (_time.time() - t0))))] = (k, kind)
     done = 1
     try:
         for f in as_completed(futs, timeout=max(10, budget - (_time.time() - t0))):
-            k = futs[f]
+            k, kind = futs[f]
             try:
                 b, info = f.result(timeout=1)
             except Exception as e:
                 b, info = None, f"{type(e).__name__}"
             if b:
-                out[k] = b
+                _store(k, kind, b)
                 used = used or info
             else:
-                errs.append(f"{k} 사진: {info}")
+                errs.append(f"{names.get(k, k.replace('p', '') + '면 사진')}: {info}")
             done += 1
-            if progress:
-                try:
-                    progress(done / len(jobs), k)
-                except Exception:
-                    pass
+            _prog(done, k)
     except Exception:
-        errs.append(f"제한 시간({budget}초) 안에 끝나지 않은 사진은 기본 그림으로 채웠습니다")
+        errs.append(f"제한 시간({budget}초) 안에 끝나지 않은 그림은 기본 그림으로 채웠습니다")
     try:
         ex.shutdown(wait=False, cancel_futures=True)
     except TypeError:
         ex.shutdown(wait=False)
-    spec["photo_bytes"] = out
-    return len(out), errs, used
+    return len(pb) + len(gb), errs, used, total
+
+
+def generate_google_photos(spec, api_key, progress=None, budget=150, workers=3):
+    """예전 이름 호환용 — 사진만 만듭니다."""
+    n, errs, used, _ = generate_google_images(spec, api_key, progress, budget, workers,
+                                              photos=True, graphics=False)
+    return n, errs, used
 
 
 def photo_caption(spec, key, text):
@@ -942,6 +1193,16 @@ def photo_caption(spec, key, text):
     label = PHOTO_LABEL_AI if is_ai else PHOTO_LABEL_BASIC
     t = _clean(text).replace("(자료 이미지)", "").replace(PHOTO_LABEL_AI, "").strip()
     return f"{t} {label}".strip()
+
+
+def gfx_caption(spec, key, text):
+    """만평·도해·인포그래픽 설명 — 구글 AI가 그렸으면 그렇다고 밝힙니다."""
+    t = _clean(text)
+    if key in (spec.get("gfx_bytes") or {}):
+        if key.startswith("cartoon"):
+            return (t + "  (그림: 구글 AI 생성)").strip()
+        return (t + "  (그림: 구글 AI 생성 — 글자·숫자는 표와 본문을 기준으로 확인해 주세요)").strip()
+    return t
 
 
 def _photo_from_bytes(b, size, mono):
@@ -955,12 +1216,113 @@ def _photo_from_bytes(b, size, mono):
     return img
 
 
+def compose_cartoon(art, ct, sign="시사주간뉴스 만평", text_inside=False):
+    """
+    구글 AI가 그린 만평 그림에 신문 만평 틀(제목 · 대사 · 설명 · 서명)을 씌운다.
+    대사를 우리 글꼴로 넣으므로 한글이 깨지지 않는다.
+    """
+    W = 1400
+    pad = 44
+    PAPER = (246, 242, 231)
+    INK = (26, 26, 28)
+    art = art.convert("RGB")
+    aw = W - pad * 2
+    ah = int(art.size[1] * aw / art.size[0])
+    ah = min(ah, 1050)
+    art = ImageOps.fit(art, (aw, ah), Image.LANCZOS)
+
+    probe = ImageDraw.Draw(Image.new("RGB", (10, 10)))
+    ft, fd, fc, fs = _pil_font(54, True), _pil_font(31, True), _pil_font(29, False), _pil_font(23, True)
+    tl = wrap_pil(probe, ct.get("title", "만평"), ft, W - pad * 2)[:1]
+    dlg = [] if text_inside else [
+        ("◀ 왼쪽", ct.get("left_line", "")), ("오른쪽 ▶", ct.get("right_line", ""))]
+    dlg_lines = []
+    for who, line in dlg:
+        if _clean(line):
+            for i, ln in enumerate(wrap_pil(probe, f"{who} : “{_clean(line)}”", fd, W - pad * 2)[:2]):
+                dlg_lines.append(ln)
+    cap_lines = wrap_pil(probe, ct.get("caption", ""), fc, W - pad * 2)[:2]
+
+    H = 40 + 70 + 22 + ah + 24 + len(dlg_lines) * 44 + (16 if dlg_lines else 0) \
+        + 18 + len(cap_lines) * 40 + 70
+    img = Image.new("RGB", (W, H), PAPER)
+    d = ImageDraw.Draw(img)
+    d.rectangle([10, 10, W - 11, H - 11], outline=INK, width=5)
+    d.rectangle([22, 22, W - 23, H - 23], outline=INK, width=2)
+    y = 40
+    for ln in tl:
+        d.text(((W - d.textlength(ln, font=ft)) / 2, y), ln, font=ft, fill=INK)
+    y += 70
+    d.line([(pad + 60, y), (W - pad - 60, y)], fill=INK, width=3)
+    y += 22
+    img.paste(art, (pad, y))
+    d.rectangle([pad, y, pad + aw - 1, y + ah - 1], outline=INK, width=3)
+    y += ah + 24
+    for ln in dlg_lines:
+        d.text((pad + 4, y), ln, font=fd, fill=INK)
+        y += 44
+    if dlg_lines:
+        y += 16
+    d.line([(pad, y), (W - pad, y)], fill=INK, width=2)
+    y += 18
+    for ln in cap_lines:
+        d.text((pad + 2, y), ln, font=fc, fill=(40, 40, 42))
+        y += 40
+    d.text((W - pad - d.textlength(sign, font=fs), H - 62), sign, font=fs, fill=(108, 106, 104))
+    return img
+
+
+def make_numbers_infographic(ig, size=(1600, 900)):
+    """'숫자로 보는 한 주' — 구글 AI가 안 될 때 쓰는 기본 인포그래픽."""
+    W, H = size
+    img = Image.new("RGB", (W, H), (255, 255, 255))
+    d = ImageDraw.Draw(img)
+    INK = (22, 22, 26)
+    d.rectangle([0, 0, W - 1, H - 1], outline=(30, 30, 34), width=3)
+    ft = _pil_font(52, True)
+    d.text((48, 34), _clean(ig.get("title", "숫자로 보는 한 주")), font=ft, fill=INK)
+    d.line([(48, 104), (W - 48, 104)], fill=INK, width=3)
+    facts = (ig.get("facts") or [])[:6]
+    if not facts:
+        return img
+    cols = 3
+    rows = math.ceil(len(facts) / cols)
+    gx, gy = 30, 30
+    cw = (W - 96 - gx * (cols - 1)) / cols
+    ch = (H - 150 - 40 - gy * (rows - 1)) / rows
+    pal = [(30, 58, 138), (217, 119, 6), (13, 148, 136), (124, 58, 237), (220, 38, 38), (71, 85, 105)]
+    fl, fv, fn = _pil_font(30, True), _pil_font(64, True), _pil_font(24, False)
+    for i, f in enumerate(facts):
+        r, c_ = divmod(i, cols)
+        x = 48 + c_ * (cw + gx)
+        y = 140 + r * (ch + gy)
+        col = pal[i % len(pal)]
+        d.rounded_rectangle([x, y, x + cw, y + ch], radius=22, fill=(247, 248, 252),
+                            outline=col, width=4)
+        d.rectangle([x, y + 22, x + 12, y + ch - 22], fill=col)
+        yy = y + 24
+        for ln in wrap_pil(d, f.get("label", ""), fl, cw - 60)[:2]:
+            d.text((x + 34, yy), ln, font=fl, fill=(60, 64, 78))
+            yy += 38
+        val = _clean(f.get("value", ""))
+        fvv = fv
+        while d.textlength(val, font=fvv) > cw - 60 and fvv.size > 28:
+            fvv = _pil_font(fvv.size - 4, True)
+        d.text((x + 34, yy + 8), val, font=fvv, fill=col)
+        if f.get("note"):
+            d.text((x + 34, y + ch - 42), _clean(f["note"])[:26], font=fn, fill=(110, 114, 128))
+    return img
+
+
 def render_images(spec, progress=None):
     """지면에 들어갈 그림을 미리 만들어 spec 에 담습니다."""
     seed = spec["seed"]
     th = spec["theme"]
     pb = spec.get("photo_bytes") or {}
+    gb = spec.get("gfx_bytes") or {}
     mono = bool(spec.get("photo_mono", True))
+    text_inside = bool(spec.get("cartoon_text_inside", False))
+    n16 = int(spec.get("npages", 8)) >= 16
     imgs = {}
 
     def photo(key, size):
@@ -971,23 +1333,40 @@ def render_images(spec, progress=None):
                 pb.pop(key, None)
         return make_photo(f"{seed}|{key}", size, th, mono=mono)
 
-    steps = [
-        ("top", lambda: photo("top", (1400, 900))),
-        ("p3", lambda: photo("p3", (1200, 780))),
-        ("p4", lambda: photo("p4", (1200, 780))),
-        ("p7", lambda: photo("p7", (1200, 780))),
-        ("cartoon", lambda: make_cartoon(spec["cartoon"]["title"],
-                                         spec["cartoon"]["left_line"],
-                                         spec["cartoon"]["right_line"],
-                                         spec["cartoon"]["caption"],
-                                         sign=f"만평 · {spec['title']}",
-                                         seed=f"{seed}|c")),
-        ("diagram", lambda: make_diagram(spec["diagram"]["title"],
-                                         spec["diagram"].get("center", "이번 주"),
-                                         spec["diagram"].get("nodes", []),
-                                         seed=f"{seed}|d")),
-        ("p8", lambda: photo("p8", (1200, 700))),
-    ]
+    def cartoon(key):
+        ct = spec[key]
+        if key in gb:
+            try:
+                art = Image.open(io.BytesIO(gb[key]))
+                return compose_cartoon(art, ct, f"만평 · {spec['title']}", text_inside)
+            except Exception:
+                gb.pop(key, None)
+        return make_cartoon(ct["title"], ct["left_line"], ct["right_line"], ct["caption"],
+                            sign=f"만평 · {spec['title']}", seed=f"{seed}|{key}")
+
+    def gfx(key, fallback):
+        if key in gb:
+            try:
+                im = Image.open(io.BytesIO(gb[key])).convert("RGB")
+                if im.size[0] > 1800:
+                    im = im.resize((1800, int(im.size[1] * 1800 / im.size[0])), Image.LANCZOS)
+                return im
+            except Exception:
+                gb.pop(key, None)
+        return fallback()
+
+    steps = []
+    for k in photo_page_keys(spec.get("npages", 8)):
+        size = (1400, 900) if k == "top" else (1200, 780)
+        steps.append((k, (lambda kk=k, ss=size: photo(kk, ss))))
+    steps.append(("cartoon", lambda: cartoon("cartoon")))
+    steps.append(("diagram", lambda: gfx("diagram", lambda: make_diagram(
+        spec["diagram"]["title"], spec["diagram"].get("center", "이번 주"),
+        spec["diagram"].get("nodes", []), seed=f"{seed}|d"))))
+    if n16:
+        steps.append(("cartoon2", lambda: cartoon("cartoon2")))
+        steps.append(("infographic", lambda: gfx("infographic", lambda:
+                                                 make_numbers_infographic(spec["infographic"]))))
     for i, (k, fn) in enumerate(steps):
         if progress:
             try:
@@ -1295,7 +1674,7 @@ def masthead(c, spec):
     c.setFillColor(GREY)
     c.drawString(ML, y2 - 16, f'수집 기간 {spec["period"]}  ·  기사 {spec["total"]}건  '
                               f'·  섹션 {spec["nsec"]}개  ·  출처 Google 뉴스')
-    c.drawRightString(PW - MR, y2 - 16, "A3 세로 · 8면")
+    c.drawRightString(PW - MR, y2 - 16, f"A3 세로 · {spec.get('npages', 8)}면")
     return y2 - 30
 
 
@@ -1369,6 +1748,36 @@ FILLERS = [
       "인용하실 때에는 반드시 원문을 확인하신 뒤 매체명을 함께 밝혀 주십시오.",
       "사진은 구글 AI가 기사 내용을 바탕으로 만들었거나 앱이 그린 자료 이미지로, "
       "실제 사건 현장 사진이 아닙니다."]),
+    ("말씀 한 구절 — 미가 6:8",
+     ["“사람아 주께서 선한 것이 무엇임을 네게 보이셨나니 여호와께서 네게 구하시는 것은 "
+      "오직 정의를 행하며 인자를 사랑하며 겸손히 네 하나님과 함께 행하는 것이 아니냐”",
+      "뉴스가 정의를 묻는 한 주였다면, 말씀은 정의와 함께 인자와 겸손을 묻습니다.",
+      "세 가지를 함께 붙들 때 성도의 말과 행동은 세상 속에서 균형을 잃지 않습니다."]),
+    ("말씀 한 구절 — 예레미야 29:7",
+     ["“너희는 내가 사로잡혀 가게 한 그 성읍의 평안을 구하고 그를 위하여 여호와께 기도하라 "
+      "이는 그 성읍이 평안함으로 너희도 평안할 것임이라”",
+      "교회는 세상과 떨어진 섬이 아니라, 그 성읍의 평안을 위해 기도하는 공동체입니다.",
+      "이번 주 소식 가운데 우리 동네와 도시를 위한 기도제목을 하나씩 골라 보십시오."]),
+    ("말씀 한 구절 — 로마서 12:15",
+     ["“즐거워하는 자들과 함께 즐거워하고 우는 자들과 함께 울라”",
+      "기쁜 소식과 슬픈 소식이 한 지면에 나란히 실립니다. 성도의 마음도 그래야 합니다.",
+      "이번 주 누구와 함께 울고, 누구와 함께 기뻐할지 적어 보십시오."]),
+    ("말씀 한 구절 — 시편 46:1",
+     ["“하나님은 우리의 피난처시요 힘이시니 환난 중에 만날 큰 도움이시라”",
+      "재난과 불안의 소식이 이어질 때 시편 기자는 먼저 피난처를 고백했습니다.",
+      "두려움을 부정하지 않되, 두려움보다 크신 분을 먼저 부르는 것이 신앙입니다."]),
+    ("말씀 한 구절 — 마태복음 5:14",
+     ["“너희는 세상의 빛이라 산 위에 있는 동네가 숨겨지지 못할 것이요”",
+      "빛은 어둠을 탓하지 않고 그 자리를 밝힙니다.",
+      "이번 주 우리 교회가 밝힐 수 있는 작은 자리 하나를 찾아보십시오."]),
+    ("말씀 한 구절 — 디모데전서 2:1",
+     ["“그러므로 내가 첫째로 권하노니 모든 사람을 위하여 간구와 기도와 도고와 감사를 하되”",
+      "바울은 ‘모든 사람’을 위해 기도하라고 권합니다. 내 편만이 아닙니다.",
+      "이번 주 신문에서 가장 마음이 불편했던 사람을 위해 먼저 기도해 보십시오."]),
+    ("우리 교회 소식 (직접 써 넣는 칸)",
+     ["이 칸은 워드 파일에서 우리 교회 소식·광고·행사 안내로 바꿔 쓰실 수 있습니다.",
+      "예) 이번 주일 예배 안내 · 구역 모임 · 새가족 환영 · 봉사자 모집",
+      "인쇄 전에 꼭 필요한 내용으로 고쳐 주세요."]),
 ]
 
 
@@ -1559,11 +1968,15 @@ def page2(c, spec):
     page_foot(c, spec, 2)
 
 
-def section_page(c, spec, no, img_key):
+def section_page(c, spec, no, img_key=None):
+    img_key = img_key or f"p{no}"
     names = [n for n in spec["page_sections"].get(no, [])
              if spec["results"].get(n, {}).get("items")]
-    label = " · ".join(names[:3]) if names else PAGE_NAMES[no - 1]
-    y = running_head(c, spec, no, label[:26])
+    more = bool(spec.get("more_pages", {}).get(no))
+    label = " · ".join(names[:3]) if names else "섹션"
+    if more:
+        label = f"{label} (이어서)"
+    y = running_head(c, spec, no, label[:28])
     imgs = spec.get("images", {})
 
     if not names:
@@ -1571,16 +1984,20 @@ def section_page(c, spec, no, img_key):
         c.setFont(F_REG, 10)
         c.drawString(ML, y - 20, "이 면에 배치된 섹션이 없습니다. "
                                  "‘면 배치’에서 섹션을 골라 주세요.")
+        fill_gaps(c, spec, y - 40, MB + 26, no)
         page_foot(c, spec, no)
         return
 
     first = names[0]
-    items = spec["results"][first]["items"]
+    all_items = spec["results"][first]["items"]
+    off = _more_offset(all_items) if more else 0
+    items = all_items[off:]
     head = _clean(items[0]["title"]) if items else first
-    x = ML + draw_label(c, first, ML, y - 12) + 8
+    tag = f"{first} · 이어서 보기" if more else first
+    x = ML + draw_label(c, tag, ML, y - 12) + 8
     c.setFillColor(GREY)
     c.setFont(F_REG, 8.4)
-    c.drawString(x, y - 11, f'기사 {len(items)}건  ·  수집 {spec["period"]}')
+    c.drawString(x, y - 11, f'기사 {len(all_items)}건  ·  수집 {spec["period"]}')
     y -= 26
     y = draw_headline(c, head, ML, y, CW, max_size=30, min_size=17, max_lines=2)
     y -= 9
@@ -1592,7 +2009,7 @@ def section_page(c, spec, no, img_key):
                         photo_caption(spec, img_key, f"{first} 관련."))
 
     ai_secs = {s.get("name"): s for s in (spec.get("ai_sections") or [])}
-    a = ai_secs.get(first) or _fallback_article(first, items) or {}
+    a = (None if more else ai_secs.get(first)) or _fallback_article(first, all_items, off) or {}
     lead_fl = art_flowables(lead=a.get("lead"), body=a.get("body", []))
     flow_balanced(c, lead_fl, y, cap_y - 4, ncols=2, first=0)
     draw_vrule(c, colx(2) - GUT / 2, cap_y - 4, y, 0.35, rlcolors.HexColor("#b9b9bd"))
@@ -1603,7 +2020,7 @@ def section_page(c, spec, no, img_key):
 
     fl = brief_flowables(f"{first} — 이번 주 보도",
                          [f'{_clean(it["title"])}  ({_clean(it["source"])})'
-                          for it in items[1:9]])
+                          for it in items[1:10]])
     for n in names[1:]:
         its = spec["results"][n]["items"]
         if not its:
@@ -1616,33 +2033,40 @@ def section_page(c, spec, no, img_key):
         fl += brief_flowables("함께 보기",
                               [f'{_clean(it["title"])}  ({_clean(it["source"])})'
                                for it in its[1:7]], bsize=7.9)
-    # 지면이 남으면 다른 섹션 헤드라인으로 채운다
+    # 지면이 남으면 다른 섹션 헤드라인으로 채운다 (면마다 다른 섹션이 오도록 돌려 가며)
     others = [n for n in spec["names"] if n not in names]
-    fl += _sec_briefs(spec, others[:6], limit=4, bsize=7.8)
-    fl += all_headlines(spec, 60, skip=tuple(names))
+    if others:
+        r = no % len(others)
+        others = others[r:] + others[:r]
+    n16 = int(spec.get("npages", 8)) >= 16
+    fl += _sec_briefs(spec, others[:(4 if n16 else 6)], limit=(6 if n16 else 4), bsize=7.8)
+    if not n16:
+        fl += all_headlines(spec, 60, skip=tuple(names))
     _, used = flow_balanced(c, fl, y2, MB + 26)
     if used - (MB + 26) > 86:
-        fill_gaps(c, spec, used - 8, MB + 26, no)
+        fill_gaps(c, spec, used - 8, MB + 26, no * 2)
     page_foot(c, spec, no)
 
 
-def page5(c, spec):
-    y = running_head(c, spec, 5, PAGE_NAMES[4])
+def page_cartoon(c, spec, no, key="cartoon", headline="만평", with_editorial=True):
+    y = running_head(c, spec, no, "만평·사설" if with_editorial else "만평")
     imgs = spec.get("images", {})
-    ct = spec["cartoon"]
+    ct = spec[key]
 
-    y = draw_headline(c, "만평", ML, y, CW, max_size=26, min_size=18, max_lines=1)
+    y = draw_headline(c, headline, ML, y, CW, max_size=26, min_size=18, max_lines=1)
     y -= 7
     draw_rule(c, ML, y, PW - MR, 1.0)
     y -= 12
 
     cw_ = spanw(3)
-    _ci = imgs.get("cartoon")
+    _ci = imgs.get(key)
     ch_ = cw_ * (_ci.size[1] / _ci.size[0]) if _ci is not None else cw_ * 0.71
     ch_ = min(ch_, y - MB - 260)
     cw_ = min(cw_, ch_ * (_ci.size[0] / _ci.size[1])) if _ci is not None else cw_
-    place_image(c, _ci, ML, y - ch_, cw_, ch_, None)
-    cap_y = y - ch_
+    cap = gfx_caption(spec, key, "") if key in (spec.get("gfx_bytes") or {}) else None
+    cap_y = place_image(c, _ci, ML, y - ch_, cw_, ch_, cap)
+    if not cap:
+        cap_y = y - ch_
 
     ed = spec["editorial"]
     fl = [Paragraph('<font color="#b91c1c"><b>사설</b></font>',
@@ -1673,19 +2097,19 @@ def page5(c, spec):
     _, used = flow_balanced(c, more, y2, MB + 26)
     if used - (MB + 26) > 86:
         fill_gaps(c, spec, used - 8, MB + 26, 2)
-    page_foot(c, spec, 5)
+    page_foot(c, spec, no)
 
 
-def page6(c, spec):
-    y = running_head(c, spec, 6, PAGE_NAMES[5])
+def page_graphics(c, spec, no, show_chart=True):
+    y = running_head(c, spec, no, "도해·통계")
     imgs = spec.get("images", {})
-    y = draw_headline(c, "숫자와 그림으로 보는 한 주", ML, y, CW,
-                      max_size=28, min_size=18, max_lines=1)
+    y = draw_headline(c, "숫자와 그림으로 보는 한 주" if show_chart else "도해로 읽는 한 주",
+                      ML, y, CW, max_size=28, min_size=18, max_lines=1)
     y -= 7
     draw_rule(c, ML, y, PW - MR, 1.0)
     y -= 12
 
-    if imgs.get("chart") is not None:
+    if show_chart and imgs.get("chart") is not None:
         ci = imgs["chart"]
         ch_ = min(290, CW * ci.size[1] / ci.size[0])
         y = place_image(c, ci, ML, y - ch_, CW, ch_,
@@ -1694,20 +2118,30 @@ def page6(c, spec):
     dg = imgs.get("diagram")
     bottom_zone = MB + 200
     if dg is not None:
-        dh = min(spanw(2) * dg.size[1] / dg.size[0], y - bottom_zone - 24)
-        cap_y = place_image(c, dg, ML, y - dh, spanw(2), dh,
-                            spec["diagram"].get("title", "도해"))
+        # 16면에서는 도해를 크게 (3단), 8면에서는 2단
+        span = 2 if show_chart else 3
+        dw = spanw(span)
+        dh = min(dw * dg.size[1] / dg.size[0], y - bottom_zone - 24)
+        dw = min(dw, dh * dg.size[0] / dg.size[1])
+        cap_y = place_image(c, dg, ML, y - dh, dw, dh,
+                            gfx_caption(spec, "diagram", spec["diagram"].get("title", "도해")))
     else:
+        span = 2
         cap_y = y
 
-    t = make_table(spec["table"]["headers"], spec["table"]["rows"], spanw(2))
-    tw, th = t.wrapOn(c, spanw(2), y - bottom_zone)
+    tcol = 2 if span == 2 else 3
+    tw_ = spanw(4 - tcol)
+    t = make_table(spec["table"]["headers"], spec["table"]["rows"], tw_,
+                   fsize=8.2 if tcol == 2 else 7.6)
+    tw, th = t.wrapOn(c, tw_, y - bottom_zone)
     c.setFillColor(INK)
     c.setFont(F_BOLD, 11.4)
-    c.drawString(colx(2), y - 12, spec["table"].get("title", "표"))
-    t.drawOn(c, colx(2), max(bottom_zone, y - 20 - th))
+    for i, ln in enumerate(wrap_pdf(spec["table"].get("title", "표"), F_BOLD, 11.4, tw_)[:2]):
+        c.drawString(colx(tcol), y - 12 - i * 14, ln)
+    th_off = 20 + (14 if len(wrap_pdf(spec["table"].get("title", "표"), F_BOLD, 11.4, tw_)) > 1 else 0)
+    t.drawOn(c, colx(tcol), max(bottom_zone, y - th_off - th))
 
-    yb = min(cap_y, y - 20 - th) - 16
+    yb = min(cap_y, y - th_off - th) - 16
     if yb > MB + 60:
         draw_rule(c, ML, yb, PW - MR, 0.6)
         yb -= 10
@@ -1715,6 +2149,9 @@ def page6(c, spec):
                              ["막대가 긴 섹션일수록 이번 주 보도가 많았던 분야입니다.",
                               "키워드는 수집된 기사 제목에 실제로 등장한 낱말만 셉니다.",
                               "도해 가운데는 이번 주의 중심 사안, 둘레는 파생된 논점입니다."])
+        fl += brief_flowables("도해 풀이",
+                              [f'{_clean(n.get("label",""))} — {_clean(n.get("desc",""))}'
+                               for n in spec["diagram"].get("nodes", [])[:6]])
         fl += brief_flowables("이번 주 키워드",
                               [f"{w} — {n}건" for w, n in spec["keywords"][:12]],
                               bsize=8.0)
@@ -1723,22 +2160,10 @@ def page6(c, spec):
         _, used = flow_balanced(c, fl, yb, MB + 26)
         if used - (MB + 26) > 86:
             fill_gaps(c, spec, used - 8, MB + 26, 3)
-    page_foot(c, spec, 6)
+    page_foot(c, spec, no)
 
 
-def page8(c, spec):
-    y = running_head(c, spec, 8, PAGE_NAMES[7])
-    imgs = spec.get("images", {})
-    y = draw_headline(c, "이 한 주를 말씀으로 읽는다", ML, y, CW,
-                      max_size=30, min_size=18, max_lines=1)
-    y -= 7
-    draw_rule(c, ML, y, PW - MR, 1.0)
-    y -= 12
-
-    ph_h = 158
-    cap_y = place_image(c, imgs.get("p8"), colx(2), y - ph_h, spanw(2), ph_h,
-                        photo_caption(spec, "p8", "강단은 세상의 소리를 말씀으로 번역하는 자리다."))
-
+def _links_table(spec, w):
     rows = [[l.get("event", ""), l.get("text", ""), l.get("use", "")]
             for l in spec["sermon_links"][:7]]
     t = Table([[Paragraph(f"<b>{esc(h)}</b>",
@@ -1747,7 +2172,7 @@ def page8(c, spec):
                 for h in ["이번 주 사건", "연결 본문", "강단에서 쓰는 법"]]] +
               [[Paragraph(esc(x), _style("td", 8.2, 12, F_REG, TA_LEFT)) for x in r]
                for r in rows],
-              colWidths=[spanw(2) * 0.36, spanw(2) * 0.2, spanw(2) * 0.44])
+              colWidths=[w * 0.36, w * 0.2, w * 0.44])
     t.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), rlcolors.HexColor("#111827")),
         ("GRID", (0, 0), (-1, -1), 0.4, rlcolors.HexColor("#9ca3af")),
@@ -1757,28 +2182,19 @@ def page8(c, spec):
         ("ROWBACKGROUNDS", (0, 1), (-1, -1),
          [rlcolors.white, rlcolors.HexColor("#f3f4f6")]),
     ]))
-    tw, th = t.wrapOn(c, spanw(2), y - MB)
-    t.drawOn(c, ML, y - th)
+    return t
 
-    ybot = min(cap_y, y - th) - 16
-    draw_rule(c, ML, ybot, PW - MR, 0.6)
-    ybot -= 12
 
-    colo = MB + 128
-    fl = brief_flowables("이번 주 기도", spec["prayer"][:6])
-    fl += brief_flowables("다룰 때 조심할 점", [
-        "정치적으로 민감한 사안은 어느 한쪽을 편드는 표현을 피하십시오.",
-        "사실관계가 확정되지 않은 사건은 단정적으로 말하지 마십시오.",
-        "사망·재난은 애도와 절제된 표현으로 다루십시오."])
-    fl += brief_flowables("이번 주 전체 헤드라인",
-                          [f'[{n}] {_clean(it["title"])}'
-                           for n in spec["names"]
-                           for it in spec["results"][n]["items"][:3]][:36], bsize=7.7)
-    _, used = flow_balanced(c, fl, ybot, colo + 12)
-    if used - (colo + 12) > 86:
-        fill_gaps(c, spec, used - 8, colo + 12, 4)
+CAUTIONS = ["정치적으로 민감한 사안은 어느 한쪽을 편드는 표현을 피하십시오.",
+            "사실관계가 확정되지 않은 사건은 단정적으로 말하지 마십시오.",
+            "사망·재난은 애도와 절제된 표현으로 다루십시오."]
+MEDITATE = ["이 한 주간 나를 가장 흔든 소식은 무엇이었습니까?",
+            "그 소식 앞에서 성경은 무엇이라 말합니까?",
+            "우리 교회가 실제로 할 수 있는 한 가지는 무엇입니까?"]
 
-    # ── 판권
+
+def colophon(c, spec, colo):
+    """판권 (발행 정보)"""
     draw_rule(c, ML, colo, PW - MR, 1.2)
     c.setFillColor(INK)
     c.setFont(F_BOLD, 12)
@@ -1790,9 +2206,11 @@ def page8(c, spec):
                   f'수집 기간 {spec["period"]}']
     if spec.get("editor"):
         left_lines.insert(1, f'편집 · {spec["editor"]}')
-    right_lines = [f'수집 기사 {spec["total"]}건 / 섹션 {spec["nsec"]}개',
+    right_lines = [f'수집 기사 {spec["total"]}건 / 섹션 {spec["nsec"]}개 / A3 세로 {spec.get("npages", 8)}면',
                    '기사 출처 · Google 뉴스 (각 매체 원문 링크 보유)',
                    '이 신문은 설교·목회 자료용 내부 간행물입니다.']
+    if (spec.get("photo_bytes") or spec.get("gfx_bytes")):
+        right_lines.append('사진·만평·도해 일부는 구글 AI(Gemini)로 만들었습니다.')
     yy = colo - 34
     for s in left_lines:
         c.drawString(ML, yy, s)
@@ -1805,28 +2223,232 @@ def page8(c, spec):
     c.setFillColor(SOFT)
     c.drawCentredString(PW / 2, MB + 26,
                         "MY 설교 AI 스튜디오 Pro — 시사주간뉴스 종이신문 발행 기능으로 만들었습니다.")
-    page_foot(c, spec, 8)
+
+
+def page_faith(c, spec, no, with_colophon=True, headline="이 한 주를 말씀으로 읽는다"):
+    y = running_head(c, spec, no, "신앙·목회" if with_colophon else "교회·설교")
+    imgs = spec.get("images", {})
+    key = f"p{no}"
+    y = draw_headline(c, headline, ML, y, CW, max_size=30, min_size=18, max_lines=1)
+    y -= 7
+    draw_rule(c, ML, y, PW - MR, 1.0)
+    y -= 12
+
+    ph_h = 158
+    cap_y = place_image(c, imgs.get(key), colx(2), y - ph_h, spanw(2), ph_h,
+                        photo_caption(spec, key, "강단은 세상의 소리를 말씀으로 번역하는 자리다."))
+    t = _links_table(spec, spanw(2))
+    tw, th = t.wrapOn(c, spanw(2), y - MB)
+    t.drawOn(c, ML, y - th)
+
+    ybot = min(cap_y, y - th) - 16
+    draw_rule(c, ML, ybot, PW - MR, 0.6)
+    ybot -= 12
+
+    colo = MB + 128 if with_colophon else MB + 26
+    if with_colophon:
+        fl = brief_flowables("이번 주 기도", spec["prayer"][:6])
+        fl += brief_flowables("다룰 때 조심할 점", CAUTIONS)
+        fl += brief_flowables("이번 주 전체 헤드라인",
+                              [f'[{n}] {_clean(it["title"])}'
+                               for n in spec["names"]
+                               for it in spec["results"][n]["items"][:3]][:36], bsize=7.7)
+    else:
+        # 16면 15면: 교계 소식 중심
+        church = [n for n in spec["names"]
+                  if spec["results"][n].get("group") == "신앙·교회"]
+        ai_secs = {s.get("name"): s for s in (spec.get("ai_sections") or [])}
+        fl = []
+        for n in church[:4]:
+            its = spec["results"][n]["items"]
+            aa = ai_secs.get(n) or _fallback_article(n, its) or {}
+            fl += art_flowables(label=f"교계 · {n}",
+                                headline=aa.get("headline") or _clean(its[0]["title"]),
+                                lead=aa.get("lead"), body=aa.get("body", []),
+                                source=_clean(its[0]["source"]), hsize=13)
+            fl += brief_flowables("함께 보기", [f'{_clean(it["title"])}  ({_clean(it["source"])})'
+                                               for it in its[1:6]], bsize=7.9)
+        fl += brief_flowables("강단에서 이렇게 연결해 보세요",
+                              [f'{l.get("event","")} → {l.get("text","")} : {l.get("use","")}'
+                               for l in spec["sermon_links"][:7]])
+        fl += brief_flowables("다룰 때 조심할 점", CAUTIONS)
+        fl += _sec_briefs(spec, spec["names"], limit=3, bsize=7.8)
+    _, used = flow_balanced(c, fl, ybot, colo + 12)
+    if used - (colo + 12) > 86:
+        fill_gaps(c, spec, used - 8, colo + 12, 4)
+    if with_colophon:
+        colophon(c, spec, colo)
+    page_foot(c, spec, no)
+
+
+def page_opinion(c, spec, no):
+    y = running_head(c, spec, no, "오피니언")
+    imgs = spec.get("images", {})
+    y = draw_headline(c, "오피니언 — 칼럼과 만평", ML, y, CW,
+                      max_size=28, min_size=18, max_lines=1)
+    y -= 7
+    draw_rule(c, ML, y, PW - MR, 1.0)
+    y -= 12
+
+    cols = spec.get("columns") or []
+    # 오른쪽 2단: 두 번째 만평
+    ci = imgs.get("cartoon2")
+    cw_ = spanw(2)
+    ch_ = cw_ * (ci.size[1] / ci.size[0]) if ci is not None else cw_ * 0.75
+    ch_ = min(ch_, 520)
+    cw_ = min(cw_, ch_ * (ci.size[0] / ci.size[1])) if ci is not None else cw_
+    cap = gfx_caption(spec, "cartoon2", "두 번째 만평") if "cartoon2" in (spec.get("gfx_bytes") or {}) else "두 번째 만평"
+    cap_y = place_image(c, ci, colx(2), y - ch_, cw_, ch_, cap)
+
+    # 왼쪽 2단: 칼럼 ①
+    fl = []
+    for col in cols[:3]:
+        fl.append(Paragraph('<font color="#b91c1c"><b>칼럼</b></font>',
+                            _style("k", 9.6, 13, F_BOLD, TA_LEFT)))
+        fl += art_flowables(headline=col.get("title"), body=col.get("body", []), hsize=15)
+    ct2 = spec["cartoon2"]
+    fl += brief_flowables("독자와 함께 — 이번 주 나눔 질문", MEDITATE)
+    fl += brief_flowables("이번 주 기도", spec["prayer"][:6])
+    h_top = y - (cap_y - 4)
+    left = flow(c, fl, [(colx(0), cap_y - 4, COLW, h_top), (colx(1), cap_y - 4, COLW, h_top)])
+    col_rules(c, y, cap_y - 4, 2, 0)
+    draw_vrule(c, colx(2) - GUT / 2, cap_y - 4, y, 0.35, rlcolors.HexColor("#b9b9bd"))
+
+    y2 = cap_y - 15
+    draw_rule(c, ML, y2, PW - MR, 0.6)
+    y2 -= 12
+    more = list(left)
+    more += brief_flowables("두 번째 만평 읽기",
+                            [x for x in [ct2.get("left_line", ""), ct2.get("right_line", ""),
+                                         ct2.get("caption", "")] if x])
+    ed = spec["editorial"]
+    more += brief_flowables("사설 다시 읽기 — " + _clean(ed.get("title", "")),
+                            [_clean(b) for b in ed.get("body", [])[:3]])
+    more += _sec_briefs(spec, spec["names"][::-1][:4], limit=4, bsize=7.8)
+    _, used = flow_balanced(c, more, y2, MB + 26)
+    if used - (MB + 26) > 86:
+        fill_gaps(c, spec, used - 8, MB + 26, 6)
+    page_foot(c, spec, no)
+
+
+def page_infographic(c, spec, no):
+    y = running_head(c, spec, no, "도표로 보는 한 주")
+    imgs = spec.get("images", {})
+    y = draw_headline(c, "도표로 보는 한 주", ML, y, CW, max_size=28, min_size=18, max_lines=1)
+    y -= 7
+    draw_rule(c, ML, y, PW - MR, 1.0)
+    y -= 12
+
+    ig = imgs.get("infographic")
+    if ig is not None:
+        ih = min(CW * ig.size[1] / ig.size[0], 440)
+        iw = min(CW, ih * ig.size[0] / ig.size[1])
+        y = place_image(c, ig, ML + (CW - iw) / 2, y - ih, iw, ih,
+                        gfx_caption(spec, "infographic",
+                                    spec["infographic"].get("title", "숫자로 보는 한 주"))) - 14
+
+    # 아래: 실제 수집 그래프(왼쪽 2단) + 섹션별 표(오른쪽 2단)
+    left_bot = y
+    ch = imgs.get("chart")
+    if ch is not None:
+        chh = min(spanw(2) * ch.size[1] / ch.size[0], y - MB - 220)
+        left_bot = place_image(c, ch, ML, y - chh, spanw(2), chh,
+                               "섹션별 기사 수 · 키워드 (실제 수집 자료 — 정확한 숫자)")
+    rows = [[n, str(len(spec["results"][n]["items"])), spec["results"][n]["group"]]
+            for n in spec["names"]]
+    rows.sort(key=lambda r: -int(r[1]))
+    c.setFillColor(INK)
+    c.setFont(F_BOLD, 11.4)
+    c.drawString(colx(2), y - 12, "섹션별 수집 현황")
+    t = make_table(["섹션", "기사", "분류"], rows[:14], spanw(2))
+    tw, th = t.wrapOn(c, spanw(2), y - MB - 80)
+    t.drawOn(c, colx(2), max(MB + 40, y - 20 - th))
+
+    fl = brief_flowables("숫자 풀이",
+                         [f'{_clean(f.get("label",""))} — {_clean(f.get("value",""))}'
+                          + (f' ({_clean(f.get("note",""))})' if f.get("note") else "")
+                          for f in spec["infographic"].get("facts", [])])
+    fl += brief_flowables("이번 주 키워드", [f"{w} — {n}건" for w, n in spec["keywords"][:12]],
+                          bsize=8.0)
+    fl += all_headlines(spec, 40)
+    yb = min(left_bot, y - 20 - th) - 16
+    if yb > MB + 70:
+        draw_rule(c, ML, yb, PW - MR, 0.6)
+        _, used = flow_balanced(c, fl, yb - 10, MB + 26)
+        if used - (MB + 26) > 86:
+            fill_gaps(c, spec, used - 8, MB + 26, 3)
+    page_foot(c, spec, no)
+
+
+def page_closing(c, spec, no):
+    y = running_head(c, spec, no, "기도·판권")
+    y = draw_headline(c, "이번 주 기도와 묵상", ML, y, CW, max_size=30, min_size=18, max_lines=1)
+    y -= 7
+    draw_rule(c, ML, y, PW - MR, 1.0)
+    y -= 14
+
+    # 기도 박스 (크게)
+    pr = spec["prayer"][:8]
+    fl = [Paragraph(f'<b>{i}.</b> {esc(t)}', _style("pp", 11.2, 18, F_REG, TA_LEFT, space_after=5))
+          for i, t in enumerate(pr, 1)]
+    inner_w = (CW - 28 - GUT) / 2
+    need = measure(c, fl, inner_w) / 2 + 60
+    bot = y - need
+    c.setStrokeColor(LINE)
+    c.setLineWidth(1.2)
+    c.rect(ML, bot, CW, need, stroke=1, fill=0)
+    c.setFillColor(INK)
+    c.setFont(F_BOLD, 13)
+    c.drawString(ML + 14, y - 22, "🙏 이번 주 함께 드리는 기도".replace("🙏 ", ""))
+    draw_rule(c, ML + 14, y - 30, ML + CW - 14, 0.6)
+    flow(c, fl, [(ML + 14, bot + 10, inner_w, need - 46),
+                 (ML + 14 + inner_w + GUT, bot + 10, inner_w, need - 46)])
+    y = bot - 16
+
+    colo = MB + 128
+    fl = brief_flowables("이번 주 묵상 질문", MEDITATE)
+    fl += brief_flowables("다룰 때 조심할 점", CAUTIONS)
+    fl += brief_flowables("이번 주 수집 헤드라인 전체",
+                          [f'[{n}] {_clean(it["title"])}  ({_clean(it["source"])})'
+                           for n in spec["names"]
+                           for it in spec["results"][n]["items"]][:90], bsize=7.6)
+    _, used = flow_balanced(c, fl, y, colo + 12)
+    if used - (colo + 12) > 86:
+        fill_gaps(c, spec, used - 8, colo + 12, 0)
+    colophon(c, spec, colo)
+    page_foot(c, spec, no)
+
 
 def make_pdf(spec):
     buf = io.BytesIO()
     c = pdfcanvas.Canvas(buf, pagesize=A3)
+    n = int(spec.get("npages", 8))
     c.setTitle(f'{spec["title"]} {spec["date_line"]}')
     c.setAuthor(spec["publisher"])
-    c.setSubject("시사주간뉴스 종이신문 (A3 세로 8면)")
+    c.setSubject(f"시사주간뉴스 종이신문 (A3 세로 {n}면)")
 
-    for no in range(1, 9):
-        if no == 1:
+    n16 = n >= 16
+    for no, kind, _ in plan_of(n):
+        if kind == "front":
             page1(c, spec)
-        elif no == 2:
+        elif kind == "analysis":
             page2(c, spec)
-        elif no == 5:
-            page5(c, spec)
-        elif no == 6:
-            page6(c, spec)
-        elif no == 8:
-            page8(c, spec)
-        else:
-            section_page(c, spec, no, {3: "p3", 4: "p4", 7: "p7"}[no])
+        elif kind == "section":
+            section_page(c, spec, no)
+        elif kind == "cartoon":
+            page_cartoon(c, spec, no)
+        elif kind == "graphics":
+            page_graphics(c, spec, no, show_chart=not n16)
+        elif kind == "faith":
+            page_faith(c, spec, no, with_colophon=True)
+        elif kind == "church":
+            page_faith(c, spec, no, with_colophon=False)
+        elif kind == "opinion":
+            page_opinion(c, spec, no)
+        elif kind == "infographic":
+            page_infographic(c, spec, no)
+        elif kind == "closing":
+            page_closing(c, spec, no)
         c.showPage()
     c.save()
     return buf.getvalue()
@@ -1911,7 +2533,7 @@ def make_docx(spec):
         im = imgs.get(key)
         if im is None:
             return
-        bio = io.BytesIO(pil_to_bytes(im, "JPEG" if key != "diagram" else "PNG"))
+        bio = io.BytesIO(pil_to_bytes(im, "JPEG", 88))
         par = doc.add_paragraph()
         par.alignment = WD_ALIGN_PARAGRAPH.CENTER
         par.paragraph_format.space_after = Pt(2)
@@ -1957,7 +2579,7 @@ def make_docx(spec):
     p(spec["sub"], 11, False, WD_ALIGN_PARAGRAPH.CENTER, "555555", 2)
     rule(24)
     p(f'수집 기간 {spec["period"]}  ·  기사 {spec["total"]}건  ·  섹션 {spec["nsec"]}개  '
-      f'·  출처 Google 뉴스  ·  A3 세로 8면',
+      f'·  출처 Google 뉴스  ·  A3 세로 {spec.get("npages", 8)}면',
       8.2, False, WD_ALIGN_PARAGRAPH.CENTER, "666666", 8)
 
     top = spec["top"]
@@ -1987,56 +2609,58 @@ def make_docx(spec):
         if its:
             p(f'[{n}] {_clean(its[0]["title"])}', 8.5, False, None, None, 2)
 
-    # ── 2면
-    page_break()
-    head_bar(2, PAGE_NAMES[1])
-    p("이번 주, 세상은 이렇게 움직였다", 20, True, None, "111111", 6)
-    for i, f3 in enumerate(spec["flow3"][:4], 1):
-        p(f'{i}. {f3.get("title","")}', 13, True, None, "111111", 4)
-        for b in f3.get("body", []):
-            p(b, 9.5, False, None, None, 4, indent=True)
-    if spec.get("ai_text"):
-        p("", 6)
-        for blk in re.split(r"\n\s*\n", spec["ai_text"]):
-            b = _clean(blk)
-            if not b:
-                continue
-            if b.startswith(("🗞️", "📋", "🙏", "⚠️", "🔎")):
-                p(b.splitlines()[0] if "\n" in blk else b, 11.5, True, None, "111111", 4)
-                rest = _clean(" ".join(blk.splitlines()[1:]))
-                if rest:
-                    p(rest, 9.2, False, None, None, 4, indent=True)
-            else:
-                p(b, 9.2, False, None, None, 4, indent=True)
-    p("", 6)
-    p(spec["table"].get("title", "표"), 12, True, None, "111111", 4)
-    table(spec["table"]["headers"], spec["table"]["rows"])
-    p("이번 주 키워드 풀이", 12, True, None, "111111", 4)
-    for w, n in spec["keywords"][:10]:
-        p(f'{w} — 관련 보도 {n}건', 8.8, False, None, None, 2)
+    ai_secs = {s.get("name"): s for s in (spec.get("ai_sections") or [])}
+    n16 = int(spec.get("npages", 8)) >= 16
 
-    # ── 3·4·7면
-    for no, ik in ((3, "p3"), (4, "p4"), (7, "p7")):
-        page_break()
-        names = spec["page_sections"].get(no, [])
-        head_bar(no, " · ".join(names[:3]) if names else PAGE_NAMES[no - 1])
+    def w_analysis(no):
+        p("이번 주, 세상은 이렇게 움직였다", 20, True, None, "111111", 6)
+        for i, f3 in enumerate(spec["flow3"][:4], 1):
+            p(f'{i}. {f3.get("title","")}', 13, True, None, "111111", 4)
+            for b in f3.get("body", []):
+                p(b, 9.5, False, None, None, 4, indent=True)
+        if spec.get("ai_text"):
+            p("", 6)
+            for blk in re.split(r"\n\s*\n", spec["ai_text"]):
+                b = _clean(blk)
+                if not b:
+                    continue
+                if b.startswith(("🗞️", "📋", "🙏", "⚠️", "🔎")):
+                    p(blk.strip().splitlines()[0], 11.5, True, None, "111111", 4)
+                    rest = _clean(" ".join(blk.strip().splitlines()[1:]))
+                    if rest:
+                        p(rest, 9.2, False, None, None, 4, indent=True)
+                else:
+                    p(b, 9.2, False, None, None, 4, indent=True)
+        p("", 6)
+        p(spec["table"].get("title", "표"), 12, True, None, "111111", 4)
+        table(spec["table"]["headers"], spec["table"]["rows"])
+        p("이번 주 키워드 풀이", 12, True, None, "111111", 4)
+        for w, n in spec["keywords"][:10]:
+            p(f'{w} — 관련 보도 {n}건', 8.8, False, None, None, 2)
+
+    def w_section(no):
+        names = [n for n in spec["page_sections"].get(no, [])
+                 if spec["results"].get(n, {}).get("items")]
         if not names:
             p("이 면에 배치된 섹션이 없습니다.", 10, False, None, "666666")
-            continue
+            return
+        more = bool(spec.get("more_pages", {}).get(no))
         first = names[0]
-        items = spec["results"][first]["items"]
-        p(f'[{first}]  기사 {len(items)}건', 9.5, True, None, "B91C1C", 3)
+        all_items = spec["results"][first]["items"]
+        off = _more_offset(all_items) if more else 0
+        items = all_items[off:]
+        p(f'[{first}{" · 이어서 보기" if more else ""}]  기사 {len(all_items)}건',
+          9.5, True, None, "B91C1C", 3)
         p(_clean(items[0]["title"]) if items else first, 19, True, None, "111111", 5)
         rule(10)
-        img(ik, 140, photo_caption(spec, ik, f"{first} 관련."))
-        ai_secs = {s.get("name"): s for s in (spec.get("ai_sections") or [])}
-        a = ai_secs.get(first) or _fallback_article(first, items) or {}
+        img(f"p{no}", 140, photo_caption(spec, f"p{no}", f"{first} 관련."))
+        a = (None if more else ai_secs.get(first)) or _fallback_article(first, all_items, off) or {}
         if a.get("lead"):
             p(a["lead"], 10, True, None, None, 4)
         for b in a.get("body", []):
             p(b, 9.5, False, None, None, 4, indent=True)
         p(f'{first} — 이번 주 보도', 11.5, True, None, "111111", 4)
-        for i, it in enumerate(items[1:8], 1):
+        for i, it in enumerate(items[1:9], 1):
             p(f'{i}. {_clean(it["title"])}  ({_clean(it["source"])})', 8.6, False,
               None, None, 2)
         for n in names[1:]:
@@ -2055,70 +2679,127 @@ def make_docx(spec):
                 p(f'· {_clean(it["title"])}  ({_clean(it["source"])})', 8.4, False,
                   None, None, 2)
 
-    # ── 5면
-    page_break()
-    head_bar(5, PAGE_NAMES[4])
-    p("만평", 20, True, None, "111111", 5)
-    img("cartoon", 150, spec["cartoon"].get("caption"))
-    ed = spec["editorial"]
-    p("사설", 10, True, None, "B91C1C", 2)
-    p(ed.get("title", "사설"), 15, True, None, "111111", 5)
-    for b in ed.get("body", []):
-        p(b, 9.5, False, None, None, 4, indent=True)
-    p("이번 주 묵상 질문", 12, True, None, "111111", 4)
-    for q in ["이 한 주간 나를 가장 흔든 소식은 무엇이었습니까?",
-              "그 소식 앞에서 성경은 무엇이라 말합니까?",
-              "우리 교회가 실제로 할 수 있는 한 가지는 무엇입니까?"]:
-        p(f'· {q}', 9.2, False, None, None, 3)
+    def w_cartoon(no):
+        p("만평", 20, True, None, "111111", 5)
+        img("cartoon", 150, gfx_caption(spec, "cartoon", spec["cartoon"].get("caption", "")))
+        ed = spec["editorial"]
+        p("사설", 10, True, None, "B91C1C", 2)
+        p(ed.get("title", "사설"), 15, True, None, "111111", 5)
+        for b in ed.get("body", []):
+            p(b, 9.5, False, None, None, 4, indent=True)
+        p("이번 주 묵상 질문", 12, True, None, "111111", 4)
+        for q in MEDITATE:
+            p(f'· {q}', 9.2, False, None, None, 3)
 
-    # ── 6면
-    page_break()
-    head_bar(6, PAGE_NAMES[5])
-    p("숫자와 그림으로 보는 한 주", 20, True, None, "111111", 6)
-    if imgs.get("chart") is not None:
-        img("chart", 150, "섹션별 기사 수 · 이번 주 키워드 (실제 수집 자료)")
-    img("diagram", 140, spec["diagram"].get("title", "도해"))
-    p(spec["table"].get("title", "표"), 12, True, None, "111111", 4)
-    table(spec["table"]["headers"], spec["table"]["rows"])
-    p("읽는 법", 11.5, True, None, "111111", 4)
-    for s in ["막대가 긴 섹션일수록 이번 주 보도가 많았던 분야입니다.",
-              "키워드는 수집된 기사 제목에 실제로 등장한 낱말만 셉니다.",
-              "도해 가운데는 이번 주의 중심 사안, 둘레는 파생된 논점입니다."]:
-        p(f'· {s}', 9, False, None, None, 3)
+    def w_graphics(no):
+        p("숫자와 그림으로 보는 한 주" if not n16 else "도해로 읽는 한 주",
+          20, True, None, "111111", 6)
+        if not n16 and imgs.get("chart") is not None:
+            img("chart", 150, "섹션별 기사 수 · 이번 주 키워드 (실제 수집 자료)")
+        img("diagram", 140, gfx_caption(spec, "diagram", spec["diagram"].get("title", "도해")))
+        p(spec["table"].get("title", "표"), 12, True, None, "111111", 4)
+        table(spec["table"]["headers"], spec["table"]["rows"])
+        p("도해 풀이", 11.5, True, None, "111111", 4)
+        for nd in spec["diagram"].get("nodes", [])[:6]:
+            p(f'· {_clean(nd.get("label",""))} — {_clean(nd.get("desc",""))}', 9, False, None, None, 3)
 
-    # ── 8면
-    page_break()
-    head_bar(8, PAGE_NAMES[7])
-    p("이 한 주를 말씀으로 읽는다", 20, True, None, "111111", 6)
-    img("p8", 140, photo_caption(spec, "p8", "강단은 세상의 소리를 말씀으로 번역하는 자리다."))
-    table(["이번 주 사건", "연결 본문", "강단에서 쓰는 법"],
-          [[l.get("event", ""), l.get("text", ""), l.get("use", "")]
-           for l in spec["sermon_links"][:6]])
-    p("이번 주 기도", 12, True, None, "111111", 4)
-    for s in spec["prayer"][:6]:
-        p(f'· {s}', 9.2, False, None, None, 3)
-    p("다룰 때 조심할 점", 12, True, None, "111111", 4)
-    for s in ["정치적으로 민감한 사안은 어느 한쪽을 편드는 표현을 피하십시오.",
-              "사실관계가 확정되지 않은 사건은 단정적으로 말하지 마십시오.",
-              "사망·재난은 애도와 절제된 표현으로 다루십시오."]:
-        p(f'· {s}', 9.2, False, None, None, 3)
-    p("이번 주 전체 헤드라인", 12, True, None, "111111", 4)
-    for n in spec["names"]:
-        for it in spec["results"][n]["items"][:3]:
-            p(f'[{n}] {_clean(it["title"])}  ({_clean(it["source"])})', 8.2,
-              False, None, None, 2)
-    rule(18)
-    p(spec["title"], 13, True, None, "111111", 2)
-    lines = [f'발행 · {spec["publisher"]}',
-             f'{spec["issue"]}   {spec["date_line"]}',
-             f'수집 기간 {spec["period"]}',
-             f'수집 기사 {spec["total"]}건 / 섹션 {spec["nsec"]}개',
-             '기사 출처 · Google 뉴스 (각 매체 원문 링크 보유)',
-             '이 신문은 설교·목회 자료용 내부 간행물입니다.']
-    if spec.get("editor"):
-        lines.insert(1, f'편집 · {spec["editor"]}')
-    for s in lines:
-        p(s, 8.4, False, None, "666666", 2)
+    def w_faith(no, with_colophon=True):
+        p("이 한 주를 말씀으로 읽는다", 20, True, None, "111111", 6)
+        img(f"p{no}", 140, photo_caption(spec, f"p{no}", "강단은 세상의 소리를 말씀으로 번역하는 자리다."))
+        table(["이번 주 사건", "연결 본문", "강단에서 쓰는 법"],
+              [[l.get("event", ""), l.get("text", ""), l.get("use", "")]
+               for l in spec["sermon_links"][:7]])
+        if not with_colophon:
+            for n in [n for n in spec["names"] if spec["results"][n].get("group") == "신앙·교회"][:4]:
+                its = spec["results"][n]["items"]
+                aa = ai_secs.get(n) or _fallback_article(n, its) or {}
+                p(f'[교계 · {n}]', 9.5, True, None, "B91C1C", 2)
+                p(aa.get("headline") or _clean(its[0]["title"]), 13, True, None, "111111", 3)
+                for b in aa.get("body", []):
+                    p(b, 9.3, False, None, None, 3, indent=True)
+        p("이번 주 기도", 12, True, None, "111111", 4)
+        for s in spec["prayer"][:6]:
+            p(f'· {s}', 9.2, False, None, None, 3)
+        p("다룰 때 조심할 점", 12, True, None, "111111", 4)
+        for s in CAUTIONS:
+            p(f'· {s}', 9.2, False, None, None, 3)
+        if with_colophon:
+            w_colophon()
+
+    def w_opinion(no):
+        p("오피니언 — 칼럼과 만평", 20, True, None, "111111", 6)
+        img("cartoon2", 130, gfx_caption(spec, "cartoon2", spec["cartoon2"].get("caption", "")))
+        for col in (spec.get("columns") or [])[:3]:
+            p("칼럼", 10, True, None, "B91C1C", 2)
+            p(col.get("title", ""), 15, True, None, "111111", 5)
+            for b in col.get("body", []):
+                p(b, 9.5, False, None, None, 4, indent=True)
+        p("독자와 함께 — 이번 주 나눔 질문", 12, True, None, "111111", 4)
+        for q in MEDITATE:
+            p(f'· {q}', 9.2, False, None, None, 3)
+
+    def w_infographic(no):
+        p("도표로 보는 한 주", 20, True, None, "111111", 6)
+        img("infographic", 150, gfx_caption(spec, "infographic",
+                                            spec["infographic"].get("title", "숫자로 보는 한 주")))
+        if imgs.get("chart") is not None:
+            img("chart", 140, "섹션별 기사 수 · 키워드 (실제 수집 자료 — 정확한 숫자)")
+        rows = sorted([[n, str(len(spec["results"][n]["items"])), spec["results"][n]["group"]]
+                       for n in spec["names"]], key=lambda r: -int(r[1]))
+        p("섹션별 수집 현황", 12, True, None, "111111", 4)
+        table(["섹션", "기사", "분류"], rows[:14])
+        p("숫자 풀이", 11.5, True, None, "111111", 4)
+        for f in spec["infographic"].get("facts", []):
+            p(f'· {_clean(f.get("label",""))} — {_clean(f.get("value",""))}'
+              + (f' ({_clean(f.get("note",""))})' if f.get("note") else ""), 9, False, None, None, 3)
+
+    def w_closing(no):
+        p("이번 주 기도와 묵상", 20, True, None, "111111", 6)
+        for i, s in enumerate(spec["prayer"][:8], 1):
+            p(f'{i}. {s}', 11, False, None, None, 4)
+        p("이번 주 묵상 질문", 12, True, None, "111111", 4)
+        for q in MEDITATE:
+            p(f'· {q}', 9.2, False, None, None, 3)
+        p("다룰 때 조심할 점", 12, True, None, "111111", 4)
+        for s in CAUTIONS:
+            p(f'· {s}', 9.2, False, None, None, 3)
+        p("이번 주 수집 헤드라인 전체", 12, True, None, "111111", 4)
+        for n in spec["names"]:
+            for it in spec["results"][n]["items"]:
+                p(f'[{n}] {_clean(it["title"])}  ({_clean(it["source"])})', 8.2,
+                  False, None, None, 2)
+        w_colophon()
+
+    def w_colophon():
+        rule(18)
+        p(spec["title"], 13, True, None, "111111", 2)
+        lines = [f'발행 · {spec["publisher"]}',
+                 f'{spec["issue"]}   {spec["date_line"]}',
+                 f'수집 기간 {spec["period"]}',
+                 f'수집 기사 {spec["total"]}건 / 섹션 {spec["nsec"]}개 / A3 세로 {spec.get("npages", 8)}면',
+                 '기사 출처 · Google 뉴스 (각 매체 원문 링크 보유)',
+                 '이 신문은 설교·목회 자료용 내부 간행물입니다.']
+        if spec.get("photo_bytes") or spec.get("gfx_bytes"):
+            lines.append('사진·만평·도해 일부는 구글 AI(Gemini)로 만들었습니다.')
+        if spec.get("editor"):
+            lines.insert(1, f'편집 · {spec["editor"]}')
+        for s in lines:
+            p(s, 8.4, False, None, "666666", 2)
+
+    writers = {"analysis": w_analysis, "section": w_section, "cartoon": w_cartoon,
+               "graphics": w_graphics, "faith": lambda no: w_faith(no, True),
+               "church": lambda no: w_faith(no, False), "opinion": w_opinion,
+               "infographic": w_infographic, "closing": w_closing}
+    for no, kind, pname in plan_of(spec.get("npages", 8)):
+        if kind == "front":
+            continue
+        page_break()
+        if kind == "section":
+            nm = spec["page_sections"].get(no, [])
+            pname = " · ".join(nm[:3]) or "섹션"
+        head_bar(no, pname)
+        writers[kind](no)
+
 
     out = io.BytesIO()
     doc.save(out)
@@ -2129,15 +2810,16 @@ def make_docx(spec):
 # 6. 면 구성 미리보기(글)
 # ==============================================================================
 def outline_text(spec):
+    """면 구성 미리보기 [(면, 이름, 설명)]"""
     ps = spec["page_sections"]
-    rows = [
-        (1, "종합", f'톱기사 · 사진 · 주요기사 {len(spec["second"])}건 · 이번 주 한눈에'),
-        (2, "이슈 해설", f'이번 주 큰 흐름 {len(spec["flow3"])}가지 · 표 · 키워드'),
-        (3, " · ".join(ps.get(3, [])) or "—", "머리기사 · 사진 · 섹션 기사"),
-        (4, " · ".join(ps.get(4, [])) or "—", "머리기사 · 사진 · 섹션 기사"),
-        (5, "만평 · 사설", "한 컷 만평 · 사설 · 묵상 질문 · 기도"),
-        (6, "도해 · 통계", "통계 그래프 · 도해 · 표"),
-        (7, " · ".join(ps.get(7, [])) or "—", "머리기사 · 사진 · 섹션 기사"),
-        (8, "신앙 · 목회", "설교 연결 포인트 표 · 기도 · 전체 헤드라인 · 판권"),
-    ]
+    more = spec.get("more_pages", {})
+    rows = []
+    for no, kind, name in plan_of(spec.get("npages", 8)):
+        if kind == "section":
+            nm = " · ".join(ps.get(no, [])) or "—"
+            if more.get(no):
+                nm += " (이어서 보기)"
+            rows.append((no, nm, PAGE_DESC[kind]))
+        else:
+            rows.append((no, name, PAGE_DESC[kind]))
     return rows
